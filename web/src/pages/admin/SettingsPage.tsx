@@ -55,6 +55,7 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
         allowedDomains: form.domains.split(/[\s,]+/).filter(Boolean),
         holidayRegion: form.holidayRegion,
         timeFormat: form.timeFormat,
+        emailRetentionDays: form.emailRetentionDays,
       }),
     onSuccess: (s) => {
       queryClient.setQueryData(keys.settings, s);
@@ -158,6 +159,32 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
             {![0, 12, 24, 48, 72].includes(form.reminderHours) && (
               <option value={form.reminderHours}>After {form.reminderHours} hours</option>
             )}
+          </Select>
+        </Field>
+        <Field
+          label="Email log"
+          hint="Older emails are deleted from Activity → Email log. The audit trail is always kept."
+        >
+          <Select
+            value={form.emailRetentionDays ?? ''}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                emailRetentionDays: e.target.value ? Number(e.target.value) : null,
+              })
+            }
+          >
+            <option value={30}>Keep emails for 30 days</option>
+            <option value={90}>Keep emails for 90 days</option>
+            <option value={180}>Keep emails for 6 months</option>
+            <option value={365}>Keep emails for a year</option>
+            {form.emailRetentionDays !== null &&
+              ![30, 90, 180, 365].includes(form.emailRetentionDays) && (
+                <option value={form.emailRetentionDays}>
+                  Keep emails for {form.emailRetentionDays} days
+                </option>
+              )}
+            <option value="">Keep emails forever</option>
           </Select>
         </Field>
         <div className="space-y-3 rounded-lg bg-slate-50 p-4">

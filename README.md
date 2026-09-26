@@ -54,7 +54,7 @@ neon dark theme.
 - **Time-off approvals**: approve or decline, with a warning when the request overlaps scheduled shifts. You can also record time off for someone directly.
 - **Canadian statutory holidays** on every calendar, including the weekday a weekend holiday is observed. The default is the federal list (Canada Labour Code); pick a province or territory, or turn holidays off, in **Settings**.
 - **People**: invite by email, one at a time or in bulk. Set each person's role, tier and team, deactivate, or re-send invites.
-- **Activity**: an audit trail (who published, confirmed, approved and when) plus a log of every email with its delivery status, a preview, and retry for failures.
+- **Activity**: an audit trail (who published, confirmed, approved and when) plus a log of every email with its delivery status, a preview, and retry for failures. The email log keeps emails for 90 days by default (30 days to a year, or forever, in **Settings**); the audit trail is always kept.
 
 **For team members**
 

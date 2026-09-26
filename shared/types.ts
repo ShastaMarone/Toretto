@@ -77,6 +77,8 @@ export interface OrgSettings {
   allowedDomains: string[];
   holidayRegion: HolidayRegion;
   timeFormat: TimeFormat;
+  /** Days the email log keeps sent and failed emails; null keeps them forever. */
+  emailRetentionDays: number | null;
 }
 
 export interface Tier {

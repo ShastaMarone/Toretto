@@ -17,6 +17,7 @@ describe('migrations', () => {
         '002_continuous_schedules.sql',
         '003_time_format.sql',
         '004_calendar_feed.sql',
+        '005_email_retention.sql',
       ]);
       // Exactly one instance did the work.
       expect(results.filter((r) => r.length > 0)).toHaveLength(1);
@@ -27,6 +28,7 @@ describe('migrations', () => {
         '002_continuous_schedules.sql',
         '003_time_format.sql',
         '004_calendar_feed.sql',
+        '005_email_retention.sql',
       ]);
     } finally {
       await db.end();

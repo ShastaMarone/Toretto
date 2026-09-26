@@ -185,6 +185,7 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
           .enum(HOLIDAY_REGIONS.map((r) => r.value) as [HolidayRegion, ...HolidayRegion[]])
           .optional(),
         timeFormat: z.enum(['12h', '24h']).optional(),
+        emailRetentionDays: z.number().int().min(1).max(3650).nullable().optional(),
       }),
       req.body,
     );
@@ -197,7 +198,8 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
           SET org_name = COALESCE($1, org_name), timezone = COALESCE($2, timezone),
               week_starts_on = COALESCE($3, week_starts_on), reminder_hours = COALESCE($4, reminder_hours),
               self_signup = COALESCE($5, self_signup), allowed_domains = COALESCE($6, allowed_domains),
-              holiday_region = COALESCE($7, holiday_region), time_format = COALESCE($8, time_format)`,
+              holiday_region = COALESCE($7, holiday_region), time_format = COALESCE($8, time_format),
+              email_retention_days = CASE WHEN $9 THEN $10 ELSE email_retention_days END`,
       [
         body.orgName ?? null,
         body.timezone ?? null,
@@ -207,6 +209,8 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
         domains ? [...new Set(domains)] : null,
         body.holidayRegion ?? null,
         body.timeFormat ?? null,
+        body.emailRetentionDays !== undefined,
+        body.emailRetentionDays ?? null,
       ],
     );
     await audit(db, req.user!.id, 'settings.updated', { type: 'org' }, body);

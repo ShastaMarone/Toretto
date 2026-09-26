@@ -6,7 +6,7 @@ export async function getSettings(db: Queryable): Promise<OrgSettings> {
     `SELECT org_name AS "orgName", timezone, week_starts_on AS "weekStartsOn",
             reminder_hours AS "reminderHours", self_signup AS "selfSignup",
             allowed_domains AS "allowedDomains", holiday_region AS "holidayRegion",
-            time_format AS "timeFormat"
+            time_format AS "timeFormat", email_retention_days AS "emailRetentionDays"
        FROM org_settings WHERE id`,
   );
   return rows[0]!;
