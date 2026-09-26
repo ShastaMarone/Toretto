@@ -16,7 +16,16 @@ import type { Queryable } from '../db';
 import type { AppDeps } from '../deps';
 import { SENSITIVE_KINDS } from '../email/outbox';
 import { badRequest, notFound } from '../errors';
-import { parse, zDate, zId, zIdParam, zName, zText, zTimezone } from '../lib/validation';
+import {
+  parse,
+  zDate,
+  zId,
+  zIdParam,
+  zName,
+  zText,
+  zTimeOffWhen,
+  zTimezone,
+} from '../lib/validation';
 import { audit } from '../services/audit';
 import { listSchedules } from '../services/schedules';
 import { getSettings } from '../services/settings';
@@ -240,7 +249,7 @@ export function timeOffAdminRoutes({ db, config, kick }: AppDeps): Router {
 
   r.post('/', async (req, res) => {
     const body = parse(
-      z.object({ userId: zId, typeId: zId, startDate: zDate, endDate: zDate, note: zText(500) }),
+      z.object({ userId: zId, typeId: zId, ...zTimeOffWhen, note: zText(500) }),
       req.body,
     );
     const { userId, ...input } = body;

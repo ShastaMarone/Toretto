@@ -2,18 +2,18 @@ import {
   addDays,
   addMonths,
   dayOfWeek,
-  diffDays,
   eachDay,
   endOfMonth,
-  formatDateRange,
   formatDay,
   formatTimeRange,
+  formatTimeRangeCompact,
   localDate,
   startOfMonth,
   startOfWeek,
   todayIn,
   type ISODate,
 } from '@shared/time';
+import { formatTimeOffWhen, timeOffDays, timeOffLength } from '@shared/timeOff';
 import type { ShiftView, TimeOffRequest } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
@@ -131,8 +131,7 @@ export default function MySchedulePage() {
   const activeTimeOff = (timeOff.data ?? []).filter(
     (r) => r.status === 'pending' || r.status === 'approved',
   );
-  const timeOffOn = (day: ISODate) =>
-    activeTimeOff.filter((r) => r.startDate <= day && r.endDate >= day);
+  const timeOffOn = (day: ISODate) => activeTimeOff.filter((r) => timeOffDays(r, tz).includes(day));
 
   const onDayClick = (day: ISODate) => (isDesktop ? setRequestFor(day) : setDayOpen(day));
 
@@ -330,8 +329,8 @@ export default function MySchedulePage() {
             ) : (
               <ul className="divide-y divide-slate-100">
                 {timeOff.data.slice(0, 12).map((r) => {
-                  const canCancel =
-                    r.status === 'pending' || (r.status === 'approved' && r.endDate >= today);
+                  const upcoming = r.endTime ? Date.parse(r.endTime) > now : r.endDate >= today;
+                  const canCancel = r.status === 'pending' || (r.status === 'approved' && upcoming);
                   return (
                     <li key={r.id} className="px-5 py-3">
                       <div className="flex items-start gap-3">
@@ -339,9 +338,7 @@ export default function MySchedulePage() {
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-slate-900">{r.type.name}</p>
                           <p className="text-xs text-slate-500">
-                            {formatDateRange(r.startDate, r.endDate)} ·{' '}
-                            {diffDays(r.startDate, r.endDate) + 1} day
-                            {r.startDate === r.endDate ? '' : 's'}
+                            {formatTimeOffWhen(r, tz, timeFormat)} · {timeOffLength(r)}
                           </p>
                           {r.reviewNote && (
                             <p className="mt-1 text-xs italic text-slate-600">“{r.reviewNote}”</p>
@@ -396,7 +393,11 @@ export default function MySchedulePage() {
             {timeOffOn(dayOpen).map((r) => (
               <div key={r.id} className="flex items-center gap-2 text-sm">
                 <Plane className="size-4" style={{ color: r.type.color }} />
-                {r.type.name} <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
+                {r.type.name}
+                {r.startTime &&
+                  r.endTime &&
+                  ` · ${formatTimeRange(r.startTime, r.endTime, tz, { format: timeFormat })}`}{' '}
+                <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
               </div>
             ))}
             {(shiftsByDay.get(dayOpen) ?? []).map((s) => (
@@ -441,7 +442,7 @@ export default function MySchedulePage() {
           onConfirm={() => cancel.mutate(cancelling.id)}
           onClose={() => setCancelling(null)}
         >
-          {cancelling.type.name}, {formatDateRange(cancelling.startDate, cancelling.endDate)}.
+          {cancelling.type.name}, {formatTimeOffWhen(cancelling, tz, timeFormat)}.
           {cancelling.status === 'approved' &&
             ' Your admin will be notified that you are available again.'}
         </ConfirmDialog>
@@ -485,6 +486,7 @@ function MonthGrid({
   onDayClick: (day: ISODate) => void;
   onShiftClick: (shift: ShiftView) => void;
 }) {
+  const timeFormat = useTimeFormat();
   const monthKey = month.slice(0, 7);
   return (
     <div className="p-2 sm:p-3">
@@ -583,6 +585,11 @@ function MonthGrid({
                       )}
                       style={{ backgroundColor: `${r.type.color}1f`, borderColor: r.type.color }}
                     >
+                      {r.startTime && r.endTime && (
+                        <span className="font-semibold text-slate-800">
+                          {formatTimeRangeCompact(r.startTime, r.endTime, tz, timeFormat)}{' '}
+                        </span>
+                      )}
                       {r.type.name}
                       {r.status === 'pending' && ' (requested)'}
                     </div>

@@ -1,10 +1,11 @@
-import { formatShiftWhen, localDate } from '@shared/time';
+import { formatShiftWhen } from '@shared/time';
 import type { BuilderShift, RepeatResult } from '@shared/types';
 import type { AuthUser } from '../auth/types';
 import { withTransaction, type Db, type Queryable } from '../db';
 import { badRequest, conflict, notFound } from '../errors';
 import { getBuilderShift, lockSchedule } from './schedules';
 import { getSettings } from './settings';
+import { TIME_OFF_SPAN } from './timeOff';
 
 const MAX_SHIFT_HOURS = 7 * 24;
 
@@ -187,23 +188,29 @@ export async function createShifts(
       { ...input, ...times[0]! },
       { checkUser: true, checkLabel: true },
     );
-    const { timezone } = await getSettings(client);
-    const days = times.map((t) => localDate(t.startTime, timezone));
-    const { rows: timeOff } = await client.query<{
-      startDate: string;
-      endDate: string;
-      typeName: string;
-    }>(
-      `SELECT r.start_date AS "startDate", r.end_date AS "endDate", tt.name AS "typeName"
-         FROM time_off_requests r JOIN time_off_types tt ON tt.id = r.type_id
-        WHERE r.user_id = $1 AND r.status = 'approved' AND r.start_date <= $3 AND r.end_date >= $2`,
-      [input.userId, days[0], days[days.length - 1]],
+    // Approved time off during any of them: whole days, or the hours of part of one.
+    const { rows: timeOff } = await client.query<{ from: string; to: string; typeName: string }>(
+      `SELECT lower(span) AS "from", upper(span) AS "to", "typeName" FROM (
+         SELECT ${TIME_OFF_SPAN} AS span, tt.name AS "typeName"
+           FROM time_off_requests r
+           JOIN time_off_types tt ON tt.id = r.type_id
+          CROSS JOIN org_settings os
+          WHERE r.user_id = $1 AND r.status = 'approved') t
+        WHERE span && tstzrange($2, $3)`,
+      [
+        input.userId,
+        times[0]!.startTime,
+        new Date(Math.max(...times.map((t) => Date.parse(t.endTime)))).toISOString(),
+      ],
     );
 
     const result: RepeatResult = { created: 0, skipped: [] };
-    for (const [i, time] of times.entries()) {
-      const day = days[i]!;
-      const off = timeOff.find((t) => t.startDate <= day && t.endDate >= day);
+    for (const time of times) {
+      const off = timeOff.find(
+        (t) =>
+          Date.parse(t.from) < Date.parse(time.endTime) &&
+          Date.parse(t.to) > Date.parse(time.startTime),
+      );
       if (off) {
         result.skipped.push({ ...time, reason: 'time_off', detail: off.typeName });
         continue;

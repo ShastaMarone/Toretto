@@ -5,6 +5,7 @@ import {
   scheduleTemplate,
   shiftsConfirmedTemplate,
   timeOffRequestedTemplate,
+  timeOffReviewedTemplate,
 } from '../src/email/templates';
 import { parseAddress } from '../src/email/transport';
 import { shiftOn } from './helpers';
@@ -108,13 +109,50 @@ describe('email html', () => {
       recipientName: 'Admin',
       requesterName: 'Line\nBreak',
       typeName: 'Vacation',
-      startDate: '2026-10-05',
-      endDate: '2026-10-05',
+      span: { startDate: '2026-10-05', endDate: '2026-10-05', startTime: null, endTime: null },
+      tz: 'America/Toronto',
+      timeFormat: '12h',
       note: null,
       conflicts: 0,
     });
     expect(email.subject).not.toMatch(/[\r\n]/);
     expect(email.text).toContain('(1 day)');
+  });
+
+  it("gives the hours of time off for part of a day, in each reader's zone and format", () => {
+    const span = {
+      startDate: '2026-10-06',
+      endDate: '2026-10-06',
+      startTime: '2026-10-06T17:00:00.000Z',
+      endTime: '2026-10-06T19:30:00.000Z',
+    };
+    const requested = timeOffRequestedTemplate(ctx, {
+      recipientName: 'Admin',
+      requesterName: 'Priya Patel',
+      typeName: 'Personal Day',
+      span,
+      tz: 'America/Toronto',
+      timeFormat: '12h',
+      note: 'Dentist',
+      conflicts: 1,
+    });
+    expect(requested.subject).toBe(
+      'Time-off request: Priya Patel · Personal Day, Tue, Oct 6 · 1:00 PM – 3:30 PM',
+    );
+    expect(requested.text).toContain('for Tue, Oct 6 · 1:00 PM – 3:30 PM (2h 30m).');
+    const reviewed = timeOffReviewedTemplate(ctx, {
+      recipientName: 'Priya Patel',
+      status: 'approved',
+      typeName: 'Personal Day',
+      span,
+      tz: 'America/Vancouver',
+      timeFormat: '24h',
+      reviewerName: 'Robin',
+      reviewNote: null,
+    });
+    expect(reviewed.subject).toBe(
+      'Your time off was approved: Personal Day, Tue, Oct 6 · 10:00 – 12:30',
+    );
   });
 });
 

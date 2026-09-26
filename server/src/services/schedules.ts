@@ -225,11 +225,12 @@ export async function getScheduleRange(
 
   const { rows: timeOff } = await db.query<TimeOffEntry>(
     `SELECT r.id, r.user_id AS "userId", r.start_date AS "startDate", r.end_date AS "endDate",
+            r.start_time AS "startTime", r.end_time AS "endTime",
             r.status, tt.name AS "typeName", tt.color AS "typeColor"
        FROM time_off_requests r JOIN time_off_types tt ON tt.id = r.type_id
       WHERE r.user_id = ANY($1) AND r.status IN ('pending', 'approved')
         AND r.start_date <= $3 AND r.end_date >= $2
-      ORDER BY r.start_date`,
+      ORDER BY r.start_date, r.start_time NULLS FIRST`,
     [people.map((p) => p.id), range.from, range.to],
   );
 

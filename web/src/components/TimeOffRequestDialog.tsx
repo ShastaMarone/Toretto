@@ -1,11 +1,5 @@
-import {
-  addDays,
-  diffDays,
-  formatDay,
-  formatTimeRange,
-  localDate,
-  type ISODate,
-} from '@shared/time';
+import { addDays, formatDay, formatTimeRange, localDate, type ISODate } from '@shared/time';
+import { timeOffLength, timeOffOverlaps } from '@shared/timeOff';
 import type { TimeOffRequest } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock } from 'lucide-react';
@@ -17,13 +11,14 @@ import { alpha } from '../lib/colors';
 import { cx } from '../lib/cx';
 import { fieldErrors, formMessage } from '../lib/forms';
 import { useTimeFormat, useViewerZone } from '../lib/session';
+import { initialWhen, whenPayload, whenSpan } from '../lib/timeOffWhen';
+import { TimeOffWhenFields } from './TimeOffWhenFields';
 import { Button } from './ui/Button';
 import { Field, FormError, Textarea } from './ui/Form';
-import { DateInput } from './ui/Pickers';
 import { Modal } from './ui/Modal';
 import { Spinner } from './ui/Misc';
 
-/** A team member asks for one or more days off (paid holiday, personal day, ...). */
+/** A team member asks for time off (paid holiday, personal day, ...): whole days or part of one. */
 export function TimeOffRequestDialog({
   initialDate,
   onClose,
@@ -36,19 +31,25 @@ export function TimeOffRequestDialog({
   const queryClient = useQueryClient();
   const types = useTimeOffTypes();
   const [typeId, setTypeId] = useState<string | null>(null);
-  const [startDate, setStartDate] = useState(initialDate);
-  const [endDate, setEndDate] = useState(initialDate);
+  const [when, setWhen] = useState(() => initialWhen(initialDate));
   const [note, setNote] = useState('');
   const selectedType = typeId ?? types.data?.[0]?.id ?? '';
-  const validRange = endDate >= startDate;
-  const shifts = useMyShifts(startDate, validRange ? endDate : startDate);
+  const valid = when.partial || when.endDate >= when.startDate;
+  const span = whenSpan(when, tz);
+  // Part of a day can run past midnight.
+  const shifts = useMyShifts(
+    when.startDate,
+    when.partial ? addDays(when.startDate, 1) : valid ? when.endDate : when.startDate,
+  );
+  const during = (shifts.data ?? []).filter((s) =>
+    timeOffOverlaps(span, s.startTime, s.endTime, tz),
+  );
 
   const submit = useMutation({
     mutationFn: () =>
       api.post<TimeOffRequest>('/my/time-off', {
         typeId: selectedType,
-        startDate,
-        endDate,
+        ...whenPayload(when, tz),
         note: note || null,
       }),
     onSuccess: (request) => {
@@ -58,7 +59,6 @@ export function TimeOffRequestDialog({
     },
   });
   const errors = fieldErrors(submit.error);
-  const days = validRange ? diffDays(startDate, endDate) + 1 : 0;
 
   return (
     <Modal
@@ -73,15 +73,17 @@ export function TimeOffRequestDialog({
             type="submit"
             variant="primary"
             loading={submit.isPending}
-            disabled={!selectedType || !validRange}
+            disabled={!selectedType || !valid}
           >
-            Request {days > 0 ? `${days} day${days === 1 ? '' : 's'}` : 'time off'}
+            Request {valid ? timeOffLength(span) : 'time off'}
           </Button>
         </>
       }
     >
       <div className="space-y-5">
-        <FormError message={formMessage(submit.error, ['startDate', 'endDate', 'typeId'])} />
+        <FormError
+          message={formMessage(submit.error, ['startDate', 'endDate', 'startTime', 'endTime'])}
+        />
         <fieldset>
           <legend className="mb-2 text-sm font-medium text-slate-700">Type of time off</legend>
           {types.isLoading ? (
@@ -129,46 +131,14 @@ export function TimeOffRequestDialog({
             </div>
           )}
         </fieldset>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="First day" error={errors.startDate}>
-            <DateInput
-              value={startDate}
-              onChange={(value) => {
-                setStartDate(value);
-                if (endDate < value) setEndDate(value);
-              }}
-            />
-          </Field>
-          <Field
-            label="Last day"
-            error={errors.endDate ?? (!validRange ? 'Must be on or after the first day' : null)}
-          >
-            <DateInput min={startDate} value={endDate} onChange={setEndDate} />
-          </Field>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {[
-            ['Just this day', 0],
-            ['2 days', 1],
-            ['A week', 6],
-          ].map(([label, extra]) => (
-            <button
-              key={label}
-              type="button"
-              onClick={() => setEndDate(addDays(startDate, extra as number))}
-              className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {shifts.data && shifts.data.length > 0 && (
+        <TimeOffWhenFields value={when} onChange={setWhen} errors={errors} quickPicks />
+        {during.length > 0 && (
           <div className="rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
             <p className="flex items-center gap-1.5 font-medium">
               <CalendarClock className="size-4" /> You're scheduled during this time
             </p>
             <ul className="mt-1 space-y-0.5 text-amber-800">
-              {shifts.data.map((s) => (
+              {during.map((s) => (
                 <li key={s.id}>
                   {formatDay(localDate(s.startTime, tz))} ·{' '}
                   {formatTimeRange(s.startTime, s.endTime, tz, { format: timeFormat })}

@@ -61,7 +61,7 @@ neon dark theme.
 - Join from an emailed link: an admin invites you (or you sign up yourself, if your admin turned that on). The link confirms your email address and lets you choose a password.
 - Sign in with email + password, or **"Email me a sign-in link"** (no password needed).
 - **My Schedule**: a month calendar, shifts waiting for confirmation (confirm one or all), the next two weeks, and your time-off requests.
-- **Request time off** by clicking any day. Pick a type (Paid Holiday, Personal Day, Vacation, Sick Day, Unpaid Leave — admins can edit the list) and a date range. You're warned if you're scheduled during that time.
+- **Request time off** by clicking any day. Pick a type (Paid Holiday, Personal Day, Vacation, Sick Day, Unpaid Leave — admins can edit the list) and either whole days or **part of a day** (from and to times, e.g. 1–3 PM for an appointment). You're warned if you're scheduled during that time, and part-day time off only counts shifts during those hours.
 - **Team Schedule**: everyone's published shifts across every tier (week, 2 weeks or month), filterable by tier, team and schedule. Coworkers see that someone is off, not why.
 - **Google Calendar**: **Add to calendar** on My Schedule (or **Calendar** in your profile) creates a private link to your published shifts and approved time off, and **Add to Google Calendar** subscribes to it. Outlook, Apple Calendar and other apps can subscribe to the same link. Google Calendar checks for changes every few hours, so an update can take up to a day to show there. **Get a new link** replaces a link that was shared by mistake. See [Calendar feeds](#calendar-feeds).
 - **Light, dark or system theme**, with frosted-glass panels and neon glows in the dark theme. Saved per device.

@@ -73,6 +73,15 @@ beforeAll(async () => {
     .post('/api/my/time-off')
     .send({ typeId: typeId('Personal Day'), startDate: day(9), endDate: day(9) })
     .expect(201);
+  // Part of a day, recorded by an admin (so already approved).
+  await admin
+    .post('/api/time-off')
+    .send({
+      userId: people.priya.id,
+      typeId: typeId('Sick Day'),
+      ...shiftOn(day(6), '13:00', '15:00'),
+    })
+    .expect(201);
 });
 afterAll(async () => {
   await ctx.close();
@@ -138,8 +147,15 @@ describe('calendar feed', () => {
       DESCRIPTION: `Note: Cottage\\nView in Toretto: ${APP_URL}/my-schedule`,
       TRANSP: 'TRANSPARENT',
     });
+    // Part of a day is a timed event.
+    const sick = shiftOn(day(6), '13:00', '15:00');
+    expect(list.find((e) => e.SUMMARY === 'Time off: Sick Day')).toMatchObject({
+      DTSTART: utc(sick.startTime),
+      DTEND: utc(sick.endTime),
+      TRANSP: 'TRANSPARENT',
+    });
     // Not drafts, not someone else's shifts, not requests still waiting for an answer.
-    expect(list).toHaveLength(2);
+    expect(list).toHaveLength(3);
     expect(res.text).not.toContain(shifts.draft);
     expect(res.text).not.toContain(shifts.sams);
     expect(res.text).not.toContain('Personal Day');

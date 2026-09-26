@@ -1,6 +1,6 @@
+import { timeOffDays } from '@shared/timeOff';
 import {
   addDays,
-  eachDay,
   endOfMonth,
   localDate,
   localTime,
@@ -49,20 +49,24 @@ export function groupByDay<T extends { startTime: string }>(
   return out;
 }
 
-/** user id -> day -> time-off entry, for the given days. */
+/**
+ * user id -> day -> time off that day (for the given days): whole days first,
+ * then part-day time off by its start, placed by its hours in `tz`.
+ */
 export function timeOffByUserDay(
   entries: TimeOffEntry[],
   days: ISODate[],
-): Map<string, Map<ISODate, TimeOffEntry>> {
-  const out = new Map<string, Map<ISODate, TimeOffEntry>>();
+  tz: string,
+): Map<string, Map<ISODate, TimeOffEntry[]>> {
+  const out = new Map<string, Map<ISODate, TimeOffEntry[]>>();
   const inRange = new Set(days);
-  for (const entry of entries) {
-    for (const day of eachDay(entry.startDate, entry.endDate)) {
+  const order = (e: TimeOffEntry) => e.startTime ?? '';
+  for (const entry of [...entries].sort((a, b) => order(a).localeCompare(order(b)))) {
+    for (const day of timeOffDays(entry, tz)) {
       if (!inRange.has(day)) continue;
       let byDay = out.get(entry.userId);
       if (!byDay) out.set(entry.userId, (byDay = new Map()));
-      // Approved beats pending if both exist.
-      if (!byDay.has(day) || entry.status === 'approved') byDay.set(day, entry);
+      byDay.set(day, [...(byDay.get(day) ?? []), entry]);
     }
   }
   return out;

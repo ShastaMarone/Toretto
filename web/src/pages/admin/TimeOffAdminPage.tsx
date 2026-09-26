@@ -1,4 +1,5 @@
-import { diffDays, formatDateRange, formatRelative, todayIn } from '@shared/time';
+import { formatRelative, todayIn } from '@shared/time';
+import { formatTimeOffWhen, timeOffLength } from '@shared/timeOff';
 import type { Person, TimeOffRequest } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, Check, Plane, Plus, X } from 'lucide-react';
@@ -6,9 +7,9 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
 import { usePeople, useTimeOffRequests, useTimeOffTypes } from '../../api/queries';
+import { TimeOffWhenFields } from '../../components/TimeOffWhenFields';
 import { Button } from '../../components/ui/Button';
 import { Field, FormError, Select, Textarea } from '../../components/ui/Form';
-import { DateInput } from '../../components/ui/Pickers';
 import { Modal } from '../../components/ui/Modal';
 import {
   Avatar,
@@ -23,7 +24,8 @@ import {
   type Tone,
 } from '../../components/ui/Misc';
 import { fieldErrors, formMessage } from '../../lib/forms';
-import { useBootstrapData } from '../../lib/session';
+import { useBootstrapData, useTimeFormat, useViewerZone } from '../../lib/session';
+import { initialWhen, whenPayload } from '../../lib/timeOffWhen';
 
 const STATUS: Record<TimeOffRequest['status'], { label: string; tone: Tone }> = {
   pending: { label: 'Pending', tone: 'amber' },
@@ -34,13 +36,10 @@ const STATUS: Record<TimeOffRequest['status'], { label: string; tone: Tone }> = 
 
 type TabKey = 'pending' | 'upcoming' | 'all';
 
-function days(r: TimeOffRequest) {
-  const n = diffDays(r.startDate, r.endDate) + 1;
-  return `${n} day${n === 1 ? '' : 's'}`;
-}
-
 export default function TimeOffAdminPage() {
   const { org } = useBootstrapData();
+  const tz = useViewerZone();
+  const timeFormat = useTimeFormat();
   const today = todayIn(org.timezone);
   const all = useTimeOffRequests('all');
   const queryClient = useQueryClient();
@@ -141,7 +140,7 @@ export default function TimeOffAdminPage() {
                       )}
                     </p>
                     <p className="text-sm text-slate-600">
-                      {formatDateRange(r.startDate, r.endDate)} · {days(r)}
+                      {formatTimeOffWhen(r, tz, timeFormat)} · {timeOffLength(r)}
                     </p>
                     {r.note && <p className="mt-1 text-sm italic text-slate-500">“{r.note}”</p>}
                     {!!r.conflicts && r.status !== 'cancelled' && r.status !== 'denied' && (
@@ -193,6 +192,7 @@ export default function TimeOffAdminPage() {
       {declining && (
         <DeclineDialog
           request={declining}
+          when={formatTimeOffWhen(declining, tz, timeFormat)}
           loading={review.isPending}
           onConfirm={(note) => review.mutate({ id: declining.id, decision: 'deny', note })}
           onClose={() => setDeclining(null)}
@@ -205,11 +205,13 @@ export default function TimeOffAdminPage() {
 
 function DeclineDialog({
   request,
+  when,
   loading,
   onConfirm,
   onClose,
 }: {
   request: TimeOffRequest;
+  when: string;
   loading: boolean;
   onConfirm: (note: string) => void;
   onClose: () => void;
@@ -218,7 +220,7 @@ function DeclineDialog({
   return (
     <Modal
       title={`${request.status === 'approved' ? 'Revoke' : 'Decline'} ${request.userName}'s ${request.type.name}?`}
-      description={formatDateRange(request.startDate, request.endDate)}
+      description={when}
       onClose={onClose}
       onSubmit={() => onConfirm(note)}
       size="sm"
@@ -249,20 +251,21 @@ function AddTimeOffDialog({ onClose, onSaved }: { onClose: () => void; onSaved: 
   const { org } = useBootstrapData();
   const people = usePeople();
   const types = useTimeOffTypes();
-  const today = todayIn(org.timezone);
-  const [form, setForm] = useState({
-    userId: '',
-    typeId: '',
-    startDate: today,
-    endDate: today,
-    note: '',
-  });
+  // Like the builder: hours are in the organization's zone.
+  const tz = org.timezone;
+  const [form, setForm] = useState({ userId: '', typeId: '', note: '' });
+  const [when, setWhen] = useState(() => initialWhen(todayIn(tz)));
   const active = (people.data ?? []).filter((p: Person) => p.status !== 'deactivated');
   const userId = form.userId || active[0]?.id || '';
   const typeId = form.typeId || types.data?.[0]?.id || '';
   const save = useMutation({
     mutationFn: () =>
-      api.post<TimeOffRequest>('/time-off', { ...form, userId, typeId, note: form.note || null }),
+      api.post<TimeOffRequest>('/time-off', {
+        userId,
+        typeId,
+        ...whenPayload(when, tz),
+        note: form.note || null,
+      }),
     onSuccess: (r) => {
       toast.success(`Added ${r.type.name} for ${r.userName}`);
       onSaved();
@@ -292,7 +295,14 @@ function AddTimeOffDialog({ onClose, onSaved }: { onClose: () => void; onSaved: 
     >
       <div className="space-y-4">
         <FormError
-          message={formMessage(save.error, ['userId', 'typeId', 'startDate', 'endDate'])}
+          message={formMessage(save.error, [
+            'userId',
+            'typeId',
+            'startDate',
+            'endDate',
+            'startTime',
+            'endTime',
+          ])}
         />
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Person" error={errors.userId}>
@@ -313,26 +323,8 @@ function AddTimeOffDialog({ onClose, onSaved }: { onClose: () => void; onSaved: 
               ))}
             </Select>
           </Field>
-          <Field label="First day" error={errors.startDate}>
-            <DateInput
-              value={form.startDate}
-              onChange={(startDate) =>
-                setForm({
-                  ...form,
-                  startDate,
-                  endDate: form.endDate < startDate ? startDate : form.endDate,
-                })
-              }
-            />
-          </Field>
-          <Field label="Last day" error={errors.endDate}>
-            <DateInput
-              min={form.startDate}
-              value={form.endDate}
-              onChange={(endDate) => setForm({ ...form, endDate })}
-            />
-          </Field>
         </div>
+        <TimeOffWhenFields value={when} onChange={setWhen} errors={errors} />
         <Field label="Note" optional>
           <Textarea
             rows={2}

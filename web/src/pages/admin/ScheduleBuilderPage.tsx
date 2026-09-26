@@ -223,7 +223,10 @@ function Builder({
       ),
     [data.removedShifts, tz],
   );
-  const offByUserDay = useMemo(() => timeOffByUserDay(data.timeOff, days), [data.timeOff, days]);
+  const offByUserDay = useMemo(
+    () => timeOffByUserDay(data.timeOff, days, tz),
+    [data.timeOff, days, tz],
+  );
   const labelsById = new Map(data.labels.map((l) => [l.id, l]));
   const tierColor = new Map(tierList.map((t) => [t.id, t.color]));
   const colorFor = (s: BuilderShift, person?: PersonRow) =>
@@ -634,10 +637,12 @@ function Builder({
         renderCell={(person, day) => {
           const cellShifts = byUserDay.get(person.id)?.get(day) ?? [];
           const cellGhosts = ghosts.get(person.id)?.get(day) ?? [];
-          const off = offByUserDay.get(person.id)?.get(day);
+          const off = offByUserDay.get(person.id)?.get(day) ?? [];
           return (
             <div className="flex min-h-[4.5rem] flex-col gap-1">
-              {off && <TimeOffChip entry={off} compact={compact} />}
+              {off.map((entry) => (
+                <TimeOffChip key={entry.id} entry={entry} tz={tz} compact={compact} />
+              ))}
               {cellShifts.map((s) => (
                 <ShiftChip
                   key={s.id}

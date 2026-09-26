@@ -7,7 +7,7 @@ import {
   todayIn,
   type ISODate,
 } from '@shared/time';
-import type { PersonRow, ShiftView, Tier } from '@shared/types';
+import type { PersonRow, ShiftView, Tier, TimeOffEntry } from '@shared/types';
 import type { Holiday } from '@shared/holidays';
 import { DateTime } from 'luxon';
 import { Users } from 'lucide-react';
@@ -172,7 +172,10 @@ function TeamCalendar({
   const groups = useMemo(() => groupByTier(people, tierList, me.id), [people, tierList, me.id]);
   const byUserDay = useMemo(() => groupByUserDay(shifts, tz), [shifts, tz]);
   const byDay = useMemo(() => groupByDay(shifts, tz), [shifts, tz]);
-  const offByUserDay = useMemo(() => timeOffByUserDay(data?.timeOff ?? [], days), [data, days]);
+  const offByUserDay = useMemo(
+    () => timeOffByUserDay(data?.timeOff ?? [], days, tz),
+    [data, days, tz],
+  );
   const peopleById = new Map(people.map((p) => [p.id, p]));
   const manySchedules = (data?.schedules.length ?? 0) > 1;
 
@@ -294,10 +297,12 @@ function TeamCalendar({
               );
             }}
             renderCell={(person, day) => {
-              const off = offByUserDay.get(person.id)?.get(day);
+              const off = offByUserDay.get(person.id)?.get(day) ?? [];
               return (
                 <div className="flex flex-col gap-1">
-                  {off && <TimeOffChip entry={off} compact={compact} />}
+                  {off.map((entry) => (
+                    <TimeOffChip key={entry.id} entry={entry} tz={tz} compact={compact} />
+                  ))}
                   {(byUserDay.get(person.id)?.get(day) ?? []).map((s) => (
                     <ShiftChip
                       key={s.id}
@@ -339,7 +344,12 @@ function TeamCalendar({
                   holidays={holidays.get(day)}
                   shifts={byDay.get(day) ?? []}
                   peopleById={peopleById}
-                  offPeople={people.filter((p) => offByUserDay.get(p.id)?.get(day))}
+                  off={people.flatMap((person) =>
+                    (offByUserDay.get(person.id)?.get(day) ?? []).map((entry) => ({
+                      person,
+                      entry,
+                    })),
+                  )}
                   showSchedule={manySchedules && !scheduleFilter}
                 />
               ))}
@@ -361,7 +371,7 @@ function DayAgenda({
   holidays,
   shifts,
   peopleById,
-  offPeople,
+  off,
   showSchedule,
 }: {
   day: ISODate;
@@ -371,7 +381,8 @@ function DayAgenda({
   holidays: Holiday[] | undefined;
   shifts: ShiftView[];
   peopleById: Map<string, PersonRow>;
-  offPeople: PersonRow[];
+  /** Who's off that day (with their hours, for part of a day). */
+  off: { person: PersonRow; entry: TimeOffEntry }[];
   showSchedule: boolean;
 }) {
   const timeFormat = useTimeFormat();
@@ -399,7 +410,7 @@ function DayAgenda({
           {shifts.length} shift{shifts.length === 1 ? '' : 's'}
         </span>
       </div>
-      {shifts.length === 0 && offPeople.length === 0 ? (
+      {shifts.length === 0 && off.length === 0 ? (
         <p className="px-4 py-3 text-sm text-slate-400">No one scheduled</p>
       ) : (
         <ul className="divide-y divide-slate-100">
@@ -439,12 +450,15 @@ function DayAgenda({
               </li>
             );
           })}
-          {offPeople.map((p) => (
+          {off.map(({ person, entry }) => (
             <li
-              key={p.id}
+              key={entry.id}
               className="stripes flex items-center gap-3 px-4 py-2 text-sm text-slate-600"
             >
-              <Avatar name={p.name} size="sm" /> {p.name} · off
+              <Avatar name={person.name} size="sm" /> {person.name} · off
+              {entry.startTime &&
+                entry.endTime &&
+                ` ${formatTimeRange(entry.startTime, entry.endTime, tz, { format: timeFormat })}`}
             </li>
           ))}
         </ul>

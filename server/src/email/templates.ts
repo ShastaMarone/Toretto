@@ -1,5 +1,4 @@
 import {
-  diffDays,
   formatDateRange,
   formatDay,
   formatShiftWhen,
@@ -7,6 +6,7 @@ import {
   tzAbbreviation,
   type TimeFormat,
 } from '@shared/time';
+import { formatTimeOffWhen, timeOffLength, type TimeOffSpan } from '@shared/timeOff';
 import { html, safeColor, type SafeHtml } from './html';
 
 export interface RenderedEmail {
@@ -206,10 +206,6 @@ const plural = (n: number, word: string, pluralWord = `${word}s`) =>
 /** Greet people by first name: "Hi Priya,". */
 export function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] || name;
-}
-
-function dayCount(startDate: string, endDate: string): string {
-  return plural(diffDays(startDate, endDate) + 1, 'day');
 }
 
 function oneLine(subject: string): string {
@@ -511,15 +507,16 @@ export function timeOffRequestedTemplate(
     recipientName: string;
     requesterName: string;
     typeName: string;
-    startDate: string;
-    endDate: string;
+    span: TimeOffSpan;
+    tz: string;
+    timeFormat: TimeFormat;
     note: string | null;
     conflicts: number;
   },
 ): RenderedEmail {
-  const range = formatDateRange(input.startDate, input.endDate);
+  const range = formatTimeOffWhen(input.span, input.tz, input.timeFormat);
   const subject = `Time-off request: ${input.requesterName} · ${input.typeName}, ${range}`;
-  const summary = `${input.requesterName} requested ${input.typeName} for ${range} (${dayCount(input.startDate, input.endDate)}).`;
+  const summary = `${input.requesterName} requested ${input.typeName} for ${range} (${timeOffLength(input.span)}).`;
   const conflictText = input.conflicts
     ? `They're scheduled for ${plural(input.conflicts, 'shift')} during this time.`
     : null;
@@ -549,23 +546,25 @@ export function timeOffReviewedTemplate(
     recipientName: string;
     status: 'approved' | 'denied';
     typeName: string;
-    startDate: string;
-    endDate: string;
+    span: TimeOffSpan;
+    tz: string;
+    timeFormat: TimeFormat;
     reviewerName: string | null;
     reviewNote: string | null;
     /** An admin added this time off directly (rather than approving a request). */
     addedByAdmin?: boolean;
   },
 ): RenderedEmail {
-  const range = formatDateRange(input.startDate, input.endDate);
+  const range = formatTimeOffWhen(input.span, input.tz, input.timeFormat);
+  const length = timeOffLength(input.span);
   const approved = input.status === 'approved';
   const subject = input.addedByAdmin
     ? `Time off added: ${input.typeName}, ${range}`
     : `Your time off was ${approved ? 'approved' : 'declined'}: ${input.typeName}, ${range}`;
   const by = input.reviewerName ? ` by ${input.reviewerName}` : '';
   const summary = input.addedByAdmin
-    ? `${input.typeName} for ${range} (${dayCount(input.startDate, input.endDate)}) was added to your schedule${by}.`
-    : `Your ${input.typeName} request for ${range} (${dayCount(input.startDate, input.endDate)}) was ${approved ? 'approved' : 'declined'}${by}.`;
+    ? `${input.typeName} for ${range} (${length}) was added to your schedule${by}.`
+    : `Your ${input.typeName} request for ${range} (${length}) was ${approved ? 'approved' : 'declined'}${by}.`;
   const url = `${ctx.appUrl}/my-schedule`;
   const body = html`${heading(input.addedByAdmin ? 'Time off added' : approved ? 'Time off approved' : 'Time off declined')}
   ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
@@ -588,11 +587,12 @@ export function timeOffCancelledTemplate(
     recipientName: string;
     requesterName: string;
     typeName: string;
-    startDate: string;
-    endDate: string;
+    span: TimeOffSpan;
+    tz: string;
+    timeFormat: TimeFormat;
   },
 ): RenderedEmail {
-  const range = formatDateRange(input.startDate, input.endDate);
+  const range = formatTimeOffWhen(input.span, input.tz, input.timeFormat);
   const subject = `Time off cancelled: ${input.requesterName} · ${input.typeName}, ${range}`;
   const summary = `${input.requesterName} cancelled their approved ${input.typeName} for ${range}. They're available to be scheduled again.`;
   const url = `${ctx.appUrl}/admin/time-off`;

@@ -178,6 +178,9 @@ export interface TimeOffEntry {
   userId: string;
   startDate: string;
   endDate: string;
+  /** Only for part of a day. */
+  startTime: string | null;
+  endTime: string | null;
   status: 'pending' | 'approved';
   /** Hidden (null) when a team member looks at someone else's time off. */
   typeName: string | null;
@@ -266,6 +269,9 @@ export interface TimeOffRequest {
   type: { id: string; name: string; color: string; paid: boolean };
   startDate: string;
   endDate: string;
+  /** Only for part of a day. */
+  startTime: string | null;
+  endTime: string | null;
   note: string | null;
   status: TimeOffStatus;
   reviewedAt: string | null;

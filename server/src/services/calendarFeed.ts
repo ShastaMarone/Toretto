@@ -1,3 +1,4 @@
+import { isPartialDay, type TimeOffSpan } from '@shared/timeOff';
 import type { ShiftView } from '@shared/types';
 import type { Config } from '../config';
 import type { Queryable } from '../db';
@@ -39,12 +40,13 @@ export async function calendarFeed(
   const [settings, shifts, timeOff, scheduleCount] = await Promise.all([
     getSettings(db),
     myShifts(db, user.id, { from, to }),
-    db.query<{ id: string; startDate: string; endDate: string; note: string | null; type: string }>(
-      `SELECT r.id, r.start_date AS "startDate", r.end_date AS "endDate", r.note, tt.name AS type
+    db.query<TimeOffSpan & { id: string; note: string | null; type: string }>(
+      `SELECT r.id, r.start_date AS "startDate", r.end_date AS "endDate",
+              r.start_time AS "startTime", r.end_time AS "endTime", r.note, tt.name AS type
          FROM time_off_requests r JOIN time_off_types tt ON tt.id = r.type_id
         WHERE r.user_id = $1 AND r.status = 'approved'
           AND r.end_date >= $2::date AND r.start_date <= $3::date
-        ORDER BY r.start_date`,
+        ORDER BY r.start_date, r.start_time NULLS FIRST`,
       [user.id, from.slice(0, 10), to.slice(0, 10)],
     ),
     db.query<{ n: number }>('SELECT count(*)::int AS n FROM schedules'),
@@ -74,7 +76,9 @@ export async function calendarFeed(
         uid: `time-off-${t.id}@toretto`,
         summary: `Time off: ${t.type}`,
         description: [t.note && `Note: ${t.note}`, link].filter(Boolean).join('\n'),
-        when: { firstDay: t.startDate, lastDay: t.endDate },
+        when: isPartialDay(t)
+          ? { start: t.startTime, end: t.endTime }
+          : { firstDay: t.startDate, lastDay: t.endDate },
         free: true,
       })),
     ],

@@ -50,6 +50,34 @@ describe('describeActivity', () => {
     );
   });
 
+  it('gives time off as days, or its hours for part of a day', () => {
+    expect(
+      describeActivity(
+        entry('time_off.requested', {
+          typeName: 'Vacation',
+          startDate: '2026-10-05',
+          endDate: '2026-10-07',
+        }),
+        TZ,
+      ),
+    ).toBe('requested Vacation, Oct 5 – 7, 2026');
+    const { startTime, endTime } = shiftTimesFromLocal('2026-10-06', '13:00', '15:30', TZ);
+    const partial = entry('time_off.approved', {
+      personName: 'Priya',
+      typeName: 'Personal Day',
+      startDate: '2026-10-06',
+      endDate: '2026-10-06',
+      startTime,
+      endTime,
+    });
+    expect(describeActivity(partial, TZ)).toBe(
+      "approved Priya's Personal Day, Tue, Oct 6 · 1:00 PM – 3:30 PM",
+    );
+    expect(describeActivity(partial, TZ, '24h')).toBe(
+      "approved Priya's Personal Day, Tue, Oct 6 · 13:00 – 15:30",
+    );
+  });
+
   it('describes renaming and copying', () => {
     expect(
       describeActivity(entry('schedule.renamed', { title: 'Holidays', previous: 'Extra' }), TZ),

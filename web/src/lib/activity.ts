@@ -4,7 +4,10 @@ import type { AuditEntry } from '@shared/types';
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 const num = (v: unknown) => (typeof v === 'number' ? v : 0);
 
-function range(d: Record<string, unknown>): string {
+/** Time off's days, or its hours for part of a day. */
+function range(d: Record<string, unknown>, tz: string, format: TimeFormat): string {
+  if (d.startTime && d.endTime)
+    return formatShiftWhen(str(d.startTime), str(d.endTime), tz, format);
   return d.startDate && d.endDate ? formatDateRange(str(d.startDate), str(d.endDate)) : '';
 }
 
@@ -64,15 +67,15 @@ export function describeActivity(
     case 'shift.confirmed_all':
       return `confirmed ${plural(num(d.count), 'shift')}`;
     case 'time_off.requested':
-      return `requested ${str(d.typeName)}, ${range(d)}`;
+      return `requested ${str(d.typeName)}, ${range(d, tz, format)}`;
     case 'time_off.approved':
-      return `approved ${str(d.personName)}'s ${str(d.typeName)}, ${range(d)}`;
+      return `approved ${str(d.personName)}'s ${str(d.typeName)}, ${range(d, tz, format)}`;
     case 'time_off.denied':
-      return `declined ${str(d.personName)}'s ${str(d.typeName)}, ${range(d)}`;
+      return `declined ${str(d.personName)}'s ${str(d.typeName)}, ${range(d, tz, format)}`;
     case 'time_off.cancelled':
-      return `cancelled their ${str(d.typeName)}, ${range(d)}`;
+      return `cancelled their ${str(d.typeName)}, ${range(d, tz, format)}`;
     case 'time_off.added':
-      return `added ${str(d.typeName)} for ${str(d.personName)}, ${range(d)}`;
+      return `added ${str(d.typeName)} for ${str(d.personName)}, ${range(d, tz, format)}`;
     case 'user.invited':
       return `invited ${str(d.name)} (${str(d.email)})`;
     case 'user.invite_resent':

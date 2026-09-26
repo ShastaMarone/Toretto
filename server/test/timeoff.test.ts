@@ -1,4 +1,4 @@
-import { addDays } from '@shared/time';
+import { addDays, formatDay } from '@shared/time';
 import type { TimeOffRequest, TimeOffType } from '@shared/types';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -228,5 +228,139 @@ describe('requesting time off', () => {
     const mine = (await sam.get('/api/my/time-off')).body as TimeOffRequest[];
     expect(mine.map((r) => r.type.name)).toEqual(['Paid Holiday', 'Personal Day']);
     expect(mine.every((r) => r.userId === people.sam!.id)).toBe(true);
+  });
+});
+
+describe('time off for part of a day', () => {
+  let kai: Agent;
+  let kaiId: string;
+  const main = () => defaultScheduleId(ctx.db);
+  const typeId = () => types['Personal Day']!.id;
+  const request = (body: Record<string, unknown>) =>
+    kai.post('/api/my/time-off').send({ typeId: typeId(), ...body });
+
+  beforeAll(async () => {
+    const tier = await createTier(ctx.db, 'Tier K');
+    const person = await createUser(ctx.db, { name: 'Kai Park', tierId: tier });
+    kaiId = person.id;
+    kai = ctx.agent();
+    await login(kai, person.email);
+    // Kai works 9 to 5 on day 15.
+    await admin
+      .post(`/api/schedules/${await main()}/shifts`)
+      .send({ userId: kaiId, ...shiftOn(day(15)) })
+      .expect(201);
+    await admin
+      .post(`/api/schedules/${await main()}/publish`)
+      .send({})
+      .expect(200);
+    await clearEmails(ctx.db);
+  });
+
+  it('takes exact hours, and tells admins the times', async () => {
+    const hours = shiftOn(day(15), '13:00', '15:00');
+    const res = await request({ ...hours, note: 'Dentist' });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      startDate: day(15),
+      endDate: day(15),
+      startTime: hours.startTime,
+      endTime: hours.endTime,
+    });
+    const [mail] = await emails(ctx.db, { kind: 'time_off_requested', to: people.admin!.email });
+    expect(mail!.subject).toBe(
+      `Time-off request: Kai Park · Personal Day, ${formatDay(day(15))} · 1:00 PM – 3:00 PM`,
+    );
+    expect(mail!.text).toContain('(2h)');
+    expect(mail!.text).toContain("They're scheduled for 1 shift during this time.");
+  });
+
+  it('only counts shifts during those hours as conflicts', async () => {
+    expect((await request(shiftOn(day(15), '18:00', '20:00'))).status).toBe(201);
+    const mine = (await admin.get(`/api/time-off?userId=${kaiId}`)).body as TimeOffRequest[];
+    const conflicts = Object.fromEntries(
+      mine.map((r) => [r.startTime && new Date(r.startTime).getUTCHours(), r.conflicts]),
+    );
+    // 1 PM and 6 PM in Toronto.
+    expect(conflicts).toEqual({ 17: 1, 22: 0 });
+  });
+
+  it('allows other hours that day, but not overlapping hours or the whole day', async () => {
+    const overlapping = await request(shiftOn(day(15), '14:00', '16:00'));
+    expect(overlapping.status).toBe(409);
+    expect(overlapping.body.error.code).toBe('TIME_OFF_OVERLAP');
+    expect((await request({ startDate: day(15), endDate: day(15) })).status).toBe(409);
+    // Right after the 1–3 PM request ends.
+    expect((await request(shiftOn(day(15), '15:00', '16:00'))).status).toBe(201);
+  });
+
+  it('can run past midnight, onto the next day', async () => {
+    const res = await request(shiftOn(day(18), '22:00', '02:00'));
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ startDate: day(18), endDate: day(19) });
+    // Ending exactly at midnight stays on one day.
+    const toMidnight = await request(shiftOn(day(20), '20:00', '00:00'));
+    expect(toMidnight.body).toMatchObject({ startDate: day(20), endDate: day(20) });
+  });
+
+  it('turns away hours that make no sense', async () => {
+    const at = (n: number, time: string) => shiftOn(day(n), time, time).startTime;
+    const bad = [
+      { startTime: at(16, '15:00'), endTime: at(16, '13:00') },
+      { startTime: at(16, '09:00'), endTime: at(17, '10:00') },
+      { startTime: at(16, '09:00') },
+      { startTime: at(16, '09:00'), endTime: at(16, '10:00'), startDate: day(16) },
+      {},
+    ];
+    for (const body of bad) expect((await request(body)).status).toBe(400);
+  });
+
+  it('shows the hours on the team schedule once approved', async () => {
+    const { body: pending } = await admin.get(`/api/time-off?status=pending&userId=${kaiId}`);
+    const dentist = (pending as TimeOffRequest[]).find((r) => r.note === 'Dentist')!;
+    await admin.post(`/api/time-off/${dentist.id}/approve`).send({}).expect(200);
+    const [mail] = await emails(ctx.db, { kind: 'time_off_reviewed', to: 'kai.park@example.com' });
+    expect(mail!.subject).toBe(
+      `Your time off was approved: Personal Day, ${formatDay(day(15))} · 1:00 PM – 3:00 PM`,
+    );
+    const team = await sam.get(`/api/team/schedule?from=${day(15)}&to=${day(15)}`);
+    const entry = (team.body.timeOff as { id: string }[]).find((t) => t.id === dentist.id);
+    expect(entry).toMatchObject({ startTime: dentist.startTime, endTime: dentist.endTime });
+  });
+
+  it('keeps repeating shifts off only the days they overlap', async () => {
+    await admin
+      .post('/api/time-off')
+      .send({ userId: kaiId, typeId: typeId(), ...shiftOn(day(22), '13:00', '15:00') })
+      .expect(201);
+    await admin
+      .post('/api/time-off')
+      .send({ userId: kaiId, typeId: typeId(), ...shiftOn(day(23), '18:00', '20:00') })
+      .expect(201);
+    const res = await admin.post(`/api/schedules/${await main()}/shifts/bulk`).send({
+      userId: kaiId,
+      labelId: null,
+      notes: '',
+      shifts: [22, 23].map((n) => shiftOn(day(n))),
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.created).toBe(1);
+    expect(res.body.skipped).toMatchObject([
+      { startTime: shiftOn(day(22)).startTime, reason: 'time_off', detail: 'Personal Day' },
+    ]);
+  });
+
+  it("can be cancelled until it's over", async () => {
+    const earlier = new Date(Date.now() - 3 * 3_600_000).toISOString();
+    const ended = new Date(Date.now() - 3_600_000).toISOString();
+    const { rows } = await ctx.db.query<{ id: string }>(
+      `INSERT INTO time_off_requests
+         (user_id, type_id, start_date, end_date, start_time, end_time, status)
+       VALUES ($1, $2, current_date, current_date, $3, $4, 'approved') RETURNING id`,
+      [kaiId, typeId(), earlier, ended],
+    );
+    const past = await kai.post(`/api/my/time-off/${rows[0]!.id}/cancel`);
+    expect(past.status).toBe(403);
+    expect(past.body.error.code).toBe('TIME_OFF_PAST');
   });
 });

@@ -323,7 +323,16 @@ await copyShifts(db, admin, scheduleId, { ...week(nextWeek), targetStart: weekAf
 const typeId = async (name: string) =>
   (await db.query<{ id: string }>('SELECT id FROM time_off_types WHERE name = $1', [name])).rows[0]!
     .id;
-const timeOff = [
+const timeOff: {
+  person: string;
+  type: string;
+  start: string;
+  end: string;
+  /** Part of a day: from and to. */
+  hours?: [string, string];
+  status: string;
+  note: string | null;
+}[] = [
   {
     person: 'priya',
     type: 'Vacation',
@@ -340,6 +349,15 @@ const timeOff = [
     status: 'pending',
     note: 'Moving apartments',
   },
+  {
+    person: 'chris',
+    type: 'Personal Day',
+    start: n[2]!,
+    end: n[2]!,
+    hours: ['13:00', '15:00'],
+    status: 'approved',
+    note: 'Dentist',
+  },
   { person: 'taylor', type: 'Sick Day', start: w[3]!, end: w[3]!, status: 'approved', note: null },
   {
     person: 'maria',
@@ -351,11 +369,23 @@ const timeOff = [
   },
 ];
 for (const t of timeOff) {
+  const hours = t.hours ? shiftTimesFromLocal(t.start, t.hours[0], t.hours[1], timezone) : null;
   await db.query(
-    `INSERT INTO time_off_requests (user_id, type_id, start_date, end_date, note, status, reviewed_by, reviewed_at, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $6 = 'approved' THEN $7::uuid END,
+    `INSERT INTO time_off_requests (user_id, type_id, start_date, end_date, start_time, end_time,
+                                    note, status, reviewed_by, reviewed_at, created_by)
+     VALUES ($1, $2, $3, $4, $8, $9, $5, $6, CASE WHEN $6 = 'approved' THEN $7::uuid END,
              CASE WHEN $6 = 'approved' THEN now() END, $1)`,
-    [ids[t.person], await typeId(t.type), t.start, t.end, t.note, t.status, ids.alex],
+    [
+      ids[t.person],
+      await typeId(t.type),
+      t.start,
+      t.end,
+      t.note,
+      t.status,
+      ids.alex,
+      hours?.startTime ?? null,
+      hours?.endTime ?? null,
+    ],
   );
 }
 
