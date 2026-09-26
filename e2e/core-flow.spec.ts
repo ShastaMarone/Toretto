@@ -63,13 +63,16 @@ test.describe.configure({ mode: 'serial' });
 
 const ADMIN = { name: 'Robin Admin', email: 'robin@example.com', password: 'admin password 1' };
 const MEMBER = { name: 'Priya Patel', email: 'priya@example.com', password: 'member password 1' };
+const COWORKER = { name: 'Sam Chen', email: 'sam@example.com', password: 'coworker password 1' };
 
 let admin: Page;
 let member: Page;
+let coworker: Page;
 
 test.beforeAll(async ({ browser }) => {
   admin = await newPage(browser);
   member = await newPage(browser);
+  coworker = await newPage(browser);
 });
 
 test('first admin sets up the workspace and confirms their email', async ({ request }) => {
@@ -267,4 +270,84 @@ test('the member adds their shifts to Google Calendar', async ({ request }) => {
   // Google Calendar checks robots.txt before fetching.
   const robots = await (await request.get('/robots.txt')).text();
   expect(robots).toContain('Allow: /api/calendar/');
+});
+
+test('a member swaps a shift with a coworker, and the admin approves', async ({ request }) => {
+  // A second person in Tier 1.
+  await admin.goto('/admin/people');
+  await admin.getByRole('button', { name: 'Invite people' }).click();
+  const invite = admin.getByRole('dialog');
+  await invite.getByLabel('Full name').fill(COWORKER.name);
+  await invite.getByLabel('Work email').fill(COWORKER.email);
+  await invite.getByLabel('Tier').selectOption({ label: 'Tier 1' });
+  await invite.getByRole('button', { name: 'Send invite' }).click();
+  const link = await waitForEmail(request, { to: COWORKER.email, kind: 'invite' });
+  await coworker.goto(linkIn(link, '/set-password'));
+  await coworker.getByLabel('New password').fill(COWORKER.password);
+  await coworker.getByLabel('Confirm password').fill(COWORKER.password);
+  await coworker.getByRole('button', { name: 'Set password & continue' }).click();
+  await expect(coworker).toHaveURL(/\/my-schedule$/);
+
+  // Priya offers her On-Call shift to Sam.
+  await member.goto('/my-schedule');
+  await member
+    .getByRole('button', { name: /09:00 – 17:00|9:00 AM – 5:00 PM/ })
+    .first()
+    .click();
+  await member.getByRole('dialog').getByRole('button', { name: 'Offer to a coworker' }).click();
+  const offer = member.getByRole('dialog', { name: 'Offer this shift' });
+  await offer.getByRole('radio', { name: /Sam Chen/ }).check();
+  await offer.getByRole('button', { name: 'Send request' }).click();
+  await expect(member.getByText('Asked Sam')).toBeVisible();
+  const ask = await waitForEmail(request, { to: COWORKER.email, kind: 'swap_requested' });
+  expect(ask.subject).toMatch(/^Priya Patel asked you to take their shift on /);
+
+  // Sam accepts; the admin is asked to approve.
+  await coworker.goto('/my-schedule');
+  await coworker.getByRole('button', { name: 'Accept' }).click();
+  await expect(coworker.getByText(/Accepted: an admin will approve it/)).toBeVisible();
+  const notice = await waitForEmail(request, { to: ADMIN.email, kind: 'swap_accepted' });
+  expect(notice.subject).toMatch(/^Swap to approve: Priya Patel → Sam Chen, /);
+
+  await admin.goto('/admin/shift-requests');
+  await expect(admin.getByRole('link', { name: /Swaps & open shifts/ })).toContainText('1');
+  await admin.getByRole('button', { name: 'Approve' }).click();
+  await expect(admin.getByText('Approved: Sam has the shift now')).toBeVisible();
+
+  // It's Sam's shift now, already confirmed.
+  await coworker.reload();
+  const upcoming = coworker.getByRole('button', { name: /09:00 – 17:00|9:00 AM – 5:00 PM/ });
+  await expect(upcoming.first()).toBeVisible();
+  await expect(upcoming.first().getByLabel('Confirmed')).toBeVisible();
+});
+
+test('an admin posts an open shift, and the first to pick it up gets it', async ({ request }) => {
+  await admin.goto('/admin/shift-requests?tab=open');
+  await admin.getByRole('button', { name: 'Post open shift' }).first().click();
+  const dialog = admin.getByRole('dialog');
+  await dialog.getByLabel('Note').fill('Covering for a sick day');
+  await dialog.getByRole('button', { name: 'Post and email Tier 1' }).click();
+  await expect(admin.getByText('Open shift posted')).toBeVisible();
+  const posted = await waitForEmail(request, { to: MEMBER.email, kind: 'open_shift_posted' });
+  expect(posted.subject).toMatch(/^Open shift on .+: can you take it\?$/);
+
+  await member.goto('/my-schedule');
+  await member.getByRole('button', { name: 'Pick up' }).click();
+  await expect(member.getByText(/Picked up: it's yours once an admin approves/)).toBeVisible();
+  // Sam was too late.
+  await coworker.goto('/my-schedule');
+  await expect(coworker.getByRole('button', { name: 'Pick up' })).toHaveCount(0);
+
+  await admin.reload();
+  await admin.getByRole('button', { name: 'Approve' }).click();
+  await expect(admin.getByText("Approved: it's Priya's shift now")).toBeVisible();
+  const decision = await waitForEmail(request, { to: MEMBER.email, kind: 'open_shift_reviewed' });
+  expect(decision.subject).toMatch(/^You've got the shift on /);
+});
+
+test('the Hours page totals published hours per person', async () => {
+  await admin.goto('/admin/hours?weeks=4');
+  await expect(admin.getByRole('heading', { name: 'Hours' })).toBeVisible();
+  await expect(admin.getByRole('row', { name: /Priya Patel/ })).toBeVisible();
+  await expect(admin.getByRole('row', { name: /Sam Chen/ })).toContainText('8h');
 });

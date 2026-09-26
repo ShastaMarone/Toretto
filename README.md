@@ -29,6 +29,10 @@ neon dark theme.
     <td><img src="docs/screenshots/add-to-calendar.png" alt="Adding your shifts to Google Calendar" /></td>
   </tr>
   <tr>
+    <td><img src="docs/screenshots/swaps.png" alt="Approving shift swaps" /></td>
+    <td><img src="docs/screenshots/hours.png" alt="Hours and overtime" /></td>
+  </tr>
+  <tr>
     <td colspan="2" align="center"><img src="docs/screenshots/mobile-my-schedule.png" alt="Mobile" width="260" /></td>
   </tr>
 </table>
