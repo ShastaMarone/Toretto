@@ -10,15 +10,17 @@ import LoginPage from './pages/auth/LoginPage';
 import SetupPage from './pages/auth/SetupPage';
 import SignupPage from './pages/auth/SignupPage';
 import { ForgotPasswordPage, MagicLinkPage, SetPasswordPage } from './pages/auth/TokenPages';
-import { ConfirmScheduleShiftsPage, ConfirmShiftPage } from './pages/ConfirmPages';
+import { ConfirmShiftPage, ConfirmShiftsPage } from './pages/ConfirmPages';
 import MySchedulePage from './pages/member/MySchedulePage';
 import ProfilePage from './pages/member/ProfilePage';
 import TeamSchedulePage from './pages/member/TeamSchedulePage';
 
 // Admin screens are split into their own chunk; most people never load them.
 const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
-const SchedulesPage = lazy(() => import('./pages/admin/SchedulesPage'));
 const ScheduleBuilderPage = lazy(() => import('./pages/admin/ScheduleBuilderPage'));
+const SchedulesIndex = lazy(() =>
+  import('./pages/admin/ScheduleBuilderPage').then((m) => ({ default: m.SchedulesIndex })),
+);
 const TimeOffAdminPage = lazy(() => import('./pages/admin/TimeOffAdminPage'));
 const PeoplePage = lazy(() => import('./pages/admin/PeoplePage'));
 const TiersLabelsPage = lazy(() => import('./pages/admin/TiersLabelsPage'));
@@ -73,10 +75,12 @@ export default function App() {
             <Route path="/team" element={<TeamSchedulePage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/confirm-shift/:id" element={<ConfirmShiftPage />} />
-            <Route path="/confirm-shifts/:scheduleId" element={<ConfirmScheduleShiftsPage />} />
+            <Route path="/confirm-shifts" element={<ConfirmShiftsPage />} />
+            {/* Links from emails sent before schedules covered every tier. */}
+            <Route path="/confirm-shifts/:old" element={<Navigate to="/my-schedule" replace />} />
             <Route path="/admin" element={<RequireAdmin />}>
               <Route index element={<DashboardPage />} />
-              <Route path="schedules" element={<SchedulesPage />} />
+              <Route path="schedules" element={<SchedulesIndex />} />
               <Route path="schedules/:id" element={<ScheduleBuilderPage />} />
               <Route path="time-off" element={<TimeOffAdminPage />} />
               <Route path="people" element={<PeoplePage />} />

@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { Bootstrap } from '@shared/types';
@@ -6,7 +7,7 @@ import express from 'express';
 import helmet from 'helmet';
 import { originCheck, requireAdmin, requireAuth, sessionMiddleware } from './auth/middleware';
 import type { AppDeps } from './deps';
-import { errorHandler, notFound } from './errors';
+import { errorHandler, notFound, unauthorized } from './errors';
 import { adminRoutes, devRoutes, timeOffAdminRoutes } from './routes/admin';
 import { authRoutes, hasAnyUsers, toSessionUser } from './routes/auth';
 import { catalogRoutes } from './routes/catalog';
@@ -60,13 +61,26 @@ export function createApp(deps: AppDeps): express.Express {
         name: settings.orgName,
         timezone: settings.timezone,
         weekStartsOn: settings.weekStartsOn,
+        holidayRegion: settings.holidayRegion,
+        timeFormat: settings.timeFormat,
       },
       setupRequired: !(await hasAnyUsers(db)),
       selfSignup: settings.selfSignup,
       allowedDomains: settings.allowedDomains,
       devMailbox: config.devMailbox,
+      emailConfigured: config.email.transport !== 'console',
     };
     res.json(body);
+  });
+
+  // Scheduled jobs, called by Vercel Cron with `Authorization: Bearer $CRON_SECRET`.
+  api.get('/cron', async (req, res, next) => {
+    const { cronSecret } = config;
+    if (!cronSecret || !deps.runJobs) return next(notFound('API endpoint'));
+    if (!sameSecret(req.get('authorization') ?? '', `Bearer ${cronSecret}`)) {
+      return next(unauthorized('Invalid cron secret'));
+    }
+    res.json(await deps.runJobs());
   });
 
   const catalog = catalogRoutes(deps);
@@ -108,4 +122,10 @@ export function createApp(deps: AppDeps): express.Express {
 
   app.use(errorHandler(logger));
   return app;
+}
+
+/** Constant-time comparison (hashing first makes the lengths equal). */
+function sameSecret(given: string, expected: string): boolean {
+  const digest = (value: string) => createHash('sha256').update(value).digest();
+  return timingSafeEqual(digest(given), digest(expected));
 }

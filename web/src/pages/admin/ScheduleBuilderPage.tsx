@@ -1,5 +1,6 @@
 import {
   addDays,
+  diffDays,
   eachDay,
   formatDateRange,
   formatDay,
@@ -11,120 +12,251 @@ import {
   todayIn,
   type ISODate,
 } from '@shared/time';
-import type { BuilderShift, PublishResult, ScheduleDetail, ScheduleSummary } from '@shared/types';
+import type {
+  BuilderShift,
+  CopyResult,
+  PersonRow,
+  PublishResult,
+  RepeatResult,
+  ScheduleRange,
+  ScheduleSummary,
+} from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
-import { ArrowLeft, Ellipsis, Pencil, Plus, Send, Trash2, Undo2, UserPlus } from 'lucide-react';
+import { CopyPlus, Ellipsis, Plus, Send, Undo2 } from 'lucide-react';
 import { useMemo, useState, type DragEvent, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
-import { keys, usePeople, useSchedule } from '../../api/queries';
+import { keys, useScheduleRange, useSchedules, useTeams, useTiers } from '../../api/queries';
+import {
+  CalendarNav,
+  DayHeader,
+  GroupRows,
+  TierFilter,
+} from '../../components/schedule/CalendarBits';
+import { ScheduleSwitcher } from '../../components/schedule/ScheduleSwitcher';
 import {
   ShiftDialog,
+  type RepeatPayload,
   type ShiftDraft,
   type ShiftPayload,
 } from '../../components/schedule/ShiftDialog';
 import { ScheduleLegend, ShiftChip, TimeOffChip } from '../../components/schedule/ShiftChip';
-import { Button, ButtonLink } from '../../components/ui/Button';
+import { Button } from '../../components/ui/Button';
 import { Field, FormError, Input, Select } from '../../components/ui/Form';
 import { ConfirmDialog, Modal } from '../../components/ui/Modal';
 import {
   Avatar,
   Card,
-  ColorDot,
   ErrorBlock,
   LoadingBlock,
   Menu,
+  Spinner,
   Tabs,
 } from '../../components/ui/Misc';
-import { StatusBadge } from '../../components/schedule/StatusBadge';
 import { cx } from '../../lib/cx';
 import { fieldErrors, formMessage } from '../../lib/forms';
+import { useHolidays } from '../../lib/holidays';
 import {
   draftFromShift,
+  groupByTier,
   groupByUserDay,
-  scheduleTitle,
+  stepView,
   timeOffByUserDay,
   totalHours,
+  viewRange,
+  type CalendarView,
 } from '../../lib/schedule';
-import { useBootstrapData } from '../../lib/session';
+import { useBootstrapData, useTimeFormat } from '../../lib/session';
 import { zoneLabel } from '../../lib/timezones';
+import { useScrollToToday } from '../../lib/useScrollToToday';
 
 type DialogState = { mode: 'create'; draft: ShiftDraft } | { mode: 'edit'; shift: BuilderShift };
 
-export default function ScheduleBuilderPage() {
-  const { id = '' } = useParams();
-  const query = useSchedule(id);
-  if (query.isLoading) return <LoadingBlock />;
-  if (query.isError || !query.data)
-    return <ErrorBlock error={query.error} onRetry={() => void query.refetch()} />;
-  return <Builder detail={query.data} />;
+const VIEW_KEY = 'toretto:builder-view';
+const VIEWS: { value: CalendarView; label: string }[] = [
+  { value: 'week', label: 'Week' },
+  { value: '2weeks', label: '2 weeks' },
+  { value: 'month', label: 'Month' },
+];
+
+function savedView(): CalendarView {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === '2weeks' || v === 'month' ? v : 'week';
+  } catch {
+    return 'week';
+  }
 }
 
-function Builder({ detail }: { detail: ScheduleDetail }) {
+/** /admin/schedules — open the main schedule. */
+export function SchedulesIndex() {
+  const schedules = useSchedules();
+  const { search } = useLocation();
+  if (schedules.isError)
+    return <ErrorBlock error={schedules.error} onRetry={() => void schedules.refetch()} />;
+  const main = schedules.data?.find((s) => s.isDefault) ?? schedules.data?.[0];
+  if (!main) return <LoadingBlock />;
+  return <Navigate to={`/admin/schedules/${main.id}${search}`} replace />;
+}
+
+export default function ScheduleBuilderPage() {
+  const { id = '' } = useParams();
   const { org } = useBootstrapData();
   const tz = org.timezone; // schedules are built in the organization's zone
-  const { schedule } = detail;
+  const today = todayIn(tz);
+  const [params, setParams] = useSearchParams();
+  const view = (params.get('view') as CalendarView | null) ?? savedView();
+  const date = params.get('date') ?? today;
+  const tierFilter = params.get('tiers')?.split(',').filter(Boolean) ?? [];
+  const teamFilter = params.get('team') ?? '';
+  const range = viewRange(view, date, org.weekStartsOn);
+  const query = useScheduleRange(id, range.from, range.to);
+  const schedules = useSchedules();
+
+  const update = (patch: Record<string, string | null>) =>
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p);
+        for (const [k, v] of Object.entries(patch)) {
+          if (v) next.set(k, v);
+          else next.delete(k);
+        }
+        return next;
+      },
+      { replace: true },
+    );
+
+  if (query.isError) return <ErrorBlock error={query.error} onRetry={() => void query.refetch()} />;
+  if (!query.data) return <LoadingBlock />;
+  return (
+    <Builder
+      data={query.data}
+      loading={query.isPlaceholderData}
+      schedules={schedules.data ?? [query.data.schedule]}
+      view={view}
+      date={date}
+      today={today}
+      tz={tz}
+      tierFilter={tierFilter}
+      teamFilter={teamFilter}
+      onView={(v) => {
+        try {
+          localStorage.setItem(VIEW_KEY, v);
+        } catch {
+          // Just not remembered.
+        }
+        update({ view: v });
+      }}
+      onDate={(d) => update({ date: d === today ? null : d })}
+      onTiers={(ids) => update({ tiers: ids.join(',') || null })}
+      onTeam={(t) => update({ team: t || null })}
+    />
+  );
+}
+
+function Builder({
+  data,
+  loading,
+  schedules,
+  view,
+  date,
+  today,
+  tz,
+  tierFilter,
+  teamFilter,
+  onView,
+  onDate,
+  onTiers,
+  onTeam,
+}: {
+  data: ScheduleRange;
+  loading: boolean;
+  schedules: ScheduleSummary[];
+  view: CalendarView;
+  date: ISODate;
+  today: ISODate;
+  tz: string;
+  tierFilter: string[];
+  teamFilter: string;
+  onView: (view: CalendarView) => void;
+  onDate: (date: ISODate) => void;
+  onTiers: (ids: string[]) => void;
+  onTeam: (teamId: string) => void;
+}) {
+  const { org } = useBootstrapData();
+  const { schedule } = data;
+  const timeFormat = useTimeFormat();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const people = usePeople();
-  const queryKey = keys.schedule(schedule.id);
-
-  const weeks = useMemo(() => {
-    const all = eachDay(schedule.startDate, schedule.endDate);
-    const chunks: ISODate[][] = [];
-    for (let i = 0; i < all.length; i += 7) chunks.push(all.slice(i, i + 7));
-    return chunks;
-  }, [schedule.startDate, schedule.endDate]);
-  const allDays = useMemo(() => weeks.flat(), [weeks]);
-  const [weekIndex, setWeekIndex] = useState(0);
-  const days = weeks[Math.min(weekIndex, weeks.length - 1)] ?? [];
-  const today = todayIn(tz);
+  const tiers = useTiers();
+  const teams = useTeams();
+  const days = useMemo(() => eachDay(data.from, data.to), [data.from, data.to]);
+  const compact = days.length > 14;
+  const holidays = useHolidays(data.from, data.to);
+  const scroller = useScrollToToday<HTMLDivElement>(`${data.from}:${data.to}`);
+  const queryKey = keys.schedule(schedule.id, data.from, data.to);
 
   const [dialog, setDialog] = useState<DialogState | null>(null);
-  const [extraRows, setExtraRows] = useState<string[]>([]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
-  const [showPublish, setShowPublish] = useState(false);
-  const [showDiscard, setShowDiscard] = useState(false);
-  const [showDelete, setShowDelete] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [publishing, setPublishing] = useState<null | { all: boolean }>(null);
+  const [discarding, setDiscarding] = useState(false);
+  const [naming, setNaming] = useState<null | 'create' | 'rename'>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey });
+    void queryClient.invalidateQueries({ queryKey: ['schedule', schedule.id] });
     void queryClient.invalidateQueries({ queryKey: keys.schedules });
     void queryClient.invalidateQueries({ queryKey: keys.overview });
   };
 
   // ---- data shaping -------------------------------------------------------
-  const rows = useMemo(() => {
-    const byId = new Map(detail.members.map((m) => [m.id, m]));
-    for (const userId of extraRows) {
-      const person = people.data?.find((p) => p.id === userId);
-      if (person && !byId.has(userId)) {
-        byId.set(userId, {
-          id: person.id,
-          name: person.name,
-          tierId: person.tierId,
-          teamId: person.teamId,
-          active: true,
-        });
-      }
+  const tierList = tiers.data ?? [];
+  const visiblePeople = data.people.filter(
+    (p) =>
+      (tierFilter.length === 0 || (p.tierId !== null && tierFilter.includes(p.tierId))) &&
+      (!teamFilter || p.teamId === teamFilter),
+  );
+  const groups = groupByTier(visiblePeople, tierList);
+  const visibleIds = new Set(visiblePeople.map((p) => p.id));
+  const shifts = data.shifts.filter((s) => visibleIds.has(s.userId));
+  const byUserDay = useMemo(() => groupByUserDay(data.shifts, tz), [data.shifts, tz]);
+  // Published shifts going away: shown where the team still sees them.
+  const ghosts = useMemo(
+    () =>
+      groupByUserDay(
+        data.removedShifts.map((s) => ({
+          ...s,
+          userId: s.published!.userId,
+          startTime: s.published!.startTime,
+          endTime: s.published!.endTime,
+          working: s,
+        })),
+        tz,
+      ),
+    [data.removedShifts, tz],
+  );
+  const offByUserDay = useMemo(() => timeOffByUserDay(data.timeOff, days), [data.timeOff, days]);
+  const labelsById = new Map(data.labels.map((l) => [l.id, l]));
+  const tierColor = new Map(tierList.map((t) => [t.id, t.color]));
+  const colorFor = (s: BuilderShift, person?: PersonRow) =>
+    (s.labelId ? labelsById.get(s.labelId)?.color : undefined) ??
+    (person?.tierId ? tierColor.get(person.tierId) : undefined) ??
+    '#a855f7';
+
+  const affectedPeople = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of [...data.shifts, ...data.removedShifts]) {
+      if (s.changeState === 'unchanged') continue;
+      if (s.changeState !== 'removed') ids.add(s.userId);
+      if (s.published) ids.add(s.published.userId);
     }
-    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [detail.members, extraRows, people.data]);
-  const byUserDay = useMemo(() => groupByUserDay(detail.shifts, tz), [detail.shifts, tz]);
-  const removedByUserDay = useMemo(
-    () => groupByUserDay(detail.removedShifts, tz),
-    [detail.removedShifts, tz],
-  );
-  const offByUserDay = useMemo(
-    () => timeOffByUserDay(detail.timeOff, allDays),
-    [detail.timeOff, allDays],
-  );
-  const weekShifts = detail.shifts.filter((s) => days.includes(localDate(s.startTime, tz)));
-  const labelsById = new Map(detail.labels.map((l) => [l.id, l]));
+    return ids.size;
+  }, [data.shifts, data.removedShifts]);
+  const elsewhere = Math.max(0, schedule.pendingChanges - data.changes.total);
 
   // ---- mutations ------------------------------------------------------------
   const create = useMutation({
@@ -135,7 +267,28 @@ function Builder({ detail }: { detail: ScheduleDetail }) {
       refresh();
     },
   });
-  const update = useMutation({
+  const createMany = useMutation({
+    mutationFn: (payload: RepeatPayload) =>
+      api.post<RepeatResult>(`/schedules/${schedule.id}/shifts/bulk`, payload),
+    onSuccess: ({ created, skipped }, payload) => {
+      setDialog(null);
+      const days = skipped.map((s) => formatDay(localDate(s.startTime, tz)));
+      const name = data.people.find((p) => p.id === payload.userId)?.name ?? 'They';
+      const message = created
+        ? `Added ${created} shift${created === 1 ? '' : 's'}`
+        : 'No shifts added';
+      const description =
+        skipped.length === 0
+          ? 'Publish when you’re ready for the team to see them.'
+          : skipped.length <= 3
+            ? `Skipped ${skipped.map((s, i) => `${days[i]} (${s.detail})`).join(', ')}.`
+            : `Skipped ${skipped.length} days from ${days[0]} to ${days.at(-1)}: ${name} already works or has time off then.`;
+      if (created) toast.success(message, { description });
+      else toast.warning(message, { description });
+      refresh();
+    },
+  });
+  const edit = useMutation({
     mutationFn: ({ shiftId, payload }: { shiftId: string; payload: Partial<ShiftPayload> }) =>
       api.patch<BuilderShift>(`/shifts/${shiftId}`, payload),
     onSuccess: () => {
@@ -164,15 +317,15 @@ function Builder({ detail }: { detail: ScheduleDetail }) {
     mutationFn: ({
       shift,
       userId,
-      date,
+      day,
       copy,
     }: {
       shift: BuilderShift;
       userId: string;
-      date: ISODate;
+      day: ISODate;
       copy: boolean;
     }) => {
-      const times = moveShiftToDate(shift.startTime, shift.endTime, date, tz);
+      const times = moveShiftToDate(shift.startTime, shift.endTime, day, tz);
       return copy
         ? api.post<BuilderShift>(`/schedules/${schedule.id}/shifts`, {
             userId,
@@ -182,12 +335,12 @@ function Builder({ detail }: { detail: ScheduleDetail }) {
           })
         : api.patch<BuilderShift>(`/shifts/${shift.id}`, { userId, ...times });
     },
-    onMutate: async ({ shift, userId, date, copy }) => {
+    onMutate: async ({ shift, userId, day, copy }) => {
       if (copy) return { previous: undefined };
       await queryClient.cancelQueries({ queryKey });
-      const previous = queryClient.getQueryData<ScheduleDetail>(queryKey);
-      const times = moveShiftToDate(shift.startTime, shift.endTime, date, tz);
-      queryClient.setQueryData<ScheduleDetail>(queryKey, (d) =>
+      const previous = queryClient.getQueryData<ScheduleRange>(queryKey);
+      const times = moveShiftToDate(shift.startTime, shift.endTime, day, tz);
+      queryClient.setQueryData<ScheduleRange>(queryKey, (d) =>
         d
           ? {
               ...d,
@@ -204,11 +357,15 @@ function Builder({ detail }: { detail: ScheduleDetail }) {
     onSettled: refresh,
   });
   const publish = useMutation({
-    mutationFn: () => api.post<PublishResult>(`/schedules/${schedule.id}/publish`),
+    mutationFn: (all: boolean) =>
+      api.post<PublishResult>(
+        `/schedules/${schedule.id}/publish`,
+        all ? {} : { from: data.from, to: data.to },
+      ),
     onSuccess: (r) => {
-      setShowPublish(false);
+      setPublishing(null);
       const changed = r.added + r.updated + r.removed;
-      toast.success(changed ? 'Schedule published' : 'Nothing new to publish', {
+      toast.success(changed ? 'Published' : 'Nothing new to publish', {
         description: r.emailsQueued
           ? `Emailing ${r.emailsQueued} ${r.emailsQueued === 1 ? 'person' : 'people'} so they can confirm.`
           : changed
@@ -220,11 +377,33 @@ function Builder({ detail }: { detail: ScheduleDetail }) {
     onError: (e) => toast.error(e.message),
   });
   const discard = useMutation({
-    mutationFn: () => api.post<ScheduleDetail>(`/schedules/${schedule.id}/discard-changes`),
-    onSuccess: (d) => {
-      setShowDiscard(false);
-      queryClient.setQueryData(queryKey, d);
-      toast.success('Unpublished changes discarded');
+    mutationFn: () =>
+      api.post<{ discarded: number }>(`/schedules/${schedule.id}/discard-changes`, {
+        from: data.from,
+        to: data.to,
+      }),
+    onSuccess: ({ discarded }) => {
+      setDiscarding(false);
+      toast.success(`Discarded ${discarded} unpublished change${discarded === 1 ? '' : 's'}`);
+      refresh();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const copyWeeks = useMutation({
+    mutationFn: () => {
+      const length = diffDays(data.from, data.to) + 1;
+      return api.post<CopyResult>(`/schedules/${schedule.id}/copy`, {
+        from: addDays(data.from, -length),
+        to: addDays(data.from, -1),
+        targetStart: data.from,
+      });
+    },
+    onSuccess: (r) => {
+      toast.success(`Copied ${r.copied} shift${r.copied === 1 ? '' : 's'} as drafts`, {
+        description: r.skipped
+          ? `${r.skipped} skipped (someone was already booked, or is deactivated).`
+          : 'Publish when you’re ready for the team to see them.',
+      });
       refresh();
     },
     onError: (e) => toast.error(e.message),
@@ -253,335 +432,379 @@ function Builder({ detail }: { detail: ScheduleDetail }) {
     setDraggingId(null);
     setDropKey(null);
   };
-  const cellDrop = (userId: string, date: ISODate) => ({
+  const cellDrop = (userId: string, day: ISODate) => ({
     onDragOver: (e: DragEvent<HTMLElement>) => {
       if (!draggingId) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = e.altKey || e.ctrlKey || e.metaKey ? 'copy' : 'move';
-      setDropKey(`${userId}|${date}`);
+      setDropKey(`${userId}|${day}`);
     },
     onDragLeave: (e: DragEvent<HTMLElement>) => {
       if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropKey(null);
     },
     onDrop: (e: DragEvent<HTMLElement>) => {
       e.preventDefault();
-      const shift = detail.shifts.find(
+      const shift = data.shifts.find(
         (s) => s.id === (e.dataTransfer.getData('text/plain') || draggingId),
       );
       const copy = e.altKey || e.ctrlKey || e.metaKey;
       onDragEnd();
       if (!shift) return;
-      if (!copy && shift.userId === userId && localDate(shift.startTime, tz) === date) return;
-      move.mutate({ shift, userId, date, copy });
+      if (!copy && shift.userId === userId && localDate(shift.startTime, tz) === day) return;
+      move.mutate({ shift, userId, day, copy });
     },
   });
 
-  // ---- derived summary ---------------------------------------------------------
-  const affectedPeople = useMemo(() => {
-    const ids = new Set<string>();
-    for (const s of [...detail.shifts, ...detail.removedShifts]) {
-      if (schedule.status === 'draft' || s.changeState !== 'unchanged') {
-        if (s.changeState !== 'removed') ids.add(s.userId);
-        if (s.published) ids.add(s.published.userId);
-      }
-    }
-    return ids.size;
-  }, [detail.shifts, detail.removedShifts, schedule.status]);
-  const hasChanges = detail.changes.total > 0;
-  const published = schedule.status === 'published';
-  const openCreate = (userId: string, date: ISODate) =>
+  const openCreate = (userId: string, day: ISODate) =>
     setDialog({
       mode: 'create',
-      draft: { userId, date, start: '09:00', end: '17:00', labelId: null, notes: '' },
+      draft: { userId, date: day, start: '09:00', end: '17:00', labelId: null, notes: '' },
     });
-  const addableRows = (people.data ?? []).filter(
-    (p) => p.status !== 'deactivated' && !rows.some((r) => r.id === p.id),
-  );
+  const rangeLabel =
+    view === 'month'
+      ? DateTime.fromISO(data.from).toFormat('LLLL yyyy')
+      : formatDateRange(data.from, data.to);
+  const current = viewRange(view, today, org.weekStartsOn).from === data.from;
+  const changes = data.changes;
+  const hasChanges = changes.total > 0;
+  const periodWord = view === 'week' ? 'week' : view === '2weeks' ? '2 weeks' : 'month';
 
   return (
     <>
-      <div className="mb-5">
-        <ButtonLink
-          to="/admin/schedules"
-          variant="ghost"
-          size="sm"
-          icon={<ArrowLeft className="size-4" />}
-          className="-ml-3 mb-2"
-        >
-          Schedules
-        </ButtonLink>
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <ColorDot color={schedule.tierColor} className="size-3" />
-              <span className="text-sm font-semibold text-slate-500">{schedule.tierName}</span>
-              <StatusBadge schedule={schedule} />
-            </div>
-            <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
-              {scheduleTitle(schedule)}
-            </h1>
-            <p className="mt-1 text-sm text-slate-500">
-              {schedule.name && `${formatDateRange(schedule.startDate, schedule.endDate)} · `}
-              {detail.shifts.length} shift{detail.shifts.length === 1 ? '' : 's'} ·{' '}
-              {formatHours(totalHours(detail.shifts))}
-              {published &&
-                ` · ${schedule.confirmedCount}/${schedule.confirmedCount + schedule.pendingCount} confirmed`}
-              {schedule.publishedAt &&
-                ` · published ${formatTimestamp(schedule.publishedAt, tz)}${schedule.publishedByName ? ` by ${schedule.publishedByName}` : ''}`}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {published && hasChanges && (
-              <Button
-                icon={<Undo2 className="size-4" />}
-                onClick={() => setShowDiscard(true)}
-                aria-label="Discard changes"
-              >
-                <span className="hidden sm:inline">Discard changes</span>
-              </Button>
-            )}
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <ScheduleSwitcher
+            current={schedule}
+            schedules={schedules}
+            onSelect={(sid) => navigate(`/admin/schedules/${sid}${window.location.search}`)}
+            onCreate={() => setNaming('create')}
+            onRename={() => setNaming('rename')}
+            onDelete={() => setDeleting(true)}
+          />
+          <p className="mt-1 text-sm text-slate-500">
+            Every tier on one calendar · {shifts.length} shift{shifts.length === 1 ? '' : 's'} ·{' '}
+            {formatHours(totalHours(shifts))} this {periodWord}
+            {schedule.publishedAt &&
+              ` · last published ${formatTimestamp(schedule.publishedAt, tz, timeFormat)}${schedule.publishedByName ? ` by ${schedule.publishedByName}` : ''}`}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {hasChanges && (
             <Button
-              variant="primary"
-              icon={<Send className="size-4" />}
-              disabled={published && !hasChanges}
-              onClick={() => setShowPublish(true)}
+              icon={<Undo2 className="size-4" />}
+              onClick={() => setDiscarding(true)}
+              aria-label="Discard changes"
             >
-              {published
-                ? hasChanges
-                  ? `Publish ${detail.changes.total} change${detail.changes.total === 1 ? '' : 's'}`
-                  : 'Published'
-                : 'Publish'}
+              <span className="hidden sm:inline">Discard</span>
             </Button>
-            <Menu
-              label="More actions"
-              trigger={<Ellipsis className="size-4" />}
-              items={[
-                {
-                  label: 'Edit name & dates',
-                  icon: <Pencil />,
-                  onSelect: () => setShowDetails(true),
-                },
-                {
-                  label: 'Delete schedule',
-                  icon: <Trash2 />,
-                  danger: true,
-                  onSelect: () => setShowDelete(true),
-                },
-              ]}
-            />
-          </div>
+          )}
+          <Button
+            variant="primary"
+            icon={<Send className="size-4" />}
+            disabled={!hasChanges && elsewhere === 0}
+            onClick={() => setPublishing({ all: !hasChanges })}
+          >
+            {hasChanges
+              ? `Publish ${changes.total} change${changes.total === 1 ? '' : 's'}`
+              : elsewhere
+                ? `Publish ${elsewhere} elsewhere`
+                : 'All published'}
+          </Button>
+          <Menu
+            label="More actions"
+            trigger={<Ellipsis className="size-4" />}
+            items={[
+              ...(view !== 'month'
+                ? [
+                    {
+                      label: view === 'week' ? 'Copy last week here' : 'Copy the 2 weeks before',
+                      icon: <CopyPlus />,
+                      onSelect: () => copyWeeks.mutate(),
+                      disabled: copyWeeks.isPending,
+                    },
+                  ]
+                : []),
+              {
+                label: `Publish all changes (${schedule.pendingChanges})`,
+                icon: <Send />,
+                onSelect: () => setPublishing({ all: true }),
+                disabled: schedule.pendingChanges === 0,
+              },
+            ]}
+          />
         </div>
       </div>
 
-      {!published ? (
-        <Banner tone="slate">
-          <strong>Draft.</strong> Only admins can see this schedule. Build it out, then publish to
-          email everyone with a shift so they can confirm.
-        </Banner>
-      ) : hasChanges ? (
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <CalendarNav
+          label={rangeLabel}
+          onPrev={() => onDate(stepView(view, data.from, -1))}
+          onNext={() => onDate(stepView(view, data.from, 1))}
+          onToday={() => onDate(today)}
+          isCurrent={current}
+          value={date}
+          onPick={onDate}
+        />
+        <Tabs value={view} onChange={onView} options={VIEWS} />
+        {loading && <Spinner className="size-4" />}
+      </div>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        {tierList.length > 1 && (
+          <TierFilter tiers={tierList} selected={tierFilter} onChange={onTiers} />
+        )}
+        {!!teams.data?.length && (
+          <div className="w-40">
+            <Select aria-label="Team" value={teamFilter} onChange={(e) => onTeam(e.target.value)}>
+              <option value="">All teams</option>
+              {teams.data.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
+      </div>
+
+      {hasChanges ? (
         <Banner tone="amber">
           <strong>
-            {detail.changes.total} unpublished change{detail.changes.total === 1 ? '' : 's'}
+            {changes.total} unpublished change{changes.total === 1 ? '' : 's'} this {periodWord}
           </strong>{' '}
           (
           {[
-            detail.changes.added && `${detail.changes.added} new`,
-            detail.changes.updated && `${detail.changes.updated} edited`,
-            detail.changes.removed && `${detail.changes.removed} removed`,
+            changes.added && `${changes.added} new`,
+            changes.updated && `${changes.updated} edited`,
+            changes.removed && `${changes.removed} removed`,
           ]
             .filter(Boolean)
             .join(', ')}
-          ). The team still sees the published version until you publish.
+          ). The team sees the published version until you publish.
         </Banner>
       ) : null}
-
-      {weeks.length > 1 && (
-        <Tabs
-          className="mb-3 w-fit"
-          value={String(weekIndex)}
-          onChange={(v) => setWeekIndex(Number(v))}
-          options={weeks.map((w, i) => ({
-            value: String(i),
-            label: `Week ${i + 1} · ${formatDateRange(w[0]!, w[w.length - 1]!)}`,
-          }))}
-        />
+      {elsewhere > 0 && schedule.firstChangeDate && (
+        <Banner tone="slate">
+          {elsewhere} more unpublished change{elsewhere === 1 ? '' : 's'} on other dates
+          {schedule.lastChangeDate &&
+            ` (${formatDateRange(schedule.firstChangeDate, schedule.lastChangeDate)})`}
+          .{' '}
+          <button
+            type="button"
+            className="font-semibold text-brand-600 hover:underline"
+            onClick={() =>
+              onDate(
+                schedule.firstChangeDate! < data.from || schedule.firstChangeDate! > data.to
+                  ? schedule.firstChangeDate!
+                  : schedule.lastChangeDate!,
+              )
+            }
+          >
+            Show me
+          </button>
+        </Banner>
       )}
 
       <Card className="overflow-hidden">
-        <div className="overflow-x-auto scrollbar-thin">
-          <table className="w-full min-w-[860px] table-fixed border-collapse text-sm sm:min-w-[980px]">
+        <div ref={scroller} className="overflow-x-auto scrollbar-thin">
+          <table
+            className="w-full table-fixed border-collapse text-sm"
+            style={{ minWidth: compact ? 180 + days.length * 80 : 180 + days.length * 128 }}
+          >
             <colgroup>
-              <col className="w-36 sm:w-52" />
+              <col className="w-44 sm:w-52" />
               {days.map((d) => (
                 <col key={d} />
               ))}
             </colgroup>
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/80">
+              <tr className="border-b border-slate-200 bg-slate-50/70">
                 <th
                   scope="col"
-                  className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left text-xs font-semibold text-slate-500"
+                  className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left align-top text-xs font-semibold text-slate-500"
                 >
-                  {rows.length} {rows.length === 1 ? 'person' : 'people'}
+                  {visiblePeople.length} {visiblePeople.length === 1 ? 'person' : 'people'}
                 </th>
                 {days.map((d) => {
-                  const dayShifts = weekShifts.filter((s) => localDate(s.startTime, tz) === d);
+                  const dayShifts = shifts.filter((s) => localDate(s.startTime, tz) === d);
                   return (
-                    <th
+                    <DayHeader
                       key={d}
-                      scope="col"
-                      className={cx(
-                        'px-1.5 py-2 text-center text-xs font-semibold',
-                        d === today ? 'text-indigo-700' : 'text-slate-500',
-                      )}
-                    >
-                      <span className="block">
-                        {DateTime.fromISO(d).toFormat('ccc')}{' '}
-                        <span
-                          className={cx(
-                            'inline-flex size-6 items-center justify-center rounded-full',
-                            d === today ? 'bg-indigo-600 text-white' : 'text-slate-800',
-                          )}
-                        >
-                          {DateTime.fromISO(d).day}
-                        </span>
-                      </span>
-                      <span className="mt-0.5 block font-normal text-slate-400">
-                        {dayShifts.length
-                          ? `${dayShifts.length} · ${formatHours(totalHours(dayShifts))}`
-                          : '—'}
-                      </span>
-                    </th>
+                      day={d}
+                      today={today}
+                      holidays={holidays.get(d)}
+                      compact={compact}
+                      summary={
+                        dayShifts.length
+                          ? compact
+                            ? String(dayShifts.length)
+                            : `${dayShifts.length} · ${formatHours(totalHours(dayShifts))}`
+                          : '—'
+                      }
+                    />
                   );
                 })}
               </tr>
             </thead>
             <tbody>
-              {rows.map((person) => {
-                const shiftsByDay = byUserDay.get(person.id);
-                const personWeek = weekShifts.filter((s) => s.userId === person.id);
+              {groups.map((group) => {
+                const isCollapsed = collapsed.has(group.key);
+                const groupShifts = shifts.filter((s) =>
+                  group.people.some((p) => p.id === s.userId),
+                );
                 return (
-                  <tr key={person.id} className="border-b border-slate-100">
-                    <th
-                      scope="row"
-                      className="sticky left-0 z-10 bg-white px-3 py-2 text-left font-normal sm:px-4"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <Avatar name={person.name} size="sm" className="hidden sm:inline-flex" />
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-slate-900">
-                            {person.name}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            {personWeek.length
-                              ? `${formatHours(totalHours(personWeek))} · ${personWeek.length} shift${personWeek.length === 1 ? '' : 's'}`
-                              : 'No shifts'}
-                            {!person.active && ' · deactivated'}
-                            {person.tierId !== schedule.tierId && person.active && ' · other tier'}
-                          </p>
-                        </div>
-                      </div>
-                    </th>
-                    {days.map((day) => {
-                      const key = `${person.id}|${day}`;
-                      const shifts = shiftsByDay?.get(day) ?? [];
-                      const removed = removedByUserDay.get(person.id)?.get(day) ?? [];
-                      const off = offByUserDay.get(person.id)?.get(day);
-                      return (
-                        <td
-                          key={day}
-                          {...cellDrop(person.id, day)}
-                          className={cx(
-                            'group h-20 border-l border-slate-100 p-1 align-top transition-colors',
-                            isWeekend(day) && 'bg-slate-50/50',
-                            dropKey === key && 'bg-indigo-50 ring-2 ring-inset ring-indigo-400',
-                          )}
-                        >
-                          <div className="flex min-h-[4.5rem] flex-col gap-1">
-                            {off && <TimeOffChip entry={off} />}
-                            {shifts.map((s) => {
-                              const label = s.labelId ? labelsById.get(s.labelId) : undefined;
-                              return (
-                                <ShiftChip
-                                  key={s.id}
-                                  shift={s}
-                                  tz={tz}
-                                  color={label?.color ?? schedule.tierColor}
-                                  labelName={label?.name}
-                                  status={s.published ? s.status : null}
-                                  change={
-                                    published && s.changeState !== 'unchanged'
-                                      ? (s.changeState as 'new' | 'updated')
-                                      : null
-                                  }
-                                  draggable
-                                  dragging={draggingId === s.id}
-                                  onDragStart={onDragStart(s)}
-                                  onDragEnd={onDragEnd}
-                                  onClick={() => setDialog({ mode: 'edit', shift: s })}
+                  <GroupRows
+                    key={group.key}
+                    label={group.tier?.name ?? 'No tier'}
+                    color={group.tier?.color ?? 'var(--color-slate-400)'}
+                    count={group.people.length}
+                    hours={formatHours(totalHours(groupShifts))}
+                    colSpan={days.length + 1}
+                    collapsed={isCollapsed}
+                    onToggle={() =>
+                      setCollapsed((c) => {
+                        const next = new Set(c);
+                        if (next.has(group.key)) next.delete(group.key);
+                        else next.add(group.key);
+                        return next;
+                      })
+                    }
+                  >
+                    {!isCollapsed &&
+                      group.people.map((person) => {
+                        const personShifts = shifts.filter((s) => s.userId === person.id);
+                        return (
+                          <tr key={person.id} className="border-b border-slate-100">
+                            <th
+                              scope="row"
+                              className="sticky left-0 z-10 bg-surface px-3 py-2 text-left font-normal sm:px-4"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <Avatar
+                                  name={person.name}
+                                  size="sm"
+                                  className="hidden sm:inline-flex"
                                 />
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-medium text-slate-900">
+                                    {person.name}
+                                  </p>
+                                  <p className="text-xs text-slate-500">
+                                    {personShifts.length
+                                      ? `${formatHours(totalHours(personShifts))} · ${personShifts.length} shift${personShifts.length === 1 ? '' : 's'}`
+                                      : 'No shifts'}
+                                    {!person.active && ' · deactivated'}
+                                  </p>
+                                </div>
+                              </div>
+                            </th>
+                            {days.map((day) => {
+                              const key = `${person.id}|${day}`;
+                              const cellShifts = byUserDay.get(person.id)?.get(day) ?? [];
+                              const cellGhosts = ghosts.get(person.id)?.get(day) ?? [];
+                              const off = offByUserDay.get(person.id)?.get(day);
+                              return (
+                                <td
+                                  key={day}
+                                  {...cellDrop(person.id, day)}
+                                  className={cx(
+                                    'group h-20 border-l border-slate-100 p-1 align-top transition-colors',
+                                    isWeekend(day) && 'bg-slate-50/40',
+                                    holidays.has(day) && 'bg-rose-50/30',
+                                    day === today && 'bg-brand-50/40',
+                                    dropKey === key &&
+                                      'bg-brand-50 ring-2 ring-inset ring-brand-400',
+                                  )}
+                                >
+                                  <div className="flex min-h-[4.5rem] flex-col gap-1">
+                                    {off && <TimeOffChip entry={off} compact={compact} />}
+                                    {cellShifts.map((s) => {
+                                      const label = s.labelId
+                                        ? labelsById.get(s.labelId)
+                                        : undefined;
+                                      return (
+                                        <ShiftChip
+                                          key={s.id}
+                                          shift={s}
+                                          tz={tz}
+                                          compact={compact}
+                                          color={colorFor(s, person)}
+                                          labelName={label?.name}
+                                          status={s.published ? s.status : null}
+                                          change={
+                                            s.changeState === 'new' || s.changeState === 'updated'
+                                              ? s.changeState
+                                              : null
+                                          }
+                                          draggable
+                                          dragging={draggingId === s.id}
+                                          onDragStart={onDragStart(s)}
+                                          onDragEnd={onDragEnd}
+                                          onClick={() => setDialog({ mode: 'edit', shift: s })}
+                                        />
+                                      );
+                                    })}
+                                    {cellGhosts.map((g) =>
+                                      g.working.changeState === 'removed' ? (
+                                        <ShiftChip
+                                          key={g.id}
+                                          shift={g}
+                                          tz={tz}
+                                          compact={compact}
+                                          color={colorFor(g.working, person)}
+                                          status={null}
+                                          removed
+                                          onRestore={() => restore.mutate(g.id)}
+                                        />
+                                      ) : (
+                                        <ShiftChip
+                                          key={g.id}
+                                          shift={g}
+                                          tz={tz}
+                                          compact={compact}
+                                          color={colorFor(g.working, person)}
+                                          status={null}
+                                          removed
+                                          caption={`Moved to ${formatDay(localDate(g.working.startTime, tz))}`}
+                                          onClick={() => onDate(localDate(g.working.startTime, tz))}
+                                        />
+                                      ),
+                                    )}
+                                    {person.active && (
+                                      <button
+                                        type="button"
+                                        onClick={() => openCreate(person.id, day)}
+                                        aria-label={`Add shift for ${person.name} on ${formatDay(day)}`}
+                                        className="flex h-6 w-full items-center justify-center rounded-md border border-dashed border-slate-300 text-slate-400 opacity-0 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-600 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                                      >
+                                        <Plus className="size-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
                               );
                             })}
-                            {removed.map((s) => (
-                              <ShiftChip
-                                key={s.id}
-                                shift={s}
-                                tz={tz}
-                                color={schedule.tierColor}
-                                status={null}
-                                removed
-                                onRestore={() => restore.mutate(s.id)}
-                              />
-                            ))}
-                            {person.active && (
-                              <button
-                                type="button"
-                                onClick={() => openCreate(person.id, day)}
-                                aria-label={`Add shift for ${person.name} on ${formatDay(day)}`}
-                                className="flex h-6 w-full items-center justify-center rounded-md border border-dashed border-slate-300 text-slate-400 opacity-0 transition hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-600 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                              >
-                                <Plus className="size-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      );
-                    })}
-                  </tr>
+                          </tr>
+                        );
+                      })}
+                  </GroupRows>
                 );
               })}
-              {rows.length === 0 && (
+              {groups.length === 0 && (
                 <tr>
                   <td
                     colSpan={days.length + 1}
                     className="px-4 py-10 text-center text-sm text-slate-500"
                   >
-                    No one is in {schedule.tierName} yet. Add people on the People page, or add
-                    someone below.
+                    No one matches these filters. Add people on the People page.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <UserPlus className="size-4 text-slate-400" />
-            <Select
-              aria-label="Add someone from another tier"
-              className="h-8 w-64 text-xs"
-              value=""
-              onChange={(e) => e.target.value && setExtraRows((r) => [...r, e.target.value])}
-            >
-              <option value="">Add someone from another tier…</option>
-              {addableRows.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <p className="text-xs text-slate-500">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 px-4 py-3 text-xs text-slate-500">
+          <ScheduleLegend showChanges />
+          <p>
             Drag shifts to move them · hold{' '}
             <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Alt</kbd> or{' '}
             <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Ctrl</kbd> to copy ·
@@ -589,27 +812,25 @@ function Builder({ detail }: { detail: ScheduleDetail }) {
           </p>
         </div>
       </Card>
-      <div className="mt-4">
-        <ScheduleLegend showChanges={published} />
-      </div>
 
       {dialog?.mode === 'create' && (
         <ShiftDialog
           mode="create"
           initial={dialog.draft}
           tz={tz}
-          days={allDays}
-          members={rows}
-          people={people.data ?? []}
-          labels={detail.labels}
-          timeOff={detail.timeOff}
-          allShifts={detail.shifts}
-          saving={create.isPending}
-          error={create.error}
+          people={data.people}
+          tiers={tierList}
+          labels={data.labels}
+          timeOff={data.timeOff}
+          allShifts={data.shifts}
+          saving={create.isPending || createMany.isPending}
+          error={create.error ?? createMany.error}
           onSave={(payload) => create.mutate(payload)}
+          onSaveMany={(payload) => createMany.mutate(payload)}
           onClose={() => {
             setDialog(null);
             create.reset();
+            createMany.reset();
           }}
         />
       )}
@@ -620,87 +841,74 @@ function Builder({ detail }: { detail: ScheduleDetail }) {
           shift={dialog.shift}
           initial={draftFromShift(dialog.shift, tz)}
           tz={tz}
-          days={allDays}
-          members={rows}
-          people={people.data ?? []}
-          labels={detail.labels}
-          timeOff={detail.timeOff}
-          allShifts={detail.shifts}
-          saving={update.isPending}
+          people={data.people}
+          tiers={tierList}
+          labels={data.labels}
+          timeOff={data.timeOff}
+          allShifts={data.shifts}
+          saving={edit.isPending}
           deleting={remove.isPending}
-          error={update.error}
-          onSave={(payload) => update.mutate({ shiftId: dialog.shift.id, payload })}
+          error={edit.error}
+          onSave={(payload) => edit.mutate({ shiftId: dialog.shift.id, payload })}
           onDelete={() => remove.mutate(dialog.shift.id)}
           onDuplicate={(draft) => {
-            update.reset();
-            const nextDay = addDays(draft.date, 1);
-            setDialog({
-              mode: 'create',
-              draft: { ...draft, date: allDays.includes(nextDay) ? nextDay : draft.date },
-            });
+            edit.reset();
+            setDialog({ mode: 'create', draft: { ...draft, date: addDays(draft.date, 1) } });
           }}
           onClose={() => {
             setDialog(null);
-            update.reset();
+            edit.reset();
           }}
         />
       )}
-      {showPublish && (
-        <ConfirmDialog
-          title={published ? 'Publish changes?' : `Publish ${schedule.tierName} schedule?`}
-          confirmLabel={published ? 'Publish changes' : 'Publish & email team'}
+      {publishing && (
+        <PublishDialog
+          all={publishing.all}
+          rangeLabel={rangeLabel}
+          changes={changes}
+          affectedPeople={affectedPeople}
+          totalChanges={schedule.pendingChanges}
           loading={publish.isPending}
-          onConfirm={() => publish.mutate()}
-          onClose={() => setShowPublish(false)}
-        >
-          {published ? (
-            <p>
-              Only the {affectedPeople} {affectedPeople === 1 ? 'person' : 'people'} whose shifts
-              changed will get an email describing what's new, changed or cancelled. Changed shifts
-              need to be confirmed again.
-            </p>
-          ) : (
-            <p>
-              {detail.shifts.length} shift{detail.shifts.length === 1 ? '' : 's'} become visible to
-              the team, and {affectedPeople} {affectedPeople === 1 ? 'person gets' : 'people get'}{' '}
-              an email with their shifts and a <strong>Confirm</strong> button. You can still make
-              changes afterwards.
-            </p>
-          )}
-        </ConfirmDialog>
+          onToggleAll={(all) => setPublishing({ all })}
+          onConfirm={() => publish.mutate(publishing.all)}
+          onClose={() => setPublishing(null)}
+        />
       )}
-      {showDiscard && (
+      {discarding && (
         <ConfirmDialog
-          title="Discard unpublished changes?"
+          title={`Discard changes for ${rangeLabel}?`}
           confirmLabel="Discard changes"
           danger
           loading={discard.isPending}
           onConfirm={() => discard.mutate()}
-          onClose={() => setShowDiscard(false)}
+          onClose={() => setDiscarding(false)}
         >
-          The schedule goes back to exactly what the team sees now. {detail.changes.total} change
-          {detail.changes.total === 1 ? '' : 's'} will be lost.
+          These days go back to exactly what the team sees now. {changes.total} change
+          {changes.total === 1 ? '' : 's'} will be lost; other dates aren't touched.
         </ConfirmDialog>
       )}
-      {showDelete && (
+      {deleting && (
         <ConfirmDialog
-          title="Delete this schedule?"
+          title={`Delete ${schedule.name}?`}
           confirmLabel="Delete schedule"
           danger
           loading={destroy.isPending}
           onConfirm={() => destroy.mutate()}
-          onClose={() => setShowDelete(false)}
+          onClose={() => setDeleting(false)}
         >
-          {published
-            ? 'Everyone with an upcoming shift on this schedule will get an email saying their shifts are cancelled. This can’t be undone.'
-            : 'This draft and its shifts will be deleted. The team never saw it.'}
+          All of its shifts are deleted. Everyone with an upcoming published shift on it gets an
+          email saying it’s cancelled. This can’t be undone.
         </ConfirmDialog>
       )}
-      {showDetails && (
-        <ScheduleDetailsDialog
-          schedule={schedule}
-          onClose={() => setShowDetails(false)}
-          onSaved={refresh}
+      {naming && (
+        <ScheduleNameDialog
+          schedule={naming === 'rename' ? schedule : null}
+          onClose={() => setNaming(null)}
+          onSaved={(saved) => {
+            void queryClient.invalidateQueries({ queryKey: keys.schedules });
+            refresh();
+            if (naming === 'create') navigate(`/admin/schedules/${saved.id}`);
+          }}
         />
       )}
     </>
@@ -711,10 +919,10 @@ function Banner({ tone, children }: { tone: 'slate' | 'amber'; children: ReactNo
   return (
     <div
       className={cx(
-        'mb-4 rounded-lg px-4 py-2.5 text-sm ring-1 ring-inset',
+        'mb-3 rounded-xl px-4 py-2.5 text-sm ring-1 ring-inset',
         tone === 'amber'
           ? 'bg-amber-50 text-amber-900 ring-amber-200'
-          : 'bg-slate-100 text-slate-700 ring-slate-200',
+          : 'bg-slate-100/80 text-slate-700 ring-slate-200',
       )}
     >
       {children}
@@ -722,75 +930,124 @@ function Banner({ tone, children }: { tone: 'slate' | 'amber'; children: ReactNo
   );
 }
 
-function ScheduleDetailsDialog({
+function PublishDialog({
+  all,
+  rangeLabel,
+  changes,
+  affectedPeople,
+  totalChanges,
+  loading,
+  onToggleAll,
+  onConfirm,
+  onClose,
+}: {
+  all: boolean;
+  rangeLabel: string;
+  changes: ScheduleRange['changes'];
+  affectedPeople: number;
+  totalChanges: number;
+  loading: boolean;
+  onToggleAll: (all: boolean) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const others = totalChanges - changes.total;
+  return (
+    <ConfirmDialog
+      title={all ? 'Publish every unpublished change?' : `Publish ${rangeLabel}?`}
+      confirmLabel="Publish & notify"
+      loading={loading}
+      onConfirm={onConfirm}
+      onClose={onClose}
+    >
+      {all ? (
+        <p>
+          All {totalChanges} unpublished change{totalChanges === 1 ? '' : 's'} on this schedule
+          become visible to the team. Everyone affected gets one email with their new, changed or
+          cancelled shifts.
+        </p>
+      ) : (
+        <p>
+          {[
+            changes.added && `${changes.added} new`,
+            changes.updated && `${changes.updated} changed`,
+            changes.removed && `${changes.removed} removed`,
+          ]
+            .filter(Boolean)
+            .join(', ')}{' '}
+          shift{changes.total === 1 ? '' : 's'} become visible to the team. {affectedPeople}{' '}
+          {affectedPeople === 1 ? 'person gets' : 'people get'} an email with a{' '}
+          <strong>Confirm</strong> button. Changed shifts need to be confirmed again.
+        </p>
+      )}
+      {others > 0 && changes.total > 0 && (
+        <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            checked={all}
+            onChange={(e) => onToggleAll(e.target.checked)}
+            className="size-4 accent-brand-600"
+          />
+          Also publish the {others} change{others === 1 ? '' : 's'} on other dates
+        </label>
+      )}
+    </ConfirmDialog>
+  );
+}
+
+function ScheduleNameDialog({
   schedule,
   onClose,
   onSaved,
 }: {
-  schedule: ScheduleSummary;
+  schedule: ScheduleSummary | null;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (schedule: ScheduleSummary) => void;
 }) {
-  const [name, setName] = useState(schedule.name ?? '');
-  const [startDate, setStartDate] = useState(schedule.startDate);
-  const [endDate, setEndDate] = useState(schedule.endDate);
+  const [name, setName] = useState(schedule?.name ?? '');
   const save = useMutation({
     mutationFn: () =>
-      api.patch<ScheduleSummary>(`/schedules/${schedule.id}`, {
-        name: name || null,
-        startDate,
-        endDate,
-      }),
-    onSuccess: () => {
-      toast.success('Schedule updated');
-      onSaved();
+      schedule
+        ? api.patch<ScheduleSummary>(`/schedules/${schedule.id}`, { name })
+        : api.post<ScheduleSummary>('/schedules', { name }),
+    onSuccess: (saved) => {
+      toast.success(schedule ? 'Schedule renamed' : `${saved.name} created`);
+      onSaved(saved);
       onClose();
     },
   });
   const errors = fieldErrors(save.error);
   return (
     <Modal
-      title="Schedule details"
+      title={schedule ? 'Rename schedule' : 'New schedule'}
+      description={
+        schedule
+          ? undefined
+          : 'An extra calendar for a separate roster (a project, a location, holiday coverage). Like the main schedule, it covers every tier.'
+      }
       onClose={onClose}
       onSubmit={() => save.mutate()}
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="primary" loading={save.isPending}>
-            Save
+            {schedule ? 'Save' : 'Create schedule'}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
-        <FormError message={formMessage(save.error, ['name', 'startDate', 'endDate'])} />
-        <Field label="Name" optional hint="Defaults to the date range." error={errors.name}>
+        <FormError message={formMessage(save.error, ['name'])} />
+        <Field label="Name" error={errors.name}>
           <Input
             value={name}
+            required
             maxLength={80}
+            autoFocus
+            placeholder="e.g. Holiday coverage"
             onChange={(e) => setName(e.target.value)}
-            placeholder={formatDateRange(startDate, endDate)}
           />
         </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="First day" error={errors.startDate}>
-            <Input
-              type="date"
-              required
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
-          </Field>
-          <Field label="Last day" error={errors.endDate}>
-            <Input
-              type="date"
-              required
-              min={startDate}
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
-          </Field>
-        </div>
       </div>
     </Modal>
   );

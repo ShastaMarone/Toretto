@@ -1,5 +1,5 @@
-import { formatShiftWhen } from '@shared/time';
-import type { PublishResult, ShiftStatus } from '@shared/types';
+import { formatDateRange, formatShiftWhen, localDate } from '@shared/time';
+import type { PublishResult, ShiftStatus, TimeFormat } from '@shared/types';
 import type { AuthUser } from '../auth/types';
 import type { Config } from '../config';
 import { withTransaction, type Db, type Queryable } from '../db';
@@ -7,8 +7,14 @@ import { badRequest, conflict } from '../errors';
 import { enqueueEmail, type NotificationKind } from '../email/outbox';
 import { scheduleTemplate, type EmailShift } from '../email/templates';
 import { audit } from './audit';
-import { lockSchedule, scheduleTitle, type LockedSchedule } from './schedules';
-import { getSettings, zoneFor } from './settings';
+import {
+  IN_RANGE,
+  lockSchedule,
+  rangeBounds,
+  type DateRange,
+  type LockedSchedule,
+} from './schedules';
+import { getSettings, timeFormatFor, zoneFor } from './settings';
 
 interface Snapshot {
   id: string;
@@ -43,6 +49,10 @@ interface RawShift {
   deleted_at: string | null;
 }
 
+const RAW_COLUMNS = `s.id, s.user_id, s.label_id, s.start_time, s.end_time, s.notes, s.status,
+  s.published_at, s.published_user_id, s.published_label_id, s.published_start_time,
+  s.published_end_time, s.published_notes, s.deleted_at`;
+
 const sameInstant = (a: string, b: string) => Date.parse(a) === Date.parse(b);
 
 function working(s: RawShift, needsConfirmation: boolean): Snapshot {
@@ -69,6 +79,21 @@ function published(s: RawShift): Snapshot {
   };
 }
 
+/** SQL condition and parameters limiting a query to a date range (or not). */
+async function rangeFilter(
+  client: Queryable,
+  range: DateRange | null,
+): Promise<{ where: string; params: string[]; label: string }> {
+  if (!range) return { where: 'TRUE', params: [], label: 'all dates' };
+  const { timezone } = await getSettings(client);
+  const bounds = rangeBounds(range, timezone);
+  return {
+    where: IN_RANGE,
+    params: [bounds.from, bounds.to],
+    label: formatDateRange(range.from, range.to),
+  };
+}
+
 /**
  * Queue one email per affected person describing their new, changed and
  * cancelled shifts. Shifts that already ended are left out; people with
@@ -79,7 +104,7 @@ async function notifyPeople(
   config: Config,
   schedule: LockedSchedule,
   changes: Map<string, PersonChanges>,
-  opts: { firstPublish: boolean; kind?: NotificationKind },
+  opts: { kind?: NotificationKind } = {},
 ): Promise<number> {
   if (changes.size === 0) return 0;
   const settings = await getSettings(client);
@@ -97,34 +122,24 @@ async function notifyPeople(
     [[...labelIds]],
   );
   const labels = new Map(labelRows.map((l) => [l.id, l]));
-  const { rows: tierRows } = await client.query<{ color: string }>(
-    'SELECT color FROM tiers WHERE id = $1',
-    [schedule.tierId],
+  const { rows: counts } = await client.query<{ n: number }>(
+    'SELECT count(*)::int AS n FROM schedules',
   );
-  const tierColor = tierRows[0]?.color ?? '#4f46e5';
-  const toEmailShift = (s: Snapshot): EmailShift => {
-    const label = s.labelId ? labels.get(s.labelId) : undefined;
-    return {
-      id: s.id,
-      startTime: s.startTime,
-      endTime: s.endTime,
-      labelName: label?.name ?? null,
-      labelColor: label?.color ?? null,
-      tierName: schedule.tierName,
-      tierColor,
-      notes: s.notes,
-      needsConfirmation: s.needsConfirmation,
-    };
-  };
+  // Only name the schedule when there's more than one to tell apart.
+  const scheduleName = (counts[0]?.n ?? 1) > 1 ? schedule.name : null;
 
   const { rows: people } = await client.query<{
     id: string;
     name: string;
     email: string;
     timezone: string | null;
+    timeFormat: TimeFormat | null;
+    tierColor: string | null;
   }>(
-    `SELECT id, name, email, timezone FROM users
-      WHERE id = ANY($1) AND deactivated_at IS NULL`,
+    `SELECT u.id, u.name, u.email, u.timezone, u.time_format AS "timeFormat",
+            t.color AS "tierColor"
+       FROM users u LEFT JOIN tiers t ON t.id = u.tier_id
+      WHERE u.id = ANY($1) AND u.deactivated_at IS NULL`,
     [[...changes.keys()]],
   );
 
@@ -136,13 +151,29 @@ async function notifyPeople(
     const updated = c.updated.filter((u) => upcoming(u.after) || upcoming(u.before));
     const removed = c.removed.filter(upcoming);
     if (!added.length && !updated.length && !removed.length) continue;
+    const tz = zoneFor(person, settings);
+    const toEmailShift = (s: Snapshot): EmailShift => {
+      const label = s.labelId ? labels.get(s.labelId) : undefined;
+      return {
+        id: s.id,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        labelName: label?.name ?? null,
+        color: label?.color ?? person.tierColor,
+        notes: s.notes,
+        needsConfirmation: s.needsConfirmation,
+      };
+    };
+    const days = [...added, ...removed, ...updated.flatMap((u) => [u.before, u.after])]
+      .map((s) => localDate(s.startTime, tz))
+      .sort();
     const kind: NotificationKind =
       opts.kind ??
       (!added.length && !updated.length
         ? 'schedule_cancelled'
-        : opts.firstPublish
-          ? 'schedule_published'
-          : 'schedule_updated');
+        : updated.length || removed.length
+          ? 'schedule_updated'
+          : 'schedule_published');
     await enqueueEmail(client, {
       userId: person.id,
       to: person.email,
@@ -153,12 +184,11 @@ async function notifyPeople(
         { orgName: settings.orgName, appUrl: config.appUrl },
         {
           recipientName: person.name,
-          tz: zoneFor(person, settings),
-          tierName: schedule.tierName,
-          startDate: schedule.startDate,
-          endDate: schedule.endDate,
-          scheduleId: schedule.id,
-          firstPublish: opts.firstPublish,
+          tz,
+          timeFormat: timeFormatFor(person, settings),
+          scheduleName,
+          startDate: days[0]!,
+          endDate: days[days.length - 1]!,
           added: added.map(toEmailShift),
           updated: updated.map((u) => ({
             before: toEmailShift(u.before),
@@ -173,23 +203,26 @@ async function notifyPeople(
   return queued;
 }
 
+/**
+ * Publish the unpublished changes in a date range (or everywhere): the team
+ * sees the new version, and everyone affected gets one email.
+ */
 export async function publishSchedule(
   db: Db,
   config: Config,
   scheduleId: string,
   actor: AuthUser,
+  range: DateRange | null,
 ): Promise<PublishResult> {
   return withTransaction(db, async (client) => {
     const schedule = await lockSchedule(client, scheduleId);
-    const firstPublish = schedule.status === 'draft';
+    const filter = await rangeFilter(client, range);
     const { rows } = await client.query<RawShift>(
-      `SELECT id, user_id, label_id, start_time, end_time, notes, status, published_at,
-              published_user_id, published_label_id, published_start_time, published_end_time,
-              published_notes, deleted_at
-         FROM shifts WHERE schedule_id = $1
-        ORDER BY start_time
+      `SELECT ${RAW_COLUMNS} FROM shifts s
+        WHERE s.schedule_id = $1 AND ${filter.where}
+        ORDER BY s.start_time
           FOR UPDATE`,
-      [scheduleId],
+      [scheduleId, ...filter.params],
     );
 
     const changes = new Map<string, PersonChanges>();
@@ -267,68 +300,77 @@ export async function publishSchedule(
         notesOnlyIds,
       ]);
     }
-    await client.query(
-      `UPDATE schedules SET status = 'published', published_at = now(), published_by = $2
-        WHERE id = $1`,
-      [scheduleId, actor.id],
-    );
+    const changed = result.added + result.updated + result.removed;
+    if (changed) {
+      await client.query(
+        'UPDATE schedules SET published_at = now(), published_by = $2 WHERE id = $1',
+        [scheduleId, actor.id],
+      );
+    }
 
-    result.emailsQueued = await notifyPeople(client, config, schedule, changes, { firstPublish });
-    await audit(
-      client,
-      actor.id,
-      'schedule.published',
-      { type: 'schedule', id: scheduleId },
-      {
-        title: scheduleTitle(schedule),
-        firstPublish,
-        added: result.added,
-        updated: result.updated,
-        removed: result.removed,
-        emails: result.emailsQueued,
-      },
-    );
+    result.emailsQueued = await notifyPeople(client, config, schedule, changes);
+    if (changed) {
+      await audit(
+        client,
+        actor.id,
+        'schedule.published',
+        { type: 'schedule', id: scheduleId },
+        {
+          title: schedule.name,
+          range: filter.label,
+          added: result.added,
+          updated: result.updated,
+          removed: result.removed,
+          emails: result.emailsQueued,
+        },
+      );
+    }
     return result;
   });
 }
 
-/** Throw away unpublished edits, restoring the version the team currently sees. */
-export async function discardChanges(db: Db, scheduleId: string, actor: AuthUser): Promise<void> {
-  await withTransaction(db, async (client) => {
+/**
+ * Throw away unpublished edits in a date range (or everywhere), restoring
+ * the version the team currently sees. Never-published shifts are deleted.
+ */
+export async function discardChanges(
+  db: Db,
+  scheduleId: string,
+  actor: AuthUser,
+  range: DateRange | null,
+): Promise<{ discarded: number }> {
+  return withTransaction(db, async (client) => {
     const schedule = await lockSchedule(client, scheduleId);
-    if (schedule.status === 'draft') {
-      throw badRequest(
-        "This schedule hasn't been published yet, so there's no published version to go back to.",
-      );
-    }
+    const filter = await rangeFilter(client, range);
     // Lock everyone whose published shifts come back, in a stable order, so no
     // concurrent edit elsewhere can slip an overlapping shift in meanwhile.
     const { rows: people } = await client.query<{ userId: string }>(
-      `SELECT DISTINCT published_user_id AS "userId" FROM shifts
-        WHERE schedule_id = $1 AND published_at IS NOT NULL
+      `SELECT DISTINCT s.published_user_id AS "userId" FROM shifts s
+        WHERE s.schedule_id = $1 AND s.published_at IS NOT NULL AND ${filter.where}
         ORDER BY 1`,
-      [scheduleId],
+      [scheduleId, ...filter.params],
     );
     for (const { userId } of people) {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${userId}`]);
     }
     const { rowCount: removed } = await client.query(
-      'DELETE FROM shifts WHERE schedule_id = $1 AND published_at IS NULL',
-      [scheduleId],
+      `DELETE FROM shifts s WHERE s.schedule_id = $1 AND s.published_at IS NULL AND ${filter.where}`,
+      [scheduleId, ...filter.params],
     );
-    const { rowCount: reverted } = await client.query(
-      `UPDATE shifts
+    const { rows: reverted } = await client.query<{ id: string }>(
+      `UPDATE shifts s
           SET user_id = published_user_id, label_id = published_label_id,
               start_time = published_start_time, end_time = published_end_time,
               notes = published_notes, deleted_at = NULL
-        WHERE schedule_id = $1 AND published_at IS NOT NULL
-          AND (deleted_at IS NOT NULL
-               OR user_id IS DISTINCT FROM published_user_id
-               OR label_id IS DISTINCT FROM published_label_id
-               OR start_time IS DISTINCT FROM published_start_time
-               OR end_time IS DISTINCT FROM published_end_time
-               OR notes IS DISTINCT FROM published_notes)`,
-      [scheduleId],
+        WHERE s.schedule_id = $1 AND s.published_at IS NOT NULL AND ${filter.where}
+          AND (s.deleted_at IS NOT NULL
+               OR s.user_id IS DISTINCT FROM s.published_user_id
+               OR s.label_id IS DISTINCT FROM s.published_label_id
+               OR s.start_time IS DISTINCT FROM s.published_start_time
+               OR s.end_time IS DISTINCT FROM s.published_end_time
+               OR s.notes IS DISTINCT FROM s.published_notes)
+        RETURNING s.id`,
+      [scheduleId, ...filter.params],
     );
     // A restored shift may now collide with one added elsewhere in the meantime.
     const { rows: clashes } = await client.query<{
@@ -341,32 +383,33 @@ export async function discardChanges(db: Db, scheduleId: string, actor: AuthUser
          JOIN shifts b ON b.user_id = a.user_id AND b.id <> a.id AND b.deleted_at IS NULL
                       AND a.start_time < b.end_time AND a.end_time > b.start_time
          JOIN users u ON u.id = a.user_id
-        WHERE a.schedule_id = $1 AND a.deleted_at IS NULL
+        WHERE a.id = ANY($1)
         ORDER BY a.start_time
         LIMIT 1`,
-      [scheduleId],
+      [reverted.map((r) => r.id)],
     );
     if (clashes[0]) {
-      const { timezone } = await getSettings(client);
+      const { timezone, timeFormat } = await getSettings(client);
       throw conflict(
-        `Can't discard: ${clashes[0].name} would be double-booked ${formatShiftWhen(clashes[0].startTime, clashes[0].endTime, timezone)}. Move or remove their other shift first.`,
+        `Can't discard: ${clashes[0].name} would be double-booked ${formatShiftWhen(clashes[0].startTime, clashes[0].endTime, timezone, timeFormat)}. Move or remove their other shift first.`,
         'SHIFT_OVERLAP',
       );
     }
-    await audit(
-      client,
-      actor.id,
-      'schedule.changes_discarded',
-      { type: 'schedule', id: scheduleId },
-      {
-        title: scheduleTitle(schedule),
-        discarded: (removed ?? 0) + (reverted ?? 0),
-      },
-    );
+    const discarded = (removed ?? 0) + reverted.length;
+    if (discarded) {
+      await audit(
+        client,
+        actor.id,
+        'schedule.changes_discarded',
+        { type: 'schedule', id: scheduleId },
+        { title: schedule.name, range: filter.label, discarded },
+      );
+    }
+    return { discarded };
   });
 }
 
-/** Delete a schedule. If it was published, everyone with upcoming shifts is told. */
+/** Delete an extra schedule. Everyone with upcoming published shifts on it is told. */
 export async function deleteSchedule(
   db: Db,
   config: Config,
@@ -375,38 +418,29 @@ export async function deleteSchedule(
 ): Promise<{ notified: number }> {
   return withTransaction(db, async (client) => {
     const schedule = await lockSchedule(client, scheduleId);
-    let notified = 0;
-    if (schedule.status === 'published') {
-      const { rows } = await client.query<RawShift>(
-        `SELECT id, user_id, label_id, start_time, end_time, notes, status, published_at,
-                published_user_id, published_label_id, published_start_time, published_end_time,
-                published_notes, deleted_at
-           FROM shifts WHERE schedule_id = $1 AND published_at IS NOT NULL
-          ORDER BY published_start_time`,
-        [scheduleId],
-      );
-      const changes = new Map<string, PersonChanges>();
-      for (const s of rows) {
-        const userId = s.published_user_id!;
-        if (!changes.has(userId)) changes.set(userId, { added: [], updated: [], removed: [] });
-        changes.get(userId)!.removed.push(published(s));
-      }
-      notified = await notifyPeople(client, config, schedule, changes, {
-        firstPublish: false,
-        kind: 'schedule_cancelled',
-      });
+    if (schedule.isDefault) throw badRequest("The main schedule can't be deleted");
+    const { rows } = await client.query<RawShift>(
+      `SELECT ${RAW_COLUMNS} FROM shifts s
+        WHERE s.schedule_id = $1 AND s.published_at IS NOT NULL
+        ORDER BY s.published_start_time`,
+      [scheduleId],
+    );
+    const changes = new Map<string, PersonChanges>();
+    for (const s of rows) {
+      const userId = s.published_user_id!;
+      if (!changes.has(userId)) changes.set(userId, { added: [], updated: [], removed: [] });
+      changes.get(userId)!.removed.push(published(s));
     }
+    const notified = await notifyPeople(client, config, schedule, changes, {
+      kind: 'schedule_cancelled',
+    });
     await client.query('DELETE FROM schedules WHERE id = $1', [scheduleId]);
     await audit(
       client,
       actor.id,
       'schedule.deleted',
       { type: 'schedule', id: scheduleId },
-      {
-        title: scheduleTitle(schedule),
-        wasPublished: schedule.status === 'published',
-        notified,
-      },
+      { title: schedule.name, notified },
     );
     return { notified };
   });

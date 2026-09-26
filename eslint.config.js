@@ -6,12 +6,16 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  globalIgnores(['dist', 'coverage', 'playwright-report', 'test-results']),
+  globalIgnores(['dist', '.vercel', 'coverage', 'playwright-report', 'test-results']),
   js.configs.recommended,
   tseslint.configs.recommended,
   {
     files: ['web/**/*.{ts,tsx}'],
     extends: [reactHooks.configs.flat['recommended-latest'], reactRefresh.configs.vite],
+    languageOptions: { globals: globals.browser },
+  },
+  {
+    files: ['web/public/**/*.js'],
     languageOptions: { globals: globals.browser },
   },
   {

@@ -21,7 +21,7 @@ import {
   Tabs,
   type Tone,
 } from '../../components/ui/Misc';
-import { useBootstrapData, useCurrentUser } from '../../lib/session';
+import { useBootstrapData, useCurrentUser, useTimeFormat } from '../../lib/session';
 
 const STATUS: Record<NotificationEntry['status'], Tone> = {
   queued: 'amber',
@@ -94,6 +94,7 @@ function EmailLog() {
   const user = useCurrentUser();
   const { org } = useBootstrapData();
   const tz = user.timezone ?? org.timezone;
+  const timeFormat = useTimeFormat();
   const [status, setStatus] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const emails = useNotifications(status);
@@ -145,13 +146,13 @@ function EmailLog() {
                   onClick={() => setOpenId(e.id)}
                   className="min-w-0 flex-1 text-left"
                 >
-                  <p className="truncate text-sm font-medium text-slate-900 hover:text-indigo-600">
+                  <p className="truncate text-sm font-medium text-slate-900 hover:text-brand-600">
                     {e.subject}
                   </p>
                   <p className="truncate text-xs text-slate-500">
                     To {e.userName ? `${e.userName} <${e.toEmail}>` : e.toEmail} ·{' '}
                     {KIND[e.kind] ?? e.kind} ·{' '}
-                    <span title={formatTimestamp(e.createdAt, tz)}>
+                    <span title={formatTimestamp(e.createdAt, tz, timeFormat)}>
                       {formatRelative(e.createdAt)}
                     </span>
                   </p>
@@ -183,6 +184,7 @@ function EmailLog() {
 }
 
 function EmailPreview({ id, tz, onClose }: { id: string; tz: string; onClose: () => void }) {
+  const timeFormat = useTimeFormat();
   const email = useQuery({
     queryKey: ['notification', id],
     queryFn: () =>
@@ -193,7 +195,7 @@ function EmailPreview({ id, tz, onClose }: { id: string; tz: string; onClose: ()
       title={email.data?.subject ?? 'Email'}
       description={
         email.data
-          ? `To ${email.data.toEmail} · ${formatTimestamp(email.data.createdAt, tz)}`
+          ? `To ${email.data.toEmail} · ${formatTimestamp(email.data.createdAt, tz, timeFormat)}`
           : undefined
       }
       onClose={onClose}

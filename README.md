@@ -1,21 +1,28 @@
 # Toretto — team shift scheduling
 
-A "When I Work"–style scheduling app for tiered teams. Admins build each tier's
-schedule as a **draft**, **publish** it when it's ready, and everyone with a
-shift gets an **email with a Confirm button**. Team members sign in with their
-email to see **My Schedule** and the **Team Schedule**, confirm shifts, and
+A "When I Work"–style scheduling app for tiered teams. Every tier works from
+one calendar that's always there: admins add shifts as **drafts**, **publish**
+when they're ready, and everyone affected gets an **email with a Confirm
+button**. Team members sign in with their email to see **My Schedule** and the
+**Team Schedule** (every tier, so they know who's working), confirm shifts, and
 request time off (paid holiday, personal day, vacation, …) by clicking a day.
+Canadian statutory holidays show on every calendar, and there's a light and a
+neon dark theme.
 
-![Schedule builder](docs/screenshots/schedule-builder.png)
+![Schedule builder, dark theme](docs/screenshots/schedule-builder.png)
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/my-schedule.png" alt="My schedule" /></td>
+    <td><img src="docs/screenshots/schedule-builder-light.png" alt="Schedule builder, light theme" /></td>
     <td><img src="docs/screenshots/team-schedule.png" alt="Team schedule" /></td>
   </tr>
   <tr>
+    <td><img src="docs/screenshots/my-schedule.png" alt="My schedule" /></td>
     <td><img src="docs/screenshots/request-time-off.png" alt="Requesting time off" /></td>
+  </tr>
+  <tr>
     <td><img src="docs/screenshots/dashboard.png" alt="Admin dashboard" /></td>
+    <td><img src="docs/screenshots/time-off-review.png" alt="Reviewing time-off requests" /></td>
   </tr>
   <tr>
     <td><img src="docs/screenshots/email-schedule-published.png" alt="Schedule email with confirm links" /></td>
@@ -27,17 +34,22 @@ request time off (paid holiday, personal day, vacation, …) by clicking a day.
 
 **For admins**
 
-- **Tiers** (Tier 1, 2, 3 — rename or add more), each with its own schedules.
-- **Custom labels** such as On-Call, Training and Overtime, either for one tier or for every tier.
-- **Schedule builder**: a people × days grid. Click **+** to add a shift, drag a shift to move it, and hold <kbd>Alt</kbd>/<kbd>Ctrl</kbd> while dragging to copy it. The builder:
-  - suggests shift times already used in the schedule
-  - rejects overlapping shifts
+- **Tiers** (Tier 1, 2, 3 — rename or add more). Everyone is scheduled on the same calendar, grouped by tier. Tier chips filter it down to one or more tiers.
+- **Custom labels** such as On-Call, Training and Overtime, either for one tier's people or for everyone.
+- **Schedule builder**: an open-ended calendar, with no dates to set up first. It shows a week, 2 weeks or a month as a people × days grid. Click **+** to add a shift, drag a shift to move it, and hold <kbd>Alt</kbd>/<kbd>Ctrl</kbd> while dragging to copy it. The builder:
+  - suggests shift times already used on the schedule, and lets you type times ("3pm", "15:30") or pick them from a list that shows each shift's length
+  - rejects overlapping shifts, including across schedules
   - flags anyone on time off that day
-  - can start a new schedule by copying a previous one
-- **Draft → Publish**. Drafts are invisible to the team. Publishing emails every affected person **once**, with all their shifts and a Confirm link for each one.
-- **Edit after publishing**. The team keeps seeing the published version until you **Publish changes**. Then only the people affected get an email ("new", "changed" with the old time struck through, "cancelled"). Changed shifts need to be confirmed again. You can **Discard changes** to go back to the published version.
-- **Confirmation tracking**: every shift shows ◷ pending or ✓ confirmed. The dashboard shows who hasn't confirmed, and an automatic reminder email goes out after 24 hours (configurable).
+  - shows statutory holidays
+  - can copy last week (or the 2 weeks before) forward as drafts
+- **Repeating shifts**. When adding a shift, choose **Repeats** (every weekday, every day, weekly, or custom days) and an end date, and optionally skip statutory holidays. Each day becomes its own shift, so a single day can still be changed at the last minute. Days the person already works, or has approved time off, are skipped and listed.
+- **More schedules if you need them**. The **Main schedule** is always there. Add others (holiday coverage, a project, a second site) from the schedule's name menu. Each one covers every tier, and the team sees all of them together.
+- **Draft → Publish**. Drafts are invisible to the team. **Publish** the days you're looking at, or every change at once. Publishing emails every affected person **once**, with all their shifts and a Confirm link for each one.
+- **Edit after publishing**. The team keeps seeing the published version until you publish again. Then only the people affected get an email ("new", "changed" with the old time struck through, "cancelled"). Changed shifts need to be confirmed again. You can **Discard** unpublished changes to go back to the published version.
+- **Confirmation tracking**: every shift shows ◷ pending or ✓ confirmed. The dashboard shows confirmations week by week and who hasn't confirmed, and an automatic reminder email goes out after 24 hours (configurable).
+- **Admin emails** when someone requests (or cancels) time off and when someone confirms shifts. Each admin can turn either off in their profile.
 - **Time-off approvals**: approve or decline, with a warning when the request overlaps scheduled shifts. You can also record time off for someone directly.
+- **Canadian statutory holidays** on every calendar, including the weekday a weekend holiday is observed. The default is the federal list (Canada Labour Code); pick a province or territory, or turn holidays off, in **Settings**.
 - **People**: invite by email, one at a time or in bulk. Set each person's role, tier and team, deactivate, or re-send invites.
 - **Activity**: an audit trail (who published, confirmed, approved and when) plus a log of every email with its delivery status, a preview, and retry for failures.
 
@@ -47,13 +59,14 @@ request time off (paid holiday, personal day, vacation, …) by clicking a day.
 - Sign in with email + password, or **"Email me a sign-in link"** (no password needed).
 - **My Schedule**: a month calendar, shifts waiting for confirmation (confirm one or all), the next two weeks, and your time-off requests.
 - **Request time off** by clicking any day. Pick a type (Paid Holiday, Personal Day, Vacation, Sick Day, Unpaid Leave — admins can edit the list) and a date range. You're warned if you're scheduled during that time.
-- **Team Schedule**: everyone's published shifts for the week, filterable by tier and team. Coworkers see that someone is off, not why.
+- **Team Schedule**: everyone's published shifts across every tier (week, 2 weeks or month), filterable by tier, team and schedule. Coworkers see that someone is off, not why.
+- **Light, dark or system theme**, with frosted-glass panels and neon glows in the dark theme. Saved per device.
 - Works on phones. The calendars switch to a compact dot view and a day-by-day agenda.
-- Times are shown in each person's own time zone, in the app and in emails.
+- Times are shown in each person's own time zone, in the app and in emails, as 12-hour ("3:00 PM") or 24-hour ("15:00") times. The organization sets the default; anyone can pick their own in their profile.
 
 ## Quick start (local)
 
-You need **Node.js 22.22+** and **PostgreSQL 14+** (or Docker).
+You need **Node.js 22** (22.13 or later) and **PostgreSQL 14+** (or Docker).
 
 ```bash
 npm install
@@ -80,23 +93,25 @@ confirmation links, schedule emails) appears in the **dev mailbox** at
 ## Configuration
 
 All settings are environment variables (see [`.env.example`](.env.example)).
-Organization name, time zone, week start, reminder timing and sign-up policy are
-changed in the app under **Settings**.
+Organization name, time zone, week start, 12/24-hour time format, statutory
+holiday region, reminder timing and sign-up policy are changed in the app under
+**Settings**.
 
-| Variable                                            | Default                                   | Purpose                                                                                                   |
-| --------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `APP_URL`                                           | `http://localhost:5173`                   | Public URL of the app, used for links in emails. **Required in production.**                              |
-| `DATABASE_URL`                                      | local `toretto` DB                        | PostgreSQL connection string (add `?sslmode=require` if your host needs SSL). **Required in production.** |
-| `PORT`                                              | `3001`                                    | HTTP port.                                                                                                |
-| `ADMIN_EMAIL`                                       | —                                         | Only this address may complete the first-run setup page. **Set this before your first production start.** |
-| `EMAIL_TRANSPORT`                                   | `console`                                 | `console` (log + dev mailbox), `smtp`, `postmark` or `sendgrid`.                                          |
-| `EMAIL_FROM`                                        | `Toretto Scheduling <no-reply@localhost>` | Sender, e.g. `Scheduling <scheduling@yourcompany.com>`.                                                   |
-| `SMTP_URL`                                          | —                                         | For `smtp`: `smtp://user:pass@host:587`.                                                                  |
-| `POSTMARK_SERVER_TOKEN` / `POSTMARK_MESSAGE_STREAM` | — / `outbound`                            | For `postmark`.                                                                                           |
-| `SENDGRID_API_KEY`                                  | —                                         | For `sendgrid`.                                                                                           |
-| `RUN_WORKER`                                        | `true`                                    | Send emails from the web process. Set `false` if you run `npm run worker` separately.                     |
-| `TRUST_PROXY`                                       | `0`                                       | Set to `1` behind a load balancer (Render, Railway, Fly, Heroku) so rate limiting sees real client IPs.   |
-| `NODE_ENV`                                          | `development`                             | Use `production` in production (the Docker image already does).                                           |
+| Variable                                            | Default                                   | Purpose                                                                                                                             |
+| --------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_URL`                                           | `http://localhost:5173`                   | Public URL of the app, used for links in emails. **Required in production** (on Vercel it defaults to the production URL).          |
+| `DATABASE_URL`                                      | local `toretto` DB                        | PostgreSQL connection string (add `?sslmode=require` if your host needs SSL). `POSTGRES_URL` works too. **Required in production.** |
+| `PORT`                                              | `3001`                                    | HTTP port.                                                                                                                          |
+| `ADMIN_EMAIL`                                       | —                                         | Only this address may complete the first-run setup page. **Set this before your first production start.**                           |
+| `EMAIL_TRANSPORT`                                   | `console`                                 | `console` (log + dev mailbox), `smtp`, `postmark` or `sendgrid`.                                                                    |
+| `EMAIL_FROM`                                        | `Toretto Scheduling <no-reply@localhost>` | Sender, e.g. `Scheduling <scheduling@yourcompany.com>`.                                                                             |
+| `SMTP_URL`                                          | —                                         | For `smtp`: `smtp://user:pass@host:587`.                                                                                            |
+| `POSTMARK_SERVER_TOKEN` / `POSTMARK_MESSAGE_STREAM` | — / `outbound`                            | For `postmark`.                                                                                                                     |
+| `SENDGRID_API_KEY`                                  | —                                         | For `sendgrid`.                                                                                                                     |
+| `RUN_WORKER`                                        | `true`                                    | Send emails from the web process. Set `false` if you run `npm run worker` separately.                                               |
+| `CRON_SECRET`                                       | —                                         | On Vercel: turns on `GET /api/cron` (reminders, email retries) for Vercel Cron, which sends it as a bearer token. 16+ characters.   |
+| `TRUST_PROXY`                                       | `0` (`1` on Vercel)                       | Set to `1` behind a load balancer (Render, Railway, Fly, Heroku) so rate limiting sees real client IPs.                             |
+| `NODE_ENV`                                          | `development`                             | Use `production` in production (the Docker image already does).                                                                     |
 
 ### Email delivery
 
@@ -122,8 +137,13 @@ you can retry them.
 
 ## Deploying
 
-The app is one Node.js process plus PostgreSQL. It runs database migrations
-automatically on start and serves both the API and the web app.
+You need PostgreSQL, plus either one long-running Node.js process (Docker,
+Render, Railway, Fly.io, any server) or Vercel. Database migrations run
+automatically on start.
+
+### Docker, Render, Railway, Fly.io
+
+The server is one process that serves both the API and the web app.
 
 **Docker (any host):**
 
@@ -150,7 +170,51 @@ npm ci && npm run build
 NODE_ENV=production node dist/server/index.js
 ```
 
-Then create the first admin in one of two ways:
+### Vercel
+
+The repository deploys to Vercel as is. `vercel.json` builds it with
+`npm run build:vercel`, which serves the web app from Vercel's CDN and runs all
+of `/api` as one Node.js function (`server/src/vercel.ts`). It overrides any
+framework preset chosen in the dashboard.
+
+1. Import the repository in Vercel (or redeploy an existing project).
+2. Add a database: **Storage → Create Database → Neon** (or any PostgreSQL
+   host), connected to the project. This adds `DATABASE_URL` (or
+   `POSTGRES_URL`); the pooled connection string is fine. Pick the region
+   closest to your functions (Vercel's default is Washington, D.C., AWS
+   `us-east-1`).
+3. Under **Settings → Environment Variables**, add:
+   - `ADMIN_EMAIL`: the address allowed to create the first admin account.
+   - `EMAIL_TRANSPORT`, your provider's key and `EMAIL_FROM` (see
+     [Email delivery](#email-delivery)).
+   - `CRON_SECRET`: a random string of 16 or more characters, e.g. from
+     `openssl rand -hex 32`. Vercel sends it with its cron calls.
+   - `APP_URL`, only for a custom domain. Otherwise links in emails use the
+     project's production URL.
+4. Redeploy, because settings only apply to new deployments. Then open the
+   production URL and complete the setup page.
+
+Until email is set up, emails are only written to the function logs (the
+project's **Logs** tab), and the app says so. You can copy the setup link from
+there. Or create the admin from your computer instead:
+`DATABASE_URL="…" npm run create-admin -- --email you@yourcompany.com --name "Your Name" --password "…"`.
+
+Without a server process running between requests:
+
+- Emails are sent right after the request that queued them.
+- Reminders and email retries run on later requests, at most once a minute per
+  function instance. They also run once a day at 14:00 UTC, when Vercel Cron
+  calls `/api/cron` (the Hobby plan allows one run a day). On Pro you can run it
+  more often by changing the schedule in `server/build-vercel.mjs`.
+- Rate limits are counted per function instance, so they're looser than on a
+  single server. The [Vercel Firewall](https://vercel.com/docs/vercel-firewall)
+  can add stricter ones.
+- Preview deployments sit behind Vercel's login by default, so teammates can't
+  open links to them. Give the team the production URL.
+
+### The first admin
+
+Create the first admin in one of two ways:
 
 1. Open the app and complete the **setup page**. It only accepts the `ADMIN_EMAIL` address,
    and emails that address a link to choose the admin password.
@@ -178,18 +242,18 @@ a password, then an admin assigns their tier.
 
 The tables follow the playbook, with a few additions (✚) the features need:
 
-| Table                                     | Purpose                                                                                                                    |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `users`                                   | name, email, role (`admin`/`member`), `tier_id`, `team_id`, personal time zone ✚, email-confirmed/deactivated timestamps ✚ |
-| `tiers`, `teams`                          | Tier 1/2/3 (renameable, colored) and optional teams                                                                        |
-| `labels`                                  | admin-defined shift labels; `tier_id` = one tier, `NULL` = all tiers                                                       |
-| `schedules`                               | one tier's roster for a date range (≤ 6 weeks), `status` draft/published                                                   |
-| `shifts`                                  | person, label, start/end, notes, `status` pending/confirmed — plus a **published snapshot** ✚ (see below)                  |
-| `time_off_types` ✚, `time_off_requests` ✚ | Paid Holiday, Personal Day, …; requests with pending/approved/declined/cancelled                                           |
-| `notifications`                           | the email outbox and notification log (recipient, kind, status, attempts, sent time, related shifts)                       |
-| `audit_log` ✚                             | who did what, when                                                                                                         |
-| `sessions` ✚, `auth_tokens` ✚             | sign-in sessions and single-use email links, stored as SHA-256 hashes                                                      |
-| `org_settings` ✚                          | organization name, time zone, week start, reminder delay, sign-up policy                                                   |
+| Table                                     | Purpose                                                                                                                                                                     |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users`                                   | name, email, role (`admin`/`member`), `tier_id`, `team_id`, personal time zone and 12/24-hour format ✚, admin email preferences ✚, email-confirmed/deactivated timestamps ✚ |
+| `tiers`, `teams`                          | Tier 1/2/3 (renameable, colored) and optional teams                                                                                                                         |
+| `labels`                                  | admin-defined shift labels; `tier_id` = only for that tier's people, `NULL` = everyone                                                                                      |
+| `schedules`                               | a named, open-ended calendar for every tier; the **main schedule** (`is_default`) always exists                                                                             |
+| `shifts`                                  | person, label, start/end, notes, `status` pending/confirmed — plus a **published snapshot** ✚ (see below)                                                                   |
+| `time_off_types` ✚, `time_off_requests` ✚ | Paid Holiday, Personal Day, …; requests with pending/approved/declined/cancelled                                                                                            |
+| `notifications`                           | the email outbox and notification log (recipient, kind, status, attempts, sent time, related shifts)                                                                        |
+| `audit_log` ✚                             | who did what, when                                                                                                                                                          |
+| `sessions` ✚, `auth_tokens` ✚             | sign-in sessions and single-use email links, stored as SHA-256 hashes                                                                                                       |
+| `org_settings` ✚                          | organization name, time zone, week start, time format, holiday region, reminder delay, sign-up policy                                                                       |
 
 ### Publish → notify → confirm
 
@@ -198,7 +262,9 @@ Each shift row holds two copies of its data:
 - the **working copy**, which admins edit in the builder;
 - the **published snapshot**, which is what the team sees.
 
-Publishing compares the two for every shift in the schedule:
+Publishing compares the two for every shift in the chosen dates (the days on
+screen) or, with **Publish all changes**, on the whole schedule. A shift counts
+as in the dates if either its working copy or its published version is:
 
 | Working copy vs. published    | What happens                         | Email                                 |
 | ----------------------------- | ------------------------------------ | ------------------------------------- |
@@ -218,7 +284,13 @@ the Publish button never waits on the email provider.
 Clicking **Confirm** in the email opens `/confirm-shift/:id`. If the person
 isn't signed in, they sign in first and are brought straight back. The shift is
 marked confirmed, and they land on **My Schedule**. **Confirm all** in the email
-confirms every shift of theirs in that schedule.
+confirms every shift listed in it. Admins who want to know get one email per
+confirmation (or per "confirm all"), never for their own shifts.
+
+A shift's tier is its person's tier, so moving someone to another tier moves
+their shifts with them. Holidays are computed in the app (`shared/holidays.ts`)
+rather than stored, and are for information only: you can still schedule people
+on a holiday.
 
 ### Time zones
 
@@ -249,10 +321,13 @@ across daylight-saving changes.
 
 | Question                          | Decision                                                                                                               |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Labels global or per tier?        | **Both.** Each label belongs to one tier or to all tiers.                                                              |
+| Labels global or per tier?        | **Both.** Each label belongs to one tier (only for its people) or to everyone.                                         |
 | Reminders for unconfirmed shifts? | **Yes.** One reminder per shift after 24 h (Settings: off / 12 h / 24 h / 2 days / 3 days).                            |
 | Shift swaps/trades?               | **Out of scope for v1.** People contact their admin, who edits and re-publishes. Only the affected people are emailed. |
 | Multiple time zones?              | **Supported.** Schedules are built in the organization's zone; each person sees their own.                             |
+| One schedule per tier?            | **No.** One calendar for every tier, with extra schedules only when you want a separate roster.                        |
+| Repeating shifts as a series?     | **No.** Repeating creates separate shifts, so any one day can change without "this or all?" questions.                 |
+| Statutory holidays?               | **Canadian**, federal by default or any province/territory. Shown on calendars; they don't block scheduling.           |
 
 Other choices worth knowing:
 
@@ -268,6 +343,7 @@ npm run dev          # API (tsx watch) + web (Vite) with hot reload
 npm test             # unit + API integration tests (needs Postgres; see below)
 npm run test:e2e     # builds, then drives the whole flow in Chromium (Playwright;
                      # first time: npx playwright install chromium)
+npm run test:e2e:vercel   # the same, against the Vercel build output
 npm run lint         # ESLint
 npm run typecheck    # TypeScript (web + server)
 npm run format       # Prettier
@@ -297,7 +373,7 @@ server/
     auth/          password hashing, sessions, email-link tokens, middleware
   scripts/         seed, create-admin, migrate
   test/            API integration tests
-shared/            types and time helpers shared by server and web
+shared/            types, time and holiday helpers shared by server and web
 web/src/
   pages/           admin/, member/, auth/ screens
   components/      schedule grid pieces, dialogs, UI kit

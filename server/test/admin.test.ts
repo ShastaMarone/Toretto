@@ -1,9 +1,11 @@
+import { addDays } from '@shared/time';
 import type { Label, Person, Tier } from '@shared/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createTestContext,
   createTier,
   createUser,
+  defaultScheduleId,
   emails,
   login,
   nextMonday,
@@ -140,16 +142,26 @@ describe('tiers and labels', () => {
     expect(forTier.map((l) => l.name).sort()).toEqual(['On-Call', 'Training']);
   });
 
-  it('refuses to delete a tier that has schedules', async () => {
-    const monday = nextMonday();
-    const schedule = await admin
-      .post('/api/schedules')
-      .send({ tierId: tier.id, startDate: monday, endDate: monday });
-    expect(schedule.status).toBe(201);
+  it('refuses to delete a tier that people or shifts still use', async () => {
+    const zed = await createUser(ctx.db, { name: 'Zed Zone', tierId: tier.id });
     const res = await admin.delete(`/api/tiers/${tier.id}`);
     expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe('TIER_HAS_SCHEDULES');
-    await admin.delete(`/api/schedules/${schedule.body.schedule.id}`).expect(200);
+    expect(res.body.error.code).toBe('TIER_HAS_PEOPLE');
+
+    // A tier label on a shift keeps the tier around too.
+    const training = (await admin.get('/api/labels')).body.find(
+      (l: Label) => l.tierId === tier.id && l.name === 'Training',
+    );
+    const main = await defaultScheduleId(ctx.db);
+    const shift = await admin
+      .post(`/api/schedules/${main}/shifts`)
+      .send({ userId: zed.id, labelId: training.id, ...shiftOn(nextMonday()) })
+      .expect(201);
+    await admin.patch(`/api/users/${zed.id}`).send({ tierId: null }).expect(200);
+    const labelled = await admin.delete(`/api/tiers/${tier.id}`);
+    expect(labelled.body.error.code).toBe('TIER_LABELS_IN_USE');
+
+    await admin.delete(`/api/shifts/${shift.body.id}`).expect(200);
     await admin.delete(`/api/tiers/${tier.id}`).expect(204);
   });
 });
@@ -200,12 +212,9 @@ describe('people', () => {
     const tierId = await createTier(ctx.db, 'Tier 4');
     const worker = await createUser(ctx.db, { name: 'Wes Worker', tierId });
     const monday = nextMonday();
-    const { body } = await admin
-      .post('/api/schedules')
-      .send({ tierId, startDate: monday, endDate: monday });
     await admin
-      .post(`/api/schedules/${body.schedule.id}/shifts`)
-      .send({ userId: worker.id, ...shiftOn(monday) })
+      .post(`/api/schedules/${await defaultScheduleId(ctx.db)}/shifts`)
+      .send({ userId: worker.id, ...shiftOn(addDays(monday, 1)) })
       .expect(201);
 
     const del = await admin.delete(`/api/users/${worker.id}`);
@@ -264,7 +273,19 @@ describe('settings', () => {
       name: 'Support Org',
       timezone: 'America/Edmonton',
       weekStartsOn: 0,
+      holidayRegion: 'CA',
+      timeFormat: '12h',
     });
+    const alberta = await admin.patch('/api/admin/settings').send({ holidayRegion: 'AB' });
+    expect(alberta.body.holidayRegion).toBe('AB');
+    expect((await admin.patch('/api/admin/settings').send({ holidayRegion: 'XX' })).status).toBe(
+      400,
+    );
+    const clock = await admin.patch('/api/admin/settings').send({ timeFormat: '24h' });
+    expect(clock.body.timeFormat).toBe('24h');
+    expect((await member.get('/api/bootstrap')).body.org.timeFormat).toBe('24h');
+    expect((await admin.patch('/api/admin/settings').send({ timeFormat: '25h' })).status).toBe(400);
+    await admin.patch('/api/admin/settings').send({ timeFormat: '12h' });
   });
 
   it('lets people set their own time zone', async () => {
@@ -272,6 +293,18 @@ describe('settings', () => {
     expect(res.body.user).toMatchObject({ timezone: 'America/Halifax', name: 'Mo M.' });
     const reset = await member.patch('/api/me').send({ timezone: null });
     expect(reset.body.user.timezone).toBeNull();
+  });
+
+  it('lets people pick 12- or 24-hour times, or follow the organization', async () => {
+    expect((await member.get('/api/bootstrap')).body.user.timeFormat).toBeNull();
+    const own = await member.patch('/api/me').send({ timeFormat: '24h' });
+    expect(own.body.user.timeFormat).toBe('24h');
+    // Other profile edits leave it alone.
+    const renamed = await member.patch('/api/me').send({ name: 'Mo M.' });
+    expect(renamed.body.user.timeFormat).toBe('24h');
+    expect((await member.patch('/api/me').send({ timeFormat: 'metric' })).status).toBe(400);
+    const reset = await member.patch('/api/me').send({ timeFormat: null });
+    expect(reset.body.user.timeFormat).toBeNull();
   });
 
   it('changes a password after checking the current one', async () => {

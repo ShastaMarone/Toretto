@@ -22,7 +22,7 @@ export default function CheckEmailPage() {
   const [params] = useSearchParams();
   const reason = params.get('reason') ?? 'signup';
   const email = params.get('email') ?? 'your email';
-  const { devMailbox } = useBootstrapData();
+  const { devMailbox, emailConfigured } = useBootstrapData();
   const canResend = reason === 'setup' || reason === 'signup';
   const resend = useMutation({
     mutationFn: () => api.post('/auth/resend-verification', { email }),
@@ -33,7 +33,7 @@ export default function CheckEmailPage() {
   return (
     <AuthLayout title="Check your email" footer={<TextLink to="/login">Back to sign in</TextLink>}>
       <div className="flex gap-4">
-        <div className="shrink-0 rounded-full bg-indigo-50 p-3 text-indigo-600">
+        <div className="shrink-0 rounded-full bg-brand-50 p-3 text-brand-600">
           <Inbox className="size-6" />
         </div>
         <p className="text-sm text-slate-600">{(MESSAGES[reason] ?? MESSAGES.signup!)(email)}</p>
@@ -53,6 +53,14 @@ export default function CheckEmailPage() {
       {devMailbox && (
         <p className="mt-3 text-center text-xs text-slate-500">
           Development mode: emails aren't really sent, they're shown in the dev mailbox.
+        </p>
+      )}
+      {!devMailbox && !emailConfigured && (
+        <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
+          This server can't send email yet, so the message was only written to its log.{' '}
+          {reason === 'setup'
+            ? 'Copy the link from your hosting provider’s logs (on Vercel: the project’s Logs tab), or set up an email provider and resend.'
+            : 'Ask your administrator to set up email.'}
         </p>
       )}
     </AuthLayout>

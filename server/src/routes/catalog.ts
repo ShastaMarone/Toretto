@@ -71,14 +71,24 @@ export function catalogRoutes({ db }: AppDeps): {
 
   tiers.delete('/:id', requireAdmin, async (req, res) => {
     const { id } = parse(zIdParam, req.params);
-    const { rows: schedules } = await db.query(
-      'SELECT 1 FROM schedules WHERE tier_id = $1 LIMIT 1',
+    const { rows: inUse } = await db.query<{ people: boolean; labels: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM users WHERE tier_id = $1 AND deactivated_at IS NULL) AS people,
+              EXISTS (SELECT 1 FROM shifts s JOIN labels l
+                        ON l.id = s.label_id OR l.id = s.published_label_id
+                       WHERE l.tier_id = $1) AS labels`,
       [id],
     );
-    if (schedules.length) {
+    if (inUse[0]?.people) {
       throw conflict(
-        'This tier still has schedules. Delete its schedules first, or rename the tier instead.',
-        'TIER_HAS_SCHEDULES',
+        'People are still in this tier. Move them to another tier on the People page first, or rename the tier instead.',
+        'TIER_HAS_PEOPLE',
+      );
+    }
+    // Deleting the tier deletes its labels, which would silently vanish from shifts.
+    if (inUse[0]?.labels) {
+      throw conflict(
+        "This tier's labels are used on shifts. Rename the tier instead, or delete those labels first.",
+        'TIER_LABELS_IN_USE',
       );
     }
     const { rows } = await db.query<{ name: string }>(

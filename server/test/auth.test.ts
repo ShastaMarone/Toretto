@@ -75,6 +75,8 @@ describe('first-run setup', () => {
       name: 'Support Org',
       timezone: 'America/Vancouver',
       weekStartsOn: 1,
+      holidayRegion: 'CA',
+      timeFormat: '12h',
     });
     await login(ctx.agent(), 'robin@example.com', 'correct horse battery');
 

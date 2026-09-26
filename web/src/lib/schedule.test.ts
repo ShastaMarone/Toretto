@@ -3,10 +3,12 @@ import type { TimeOffEntry } from '@shared/types';
 import { describe, expect, it } from 'vitest';
 import {
   groupByDay,
+  groupByTier,
   groupByUserDay,
-  scheduleTitle,
+  stepView,
   timeOffByUserDay,
   totalHours,
+  viewRange,
 } from './schedule';
 
 const TZ = 'America/Toronto';
@@ -63,11 +65,45 @@ describe('schedule grid helpers', () => {
         shift('a', '2026-10-07', '22:00', '06:30'),
       ]),
     ).toBe(16.5);
-    expect(scheduleTitle({ name: null, startDate: '2026-10-05', endDate: '2026-10-11' })).toBe(
-      'Oct 5 – 11, 2026',
+  });
+
+  it('works out the days each calendar view shows', () => {
+    // Thursday Oct 8, 2026, weeks starting Monday.
+    expect(viewRange('week', '2026-10-08', 1)).toEqual({ from: '2026-10-05', to: '2026-10-11' });
+    expect(viewRange('2weeks', '2026-10-08', 0)).toEqual({ from: '2026-10-04', to: '2026-10-17' });
+    expect(viewRange('month', '2026-10-08', 1)).toEqual({ from: '2026-10-01', to: '2026-10-31' });
+    expect(stepView('week', '2026-10-08', 1)).toBe('2026-10-15');
+    expect(stepView('2weeks', '2026-10-08', -1)).toBe('2026-09-24');
+    expect(stepView('month', '2026-10-31', 1)).toBe('2026-11-01');
+    expect(stepView('month', '2026-03-01', -1)).toBe('2026-02-01');
+  });
+
+  it('groups people by tier in tier order, with no-tier people last', () => {
+    const tiers = [
+      { id: 't2', name: 'Tier 2', color: '#0891b2' },
+      { id: 't1', name: 'Tier 1', color: '#4f46e5' },
+    ];
+    const person = (id: string, name: string, tierId: string | null) => ({
+      id,
+      name,
+      tierId,
+      teamId: null,
+      active: true,
+    });
+    const groups = groupByTier(
+      [
+        person('a', 'Zoe', 't1'),
+        person('b', 'Amy', 't1'),
+        person('c', 'Cal', null),
+        person('d', 'Dee', 't2'),
+      ],
+      tiers,
+      'a',
     );
-    expect(
-      scheduleTitle({ name: 'Holiday coverage', startDate: '2026-10-05', endDate: '2026-10-11' }),
-    ).toBe('Holiday coverage');
+    expect(groups.map((g) => [g.key, g.people.map((p) => p.name)])).toEqual([
+      ['t2', ['Dee']],
+      ['t1', ['Zoe', 'Amy']], // the viewer first
+      ['none', ['Cal']],
+    ]);
   });
 });

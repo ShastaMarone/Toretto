@@ -1,14 +1,23 @@
 import { addDays } from '@shared/time';
+import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { createApp } from '../src/app';
 import { enqueueEmail } from '../src/email/outbox';
 import type { Mailer, OutgoingEmail } from '../src/email/transport';
-import { createWorker, MAX_ATTEMPTS, processOutbox, queueReminders } from '../src/email/worker';
+import {
+  createJobs,
+  createWorker,
+  MAX_ATTEMPTS,
+  processOutbox,
+  queueReminders,
+} from '../src/email/worker';
 import { createLogger } from '../src/logger';
 import {
   clearEmails,
   createTestContext,
   createTier,
   createUser,
+  defaultScheduleId,
   emails,
   login,
   nextMonday,
@@ -192,10 +201,7 @@ describe('confirmation reminders', () => {
     const admin = ctx.agent();
     await login(admin, adminUser.email);
     const monday = nextMonday();
-    const { body } = await admin
-      .post('/api/schedules')
-      .send({ tierId: tier, startDate: monday, endDate: addDays(monday, 6) });
-    const id = body.schedule.id;
+    const id = await defaultScheduleId(ctx.db);
     for (const [user, d] of [
       [pat, 0],
       [pat, 1],
@@ -206,10 +212,10 @@ describe('confirmation reminders', () => {
         .send({ userId: user.id, ...shiftOn(addDays(monday, d)) })
         .expect(201);
     }
-    await admin.post(`/api/schedules/${id}/publish`).expect(200);
+    await admin.post(`/api/schedules/${id}/publish`).send({}).expect(200);
     const coraAgent = ctx.agent();
     await login(coraAgent, cora.email);
-    await coraAgent.post('/api/my/shifts/confirm').send({ scheduleId: id }).expect(200);
+    await coraAgent.post('/api/my/shifts/confirm').send({}).expect(200);
     await clearEmails(ctx.db);
 
     // Too soon: nothing yet.
@@ -232,3 +238,111 @@ describe('confirmation reminders', () => {
     );
   });
 });
+
+describe('scheduled jobs (serverless)', () => {
+  it('shares one outbox run between callers and goes around again for late arrivals', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const sent: string[] = [];
+    const mailer: Mailer = {
+      async send(message) {
+        if (message.to === 'first@example.com') await gate;
+        sent.push(message.to);
+        return { messageId: message.to };
+      },
+    };
+    const jobs = createJobs({ db: ctx.db, mailer, logger: silent, config: ctx.config });
+    await enqueueEmail(ctx.db, { userId: null, to: 'first@example.com', kind: 'invite', email });
+    const a = jobs.drainOutbox();
+    for (let i = 0; i < 50 && !(await isSending(ctx)); i++) await pause(10);
+    // Queued while the first email is still being sent.
+    await enqueueEmail(ctx.db, { userId: null, to: 'late@example.com', kind: 'invite', email });
+    const b = jobs.drainOutbox();
+    expect(b).toBe(a);
+    release();
+    expect(await a).toBe(2);
+    expect(sent).toEqual(['first@example.com', 'late@example.com']);
+  });
+
+  it('stops when asked and can run again afterwards', async () => {
+    const { mailer, sent } = fakeMailer();
+    let stop = true;
+    const jobs = createJobs({
+      db: ctx.db,
+      mailer,
+      logger: silent,
+      config: ctx.config,
+      shouldStop: () => stop,
+    });
+    await enqueueEmail(ctx.db, { userId: null, to: 'wait@example.com', kind: 'invite', email });
+    expect(await jobs.drainOutbox()).toBe(0);
+    expect(sent).toEqual([]);
+    stop = false;
+    expect(await jobs.drainOutbox()).toBe(1);
+    expect(sent.map((m) => m.to)).toEqual(['wait@example.com']);
+  });
+
+  it('runs reminders and sends due email from GET /api/cron, given the secret', async () => {
+    await ctx.db.query('UPDATE org_settings SET reminder_hours = 24');
+    const tier = await createTier(ctx.db, 'Tier C');
+    const adminUser = await createUser(ctx.db, { name: 'Cron Admin', role: 'admin' });
+    const quinn = await createUser(ctx.db, { name: 'Quinn Quiet', tierId: tier });
+    const admin = ctx.agent();
+    await login(admin, adminUser.email);
+    const monday = nextMonday();
+    const main = await defaultScheduleId(ctx.db);
+    await admin
+      .post(`/api/schedules/${main}/shifts`)
+      .send({ userId: quinn.id, ...shiftOn(monday) })
+      .expect(201);
+    await admin.post(`/api/schedules/${main}/publish`).send({}).expect(200);
+    // Published two days ago and still unconfirmed.
+    await ctx.db.query(
+      `UPDATE shifts SET published_at = now() - interval '48 hours' WHERE published_user_id = $1`,
+      [quinn.id],
+    );
+    await clearEmails(ctx.db);
+    await enqueueEmail(ctx.db, { userId: null, to: 'retry@example.com', kind: 'invite', email });
+
+    const { mailer, sent } = fakeMailer();
+    const jobs = createJobs({ db: ctx.db, mailer, logger: silent, config: ctx.config });
+    const secret = 'a-long-enough-cron-secret';
+    const app = createApp({
+      config: { ...ctx.config, cronSecret: secret },
+      db: ctx.db,
+      logger: silent,
+      kick: () => undefined,
+      runJobs: () => jobs.runDue({ force: true }),
+    });
+
+    await request(app).get('/api/cron').expect(401);
+    await request(app).get('/api/cron').set('Authorization', 'Bearer wrong').expect(401);
+    expect(sent).toEqual([]);
+    const res = await request(app)
+      .get('/api/cron')
+      .set('Authorization', `Bearer ${secret}`)
+      .expect(200);
+    expect(res.body).toEqual({ reminders: 1, emails: 2 });
+    expect(sent.map((m) => m.to).sort()).toEqual([quinn.email, 'retry@example.com'].sort());
+  });
+
+  it('has no cron endpoint unless a secret is configured', async () => {
+    const app = createApp({
+      config: ctx.config,
+      db: ctx.db,
+      logger: silent,
+      kick: () => undefined,
+      runJobs: async () => ({ reminders: 0, emails: 0 }),
+    });
+    await request(app).get('/api/cron').set('Authorization', 'Bearer anything').expect(404);
+  });
+});
+
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function isSending(context: TestContext): Promise<boolean> {
+  const { rows } = await context.db.query(
+    `SELECT 1 FROM notifications WHERE status = 'sending' LIMIT 1`,
+  );
+  return rows.length > 0;
+}

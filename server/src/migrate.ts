@@ -3,6 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type pg from 'pg';
+import { withTransaction } from './db';
 import type { Logger } from './logger';
 
 // Arbitrary constant so concurrent app instances never migrate at the same time.
@@ -13,7 +14,7 @@ export function resolveMigrationsDir(): string {
   const candidates = [
     process.env.MIGRATIONS_DIR,
     path.resolve(here, '../migrations'), // running from source (server/src)
-    path.resolve(here, 'migrations'), // running the bundle (dist/server)
+    path.resolve(here, 'migrations'), // running a bundle (dist/server, the Vercel function)
     path.resolve(process.cwd(), 'server/migrations'),
   ].filter((p): p is string => Boolean(p));
   const found = candidates.find((dir) => existsSync(dir));
@@ -22,16 +23,19 @@ export function resolveMigrationsDir(): string {
   return found;
 }
 
-/** Apply pending .sql migrations in filename order. Returns the names applied. */
+/**
+ * Apply pending .sql migrations in filename order, all in one transaction.
+ * Returns the names applied. The lock is transaction-scoped, so this also
+ * works through a transaction-mode connection pooler (PgBouncer, Neon).
+ */
 export async function migrate(
   pool: pg.Pool,
   options: { dir?: string; logger?: Logger } = {},
 ): Promise<string[]> {
   const dir = options.dir ?? resolveMigrationsDir();
-  const client = await pool.connect();
-  const applied: string[] = [];
-  try {
-    await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_ID]);
+  const files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
+  const applied = await withTransaction(pool, async (client) => {
+    await client.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK_ID]);
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         name text PRIMARY KEY,
@@ -39,25 +43,20 @@ export async function migrate(
       )`);
     const { rows } = await client.query<{ name: string }>('SELECT name FROM schema_migrations');
     const done = new Set(rows.map((r) => r.name));
-    const files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
+    const ran: string[] = [];
     for (const file of files) {
       if (done.has(file)) continue;
       const sql = await readFile(path.join(dir, file), 'utf8');
-      await client.query('BEGIN');
       try {
         await client.query(sql);
-        await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
-        await client.query('COMMIT');
       } catch (err) {
-        await client.query('ROLLBACK');
         throw new Error(`Migration ${file} failed: ${(err as Error).message}`, { cause: err });
       }
-      applied.push(file);
-      options.logger?.info(`Applied migration ${file}`);
+      await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
+      ran.push(file);
     }
-  } finally {
-    await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_ID]).catch(() => undefined);
-    client.release();
-  }
+    return ran;
+  });
+  for (const file of applied) options.logger?.info(`Applied migration ${file}`);
   return applied;
 }

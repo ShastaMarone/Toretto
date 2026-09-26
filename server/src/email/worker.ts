@@ -1,7 +1,8 @@
+import type { TimeFormat } from '@shared/types';
 import type { Config } from '../config';
 import { withTransaction, type Db } from '../db';
 import type { Logger } from '../logger';
-import { getSettings, zoneFor } from '../services/settings';
+import { getSettings, timeFormatFor, zoneFor } from '../services/settings';
 import { enqueueEmail } from './outbox';
 import { reminderTemplate, type EmailShift } from './templates';
 import type { Mailer } from './transport';
@@ -102,13 +103,12 @@ interface ReminderRow {
   userName: string;
   userEmail: string;
   userTimezone: string | null;
+  userTimeFormat: TimeFormat | null;
   startTime: string;
   endTime: string;
   notes: string | null;
   labelName: string | null;
-  labelColor: string | null;
-  tierName: string;
-  tierColor: string;
+  color: string | null;
 }
 
 /**
@@ -133,17 +133,16 @@ export async function queueReminders(db: Db, config: Config, now = new Date()): 
                AND s2.published_start_time > $1
                AND u2.deactivated_at IS NULL
              FOR UPDATE OF s2 SKIP LOCKED)
-          RETURNING s.id, s.schedule_id, s.published_user_id, s.published_label_id,
+          RETURNING s.id, s.published_user_id, s.published_label_id,
                     s.published_start_time, s.published_end_time, s.published_notes)
        SELECT due.id, u.id AS "userId", u.name AS "userName", u.email AS "userEmail",
-              u.timezone AS "userTimezone", due.published_start_time AS "startTime",
+              u.timezone AS "userTimezone", u.time_format AS "userTimeFormat",
+              due.published_start_time AS "startTime",
               due.published_end_time AS "endTime", due.published_notes AS notes,
-              l.name AS "labelName", l.color AS "labelColor",
-              t.name AS "tierName", t.color AS "tierColor"
+              l.name AS "labelName", COALESCE(l.color, t.color) AS color
          FROM due
          JOIN users u ON u.id = due.published_user_id
-         JOIN schedules sc ON sc.id = due.schedule_id
-         JOIN tiers t ON t.id = sc.tier_id
+         LEFT JOIN tiers t ON t.id = u.tier_id
          LEFT JOIN labels l ON l.id = due.published_label_id
         ORDER BY due.published_start_time`,
       [now, settings.reminderHours],
@@ -159,9 +158,7 @@ export async function queueReminders(db: Db, config: Config, now = new Date()): 
         startTime: s.startTime,
         endTime: s.endTime,
         labelName: s.labelName,
-        labelColor: s.labelColor,
-        tierName: s.tierName,
-        tierColor: s.tierColor,
+        color: s.color,
         notes: s.notes,
         needsConfirmation: true,
       }));
@@ -169,7 +166,12 @@ export async function queueReminders(db: Db, config: Config, now = new Date()): 
         userId: first.userId,
         to: first.userEmail,
         kind: 'shift_reminder',
-        email: reminderTemplate(ctx, { recipientName: first.userName, tz, shifts: emailShifts }),
+        email: reminderTemplate(ctx, {
+          recipientName: first.userName,
+          tz,
+          timeFormat: timeFormatFor({ timeFormat: first.userTimeFormat }, settings),
+          shifts: emailShifts,
+        }),
         shiftIds: shifts.map((s) => s.id),
       });
     }
@@ -182,6 +184,95 @@ export async function cleanupExpired(db: Db): Promise<void> {
   await db.query(`DELETE FROM auth_tokens WHERE expires_at < now() - interval '7 days'`);
 }
 
+export interface JobsReport {
+  /** People who were sent a reminder. */
+  reminders: number;
+  /** Emails that delivery was attempted for. */
+  emails: number;
+}
+
+export interface Jobs {
+  /**
+   * Send every email that is due. Concurrent calls share one run, and a call
+   * made during a run makes it go around once more, so nothing queued in the
+   * meantime is missed. Resolves with the number of emails attempted.
+   */
+  drainOutbox(): Promise<number>;
+  /**
+   * Periodic upkeep: queue due reminders, send due emails (including retries)
+   * and delete expired sessions. Reminders run at most every few minutes and
+   * cleanup hourly, unless `force` is set.
+   */
+  runDue(options?: { force?: boolean }): Promise<JobsReport>;
+}
+
+export function createJobs(deps: {
+  db: Db;
+  mailer: Mailer;
+  logger: Logger;
+  config: Config;
+  /** Checked between batches; stop sending when it returns true. */
+  shouldStop?: () => boolean;
+  /** Don't start a new batch after this long (serverless time limits). */
+  budgetMs?: number;
+}): Jobs {
+  const { db, mailer, logger, config, shouldStop = () => false, budgetMs = Infinity } = deps;
+  const REMINDER_EVERY_MS = 5 * 60_000;
+  const CLEANUP_EVERY_MS = 60 * 60_000;
+  let lastReminders = 0;
+  let lastCleanup = 0;
+  let draining: Promise<number> | null = null;
+  let again = false;
+
+  function drainOutbox(): Promise<number> {
+    if (draining) {
+      again = true;
+      return draining;
+    }
+    const until = Date.now() + budgetMs;
+    const canContinue = () => !shouldStop() && Date.now() < until;
+    if (!canContinue()) return Promise.resolve(0);
+    draining = (async () => {
+      let attempted = 0;
+      try {
+        do {
+          again = false;
+          let claimed: number;
+          do {
+            claimed = await processOutbox(db, mailer, logger);
+            attempted += claimed;
+          } while (claimed > 0 && canContinue());
+          // No await between this check and clearing `draining`, so a call
+          // either makes this run go around again or starts the next one.
+        } while (again && canContinue());
+      } finally {
+        draining = null;
+      }
+      return attempted;
+    })();
+    return draining;
+  }
+
+  return {
+    drainOutbox,
+    async runDue({ force = false } = {}) {
+      const now = Date.now();
+      let reminders = 0;
+      if (force || now - lastReminders >= REMINDER_EVERY_MS) {
+        lastReminders = now;
+        reminders = await queueReminders(db, config);
+        if (reminders) logger.info(`Queued ${reminders} shift reminder email(s)`);
+      }
+      const emails = await drainOutbox();
+      if (force || now - lastCleanup >= CLEANUP_EVERY_MS) {
+        lastCleanup = now;
+        await cleanupExpired(db);
+      }
+      return { reminders, emails };
+    },
+  };
+}
+
 export interface Worker {
   start(): void;
   stop(): Promise<void>;
@@ -189,21 +280,19 @@ export interface Worker {
   kick(): void;
 }
 
+/** Long-running background worker: polls the outbox and runs periodic jobs. */
 export function createWorker(deps: {
   db: Db;
   mailer: Mailer;
   logger: Logger;
   config: Config;
 }): Worker {
-  const { db, mailer, logger, config } = deps;
-  const REMINDER_EVERY_MS = 5 * 60_000;
-  const CLEANUP_EVERY_MS = 60 * 60_000;
+  const { logger, config } = deps;
   let timer: NodeJS.Timeout | null = null;
   let running: Promise<void> | null = null;
   let rerun = false;
   let stopped = true;
-  let lastReminders = 0;
-  let lastCleanup = 0;
+  const jobs = createJobs({ ...deps, shouldStop: () => stopped });
 
   const schedule = (ms: number) => {
     if (stopped) return;
@@ -211,30 +300,15 @@ export function createWorker(deps: {
     timer = setTimeout(() => void tick(), ms);
   };
 
-  async function runOnce(): Promise<void> {
-    const now = Date.now();
-    if (now - lastReminders >= REMINDER_EVERY_MS) {
-      lastReminders = now;
-      const queued = await queueReminders(db, config);
-      if (queued) logger.info(`Queued ${queued} shift reminder email(s)`);
-    }
-    // Drain everything that is due.
-    while (!stopped && (await processOutbox(db, mailer, logger)) > 0) {
-      /* keep going */
-    }
-    if (now - lastCleanup >= CLEANUP_EVERY_MS) {
-      lastCleanup = now;
-      await cleanupExpired(db);
-    }
-  }
-
   async function tick(): Promise<void> {
     timer = null;
     if (running) {
       rerun = true;
       return;
     }
-    running = runOnce()
+    running = jobs
+      .runDue()
+      .then(() => undefined)
       .catch((err) => logger.error('Background worker error', err))
       .finally(() => {
         running = null;

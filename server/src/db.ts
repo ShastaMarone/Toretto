@@ -15,11 +15,18 @@ export type Queryable = pg.Pool | pg.PoolClient;
 
 export function createPool(
   connectionString: string,
-  options: { searchPath?: string; max?: number; onError?: (err: Error) => void } = {},
+  options: {
+    searchPath?: string;
+    max?: number;
+    /** Give up connecting after this long (default: wait indefinitely). */
+    connectionTimeoutMillis?: number;
+    onError?: (err: Error) => void;
+  } = {},
 ): pg.Pool {
   const pool = new pg.Pool({
     connectionString,
     max: options.max ?? 10,
+    connectionTimeoutMillis: options.connectionTimeoutMillis,
     options: options.searchPath ? `-c search_path=${options.searchPath}` : undefined,
   });
   // Errors on idle clients (e.g. the server restarted) must not crash the process.

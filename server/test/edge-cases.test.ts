@@ -7,6 +7,7 @@ import {
   createTestContext,
   createTier,
   createUser,
+  defaultScheduleId,
   emails,
   login,
   nextMonday,
@@ -21,6 +22,7 @@ import {
 
 let ctx: TestContext;
 let admin: Agent;
+let main: string;
 let tier1: string;
 let tier2: string;
 let label: string;
@@ -31,6 +33,7 @@ let weekOffset = 0;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  main = await defaultScheduleId(ctx.db);
   tier1 = await createTier(ctx.db, 'Tier 1');
   tier2 = await createTier(ctx.db, 'Tier 2');
   label = await createLabel(ctx.db, 'Chat Queue', tier1);
@@ -44,16 +47,17 @@ afterAll(async () => {
 });
 beforeEach(() => clearEmails(ctx.db));
 
-/** A fresh one-week schedule (each test gets its own week to avoid overlaps). */
-async function newSchedule(tierId = tier1, start = day(7 * ++weekOffset)) {
-  const res = await admin
-    .post('/api/schedules')
-    .send({ tierId, startDate: start, endDate: addDays(start, 6) });
-  expect(res.status, res.text).toBe(201);
-  return { id: res.body.schedule.id as string, start };
+/** A fresh week (each test gets its own to avoid overlaps). */
+function newWeek() {
+  const start = day(7 * ++weekOffset);
+  return { start, range: { from: start, to: addDays(start, 6) } };
 }
 
-async function addShift(scheduleId: string, date: string, extra: Record<string, unknown> = {}) {
+async function addShift(
+  date: string,
+  extra: Record<string, unknown> = {},
+  scheduleId = main,
+): Promise<BuilderShift> {
   const res = await admin
     .post(`/api/schedules/${scheduleId}/shifts`)
     .send({ userId: ana.id, ...shiftOn(date), ...extra });
@@ -63,8 +67,8 @@ async function addShift(scheduleId: string, date: string, extra: Record<string, 
 
 describe('editing shifts', () => {
   it('keeps the label when a shift is moved (drag and drop sends no labelId)', async () => {
-    const { id, start } = await newSchedule();
-    const shift = await addShift(id, start, { labelId: label });
+    const { start } = newWeek();
+    const shift = await addShift(start, { labelId: label });
     const moved = await admin
       .patch(`/api/shifts/${shift.id}`)
       .send({ userId: ana.id, ...shiftOn(addDays(start, 1)) });
@@ -74,43 +78,42 @@ describe('editing shifts', () => {
     const cleared = await admin.patch(`/api/shifts/${shift.id}`).send({ labelId: null });
     expect(cleared.body.labelId).toBeNull();
   });
+
+  it("won't hand a tier label to someone outside that tier", async () => {
+    const { start } = newWeek();
+    const cy = await createUser(ctx.db, { name: 'Cy Tran', tierId: tier2 });
+    const shift = await addShift(start, { labelId: label });
+    const res = await admin.patch(`/api/shifts/${shift.id}`).send({ userId: cy.id });
+    expect(res.status).toBe(400);
+    expect(res.body.error.fields).toEqual({ labelId: 'Wrong tier' });
+    // Without the label it's fine.
+    await admin.patch(`/api/shifts/${shift.id}`).send({ userId: cy.id, labelId: null }).expect(200);
+  });
 });
 
 describe('discarding changes', () => {
   it('refuses when restoring the published version would double-book someone', async () => {
-    const tier1Week = await newSchedule(tier1);
-    const x = await addShift(tier1Week.id, tier1Week.start);
-    await admin.post(`/api/schedules/${tier1Week.id}/publish`).expect(200);
+    const { start, range } = newWeek();
+    const x = await addShift(start);
+    await admin.post(`/api/schedules/${main}/publish`).send(range).expect(200);
     await admin.delete(`/api/shifts/${x.id}`).expect(200); // pending removal
 
-    // Meanwhile Ana is booked at the same time on Tier 2.
-    const tier2Week = await newSchedule(tier2, tier1Week.start);
-    await addShift(tier2Week.id, tier2Week.start);
+    // Meanwhile Ana is booked at the same time on another schedule.
+    const other = await admin.post('/api/schedules').send({ name: 'Projects' });
+    await addShift(start, {}, other.body.id);
 
-    const res = await admin.post(`/api/schedules/${tier1Week.id}/discard-changes`);
+    const res = await admin.post(`/api/schedules/${main}/discard-changes`).send(range);
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('SHIFT_OVERLAP');
-    const detail = await admin.get(`/api/schedules/${tier1Week.id}`);
-    expect(detail.body.removedShifts.map((s: BuilderShift) => s.id)).toEqual([x.id]);
-  });
-});
-
-describe('changing schedule dates', () => {
-  it('counts published shifts that are pending removal', async () => {
-    const { id, start } = await newSchedule();
-    const saturday = await addShift(id, addDays(start, 5));
-    await admin.post(`/api/schedules/${id}/publish`).expect(200);
-    await admin.delete(`/api/shifts/${saturday.id}`).expect(200);
-    const res = await admin.patch(`/api/schedules/${id}`).send({ endDate: addDays(start, 2) });
-    expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe('SHIFTS_OUTSIDE_RANGE');
+    const b = await admin.get(`/api/schedules/${main}?from=${range.from}&to=${range.to}`);
+    expect(b.body.removedShifts.map((s: BuilderShift) => s.id)).toEqual([x.id]);
   });
 });
 
 describe('time off', () => {
   it("doesn't reveal draft shifts to members through conflict counts", async () => {
-    const { id, start } = await newSchedule(); // stays a draft
-    await addShift(id, start);
+    const { start } = newWeek();
+    await addShift(start); // stays a draft
     const member = ctx.agent();
     await login(member, ana.email);
     const { body: types } = await member.get('/api/time-off-types');
@@ -131,10 +134,10 @@ describe('time off', () => {
       tierId: tier1,
       timezone: 'Asia/Tokyo',
     });
-    const { id, start } = await newSchedule();
+    const { start } = newWeek();
     // Noon to 8pm Toronto on the first day — already the next day in Tokyo.
     await admin
-      .post(`/api/schedules/${id}/shifts`)
+      .post(`/api/schedules/${main}/shifts`)
       .send({ userId: tokyo.id, ...shiftOn(start, '12:00', '20:00') })
       .expect(201);
     const member = ctx.agent();
@@ -151,21 +154,23 @@ describe('time off', () => {
 describe('publishing', () => {
   it('still tells people when an upcoming shift is moved into the past', async () => {
     const today = todayIn(TZ);
-    const res = await admin
-      .post('/api/schedules')
-      .send({ tierId: tier2, startDate: addDays(today, -3), endDate: addDays(today, 3) });
-    const id = res.body.schedule.id;
-    const shift = await addShift(id, addDays(today, 2));
-    await admin.post(`/api/schedules/${id}/publish`).expect(200);
+    const range = { from: addDays(today, -3), to: addDays(today, 3) };
+    const shift = await addShift(addDays(today, 2));
+    await admin.post(`/api/schedules/${main}/publish`).send(range).expect(200);
     await clearEmails(ctx.db);
     await admin
       .patch(`/api/shifts/${shift.id}`)
       .send(shiftOn(addDays(today, -2)))
       .expect(200);
-    const result = await admin.post(`/api/schedules/${id}/publish`);
+    const result = await admin.post(`/api/schedules/${main}/publish`).send(range);
     expect(result.body.emailsQueued).toBe(1);
     const [mail] = await emails(ctx.db, { to: ana.email });
     expect(mail!.kind).toBe('schedule_updated');
+  });
+
+  it('asks for both ends of a date range', async () => {
+    const res = await admin.post(`/api/schedules/${main}/publish`).send({ from: day(0) });
+    expect(res.status).toBe(400);
   });
 });
 

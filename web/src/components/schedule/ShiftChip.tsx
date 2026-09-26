@@ -3,6 +3,7 @@ import type { ShiftStatus, TimeOffEntry } from '@shared/types';
 import { Check, Clock, Plane, StickyNote, Undo2 } from 'lucide-react';
 import type { DragEvent, ReactNode } from 'react';
 import { alpha } from '../../lib/colors';
+import { useTimeFormat } from '../../lib/session';
 import { cx } from '../../lib/cx';
 
 export function StatusIcon({ status, className }: { status: ShiftStatus; className?: string }) {
@@ -63,11 +64,13 @@ export function ShiftChip({
   /** Tighter layout for small cells (month view): no icons, collapsed am/pm. */
   compact?: boolean;
 }) {
+  const timeFormat = useTimeFormat();
   const time = compact
-    ? formatTimeRangeCompact(shift.startTime, shift.endTime, tz)
-    : formatTimeRange(shift.startTime, shift.endTime, tz, { short: true });
+    ? formatTimeRangeCompact(shift.startTime, shift.endTime, tz, timeFormat)
+    : formatTimeRange(shift.startTime, shift.endTime, tz, { short: true, format: timeFormat });
   const Tag = onClick ? 'button' : 'div';
-  const edge = removed ? '#cbd5e1' : alpha(color, status === 'pending' ? 0.8 : 0.35);
+  const muted = 'var(--color-slate-300)';
+  const edge = removed ? muted : alpha(color, status === 'pending' ? 0.8 : 0.35);
   const statusText =
     status === 'confirmed'
       ? 'confirmed'
@@ -84,22 +87,23 @@ export function ShiftChip({
       title={[time, labelName, shift.notes].filter(Boolean).join(' · ')}
       aria-label={`${time}${labelName ? `, ${labelName}` : ''}, ${removed ? 'will be removed' : statusText}`}
       className={cx(
-        'group/chip relative block w-full min-w-0 rounded-md border py-1 text-left text-xs leading-tight transition',
-        compact ? 'px-1.5' : 'px-2',
+        'group/chip relative block w-full min-w-0 rounded-md border py-1 text-left text-xs leading-tight transition dark:shadow-[0_0_14px_-7px_var(--chip)]',
+        compact ? 'px-1 text-[11px] tracking-tight' : 'px-2',
         status === 'pending' && !removed ? 'border-dashed' : 'border-solid',
         removed && 'opacity-60',
-        onClick && 'cursor-pointer hover:shadow-sm',
+        onClick && 'cursor-pointer hover:shadow-sm dark:hover:shadow-[0_0_18px_-5px_var(--chip)]',
         draggable && 'cursor-grab active:cursor-grabbing',
         dragging && 'opacity-40',
-        mine && 'ring-2 ring-indigo-500/40',
+        mine && 'ring-2 ring-brand-500/40',
       )}
       style={{
-        backgroundColor: removed ? '#f8fafc' : alpha(color, 0.1),
+        ['--chip' as string]: removed ? 'transparent' : color,
+        backgroundColor: removed ? 'var(--color-slate-50)' : alpha(color, 0.12),
         // Longhands only: mixing border shorthands confuses React's style diffing.
         borderTopColor: edge,
         borderRightColor: edge,
         borderBottomColor: edge,
-        borderLeftColor: removed ? '#cbd5e1' : color,
+        borderLeftColor: removed ? muted : color,
         borderLeftWidth: 3,
         borderLeftStyle: 'solid',
       }}
@@ -152,7 +156,7 @@ export function ShiftChip({
               onRestore();
             }
           }}
-          className="mt-0.5 inline-flex items-center gap-0.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-500"
+          className="mt-0.5 inline-flex items-center gap-0.5 text-[11px] font-semibold text-brand-600 hover:text-brand-500"
         >
           <Undo2 className="size-3" /> Undo remove
         </span>
@@ -168,7 +172,7 @@ export function TimeOffChip({
   entry: TimeOffEntry;
   compact?: boolean;
 }) {
-  const color = entry.typeColor ?? '#64748b';
+  const color = entry.typeColor ?? '#8a90b8';
   const label = entry.typeName ?? 'Time off';
   return (
     <div

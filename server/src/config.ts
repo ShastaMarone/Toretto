@@ -11,6 +11,8 @@ export interface Config {
   /** Public base URL without trailing slash, e.g. https://schedule.example.com */
   appUrl: string;
   appOrigin: string;
+  /** Origins allowed to make state-changing requests (APP_URL plus Vercel's aliases). */
+  allowedOrigins: string[];
   databaseUrl: string;
   /** Only this email may complete first-run setup (required in production). */
   adminEmail: string | null;
@@ -36,6 +38,10 @@ export interface Config {
   rateLimit: boolean;
   /** Directory with the built web app, served by Express in production. */
   staticDir: string | null;
+  /** Bearer token that authorizes the scheduled-jobs endpoint (Vercel Cron). */
+  cronSecret: string | null;
+  /** Running on Vercel (serverless). */
+  onVercel: boolean;
 }
 
 const bool = (fallback: boolean) =>
@@ -49,6 +55,8 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
   APP_URL: z.url().optional(),
   DATABASE_URL: z.string().min(1).optional(),
+  // Set by Vercel's Postgres integrations (Neon, Supabase…).
+  POSTGRES_URL: z.string().min(1).optional(),
   ADMIN_EMAIL: z.string().optional(),
   EMAIL_TRANSPORT: z.enum(['console', 'smtp', 'postmark', 'sendgrid']).default('console'),
   EMAIL_FROM: z.string().min(3).default('Toretto Scheduling <no-reply@localhost>'),
@@ -58,11 +66,20 @@ const EnvSchema = z.object({
   SENDGRID_API_KEY: z.string().optional(),
   RUN_WORKER: bool(true),
   WORKER_POLL_MS: z.coerce.number().int().min(250).default(5000),
-  TRUST_PROXY: z.coerce.number().int().min(0).default(0),
+  TRUST_PROXY: z.coerce.number().int().min(0).optional(),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error', 'silent']).optional(),
   RATE_LIMIT: bool(true),
   STATIC_DIR: z.string().optional(),
+  CRON_SECRET: z.string().min(16, 'CRON_SECRET should be at least 16 characters').optional(),
+  // Provided by Vercel at build and run time.
+  VERCEL: z.string().optional(),
+  VERCEL_ENV: z.string().optional(),
+  VERCEL_URL: z.string().optional(),
+  VERCEL_BRANCH_URL: z.string().optional(),
+  VERCEL_PROJECT_PRODUCTION_URL: z.string().optional(),
 });
+
+const https = (host: string | undefined) => (host ? `https://${host}` : undefined);
 
 /** Load `.env` from the working directory if present (never overrides real env vars). */
 export function loadDotEnv(path = '.env'): void {
@@ -81,9 +98,20 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
   }
   const e = parsed.data;
   const isProduction = e.NODE_ENV === 'production';
+  const onVercel = Boolean(e.VERCEL);
+  // On Vercel the public URL is known even if APP_URL isn't set.
+  const vercelUrl = onVercel
+    ? e.VERCEL_ENV === 'production'
+      ? https(e.VERCEL_PROJECT_PRODUCTION_URL ?? e.VERCEL_URL)
+      : https(e.VERCEL_BRANCH_URL ?? e.VERCEL_URL)
+    : undefined;
+  const rawAppUrl = e.APP_URL ?? vercelUrl;
+  const databaseUrl = e.DATABASE_URL ?? e.POSTGRES_URL;
 
-  if (isProduction && !e.APP_URL) throw new Error('APP_URL is required in production');
-  if (isProduction && !e.DATABASE_URL) throw new Error('DATABASE_URL is required in production');
+  if (isProduction && !rawAppUrl) throw new Error('APP_URL is required in production');
+  if (isProduction && !databaseUrl) {
+    throw new Error('DATABASE_URL is required in production (or POSTGRES_URL on Vercel)');
+  }
   if (e.EMAIL_TRANSPORT === 'smtp' && !e.SMTP_URL)
     throw new Error('SMTP_URL is required when EMAIL_TRANSPORT=smtp');
   if (e.EMAIL_TRANSPORT === 'postmark' && !e.POSTMARK_SERVER_TOKEN)
@@ -91,7 +119,11 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
   if (e.EMAIL_TRANSPORT === 'sendgrid' && !e.SENDGRID_API_KEY)
     throw new Error('SENDGRID_API_KEY is required when EMAIL_TRANSPORT=sendgrid');
 
-  const appUrl = (e.APP_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
+  const appUrl = (rawAppUrl ?? 'http://localhost:5173').replace(/\/+$/, '');
+  const appOrigin = new URL(appUrl).origin;
+  const vercelOrigins = [e.VERCEL_URL, e.VERCEL_BRANCH_URL, e.VERCEL_PROJECT_PRODUCTION_URL]
+    .map(https)
+    .filter((o): o is string => Boolean(o));
   // Safety net for deployments that forget NODE_ENV=production: developer
   // conveniences only switch on when the app is addressed as localhost.
   const host = new URL(appUrl).hostname;
@@ -101,8 +133,9 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
     isProduction,
     port: e.PORT,
     appUrl,
-    appOrigin: new URL(appUrl).origin,
-    databaseUrl: e.DATABASE_URL ?? 'postgres://toretto:toretto@localhost:5432/toretto',
+    appOrigin,
+    allowedOrigins: [...new Set([appOrigin, ...vercelOrigins])],
+    databaseUrl: databaseUrl ?? 'postgres://toretto:toretto@localhost:5432/toretto',
     adminEmail: e.ADMIN_EMAIL ? e.ADMIN_EMAIL.trim().toLowerCase() : null,
     email: {
       transport: e.EMAIL_TRANSPORT,
@@ -114,7 +147,8 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
     },
     runWorker: e.RUN_WORKER,
     workerPollMs: e.WORKER_POLL_MS,
-    trustProxy: e.TRUST_PROXY,
+    // Vercel always sits behind its proxy; elsewhere it's opt-in.
+    trustProxy: e.TRUST_PROXY ?? (onVercel ? 1 : 0),
     logLevel: e.LOG_LEVEL ?? (e.NODE_ENV === 'test' ? 'silent' : 'info'),
     isLocal,
     devMailbox: e.EMAIL_TRANSPORT === 'console' && !isProduction && isLocal,
@@ -122,5 +156,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
     secureCookies: appUrl.startsWith('https://'),
     rateLimit: e.RATE_LIMIT && e.NODE_ENV !== 'test',
     staticDir: e.STATIC_DIR ?? null,
+    cronSecret: e.CRON_SECRET ?? null,
+    onVercel,
   };
 }

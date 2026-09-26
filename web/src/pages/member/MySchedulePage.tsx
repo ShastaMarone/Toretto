@@ -17,11 +17,20 @@ import {
 import type { ShiftView, TimeOffRequest } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
-import { CalendarCheck, CheckCheck, ChevronLeft, ChevronRight, Plane, Plus } from 'lucide-react';
+import {
+  CalendarCheck,
+  CheckCheck,
+  ChevronLeft,
+  ChevronRight,
+  Leaf,
+  Plane,
+  Plus,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
 import { useMyShifts, useMyTimeOff } from '../../api/queries';
+import { HolidayBadge } from '../../components/schedule/CalendarBits';
 import { ShiftChip, StatusIcon } from '../../components/schedule/ShiftChip';
 import { TimeOffRequestDialog } from '../../components/TimeOffRequestDialog';
 import { Button } from '../../components/ui/Button';
@@ -38,8 +47,9 @@ import {
   type Tone,
 } from '../../components/ui/Misc';
 import { cx } from '../../lib/cx';
-import { groupByDay } from '../../lib/schedule';
-import { useBootstrapData, useViewerZone } from '../../lib/session';
+import { useHolidays } from '../../lib/holidays';
+import { groupByDay, shiftColor } from '../../lib/schedule';
+import { useBootstrapData, useTimeFormat, useViewerZone } from '../../lib/session';
 import { zoneLabel } from '../../lib/timezones';
 import { useMediaQuery } from '../../lib/useMediaQuery';
 import { useNow } from '../../lib/useNow';
@@ -79,6 +89,7 @@ function useConfirmShifts() {
 export default function MySchedulePage() {
   const { org } = useBootstrapData();
   const tz = useViewerZone();
+  const timeFormat = useTimeFormat();
   const today = todayIn(tz);
   const isDesktop = useMediaQuery('(min-width: 768px)');
   const [month, setMonth] = useState(startOfMonth(today));
@@ -91,6 +102,7 @@ export default function MySchedulePage() {
   const gridStart = startOfWeek(month, org.weekStartsOn);
   const gridEnd = addDays(startOfWeek(endOfMonth(month), org.weekStartsOn), 6);
   const monthShifts = useMyShifts(gridStart, gridEnd);
+  const holidays = useHolidays(gridStart, gridEnd);
   const upcoming = useMyShifts(today, addDays(today, 60));
   const timeOff = useMyTimeOff();
   const { one: confirmOne, all: confirmAll } = useConfirmShifts();
@@ -164,17 +176,14 @@ export default function MySchedulePage() {
           <ul className="divide-y divide-slate-100">
             {needsConfirmation.slice(0, 8).map((s) => (
               <li key={s.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                <span
-                  className="h-9 w-1 rounded-full"
-                  style={{ backgroundColor: s.label?.color ?? s.tier.color }}
-                />
+                <span className="h-9 w-1 rounded-full" style={{ backgroundColor: shiftColor(s) }} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-slate-900">
                     {formatDay(localDate(s.startTime, tz))} ·{' '}
-                    {formatTimeRange(s.startTime, s.endTime, tz)}
+                    {formatTimeRange(s.startTime, s.endTime, tz, { format: timeFormat })}
                   </p>
                   <p className="text-xs text-slate-500">
-                    {[s.tier.name, s.label?.name, s.notes].filter(Boolean).join(' · ')}
+                    {[s.label?.name, s.notes].filter(Boolean).join(' · ') || s.scheduleName}
                   </p>
                 </div>
                 <Button
@@ -235,6 +244,7 @@ export default function MySchedulePage() {
               today={today}
               tz={tz}
               shiftsByDay={shiftsByDay}
+              holidays={holidays}
               timeOffOn={timeOffOn}
               compact={!isDesktop}
               onDayClick={onDayClick}
@@ -271,10 +281,10 @@ export default function MySchedulePage() {
                       <DateBadge date={localDate(s.startTime, tz)} />
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-slate-900">
-                          {formatTimeRange(s.startTime, s.endTime, tz)}
+                          {formatTimeRange(s.startTime, s.endTime, tz, { format: timeFormat })}
                         </p>
                         <p className="truncate text-xs text-slate-500">
-                          {[s.tier.name, s.label?.name].filter(Boolean).join(' · ')}
+                          {s.label?.name ?? s.scheduleName}
                         </p>
                       </div>
                       <StatusIcon status={s.status} className="size-4" />
@@ -374,8 +384,8 @@ export default function MySchedulePage() {
                 key={s.id}
                 shift={s}
                 tz={tz}
-                color={s.label?.color ?? s.tier.color}
-                labelName={s.label?.name ?? s.tier.name}
+                color={shiftColor(s)}
+                labelName={s.label?.name}
                 status={s.status}
                 onClick={() => {
                   setDayOpen(null);
@@ -438,6 +448,7 @@ function MonthGrid({
   today,
   tz,
   shiftsByDay,
+  holidays,
   timeOffOn,
   compact,
   onDayClick,
@@ -448,6 +459,7 @@ function MonthGrid({
   today: ISODate;
   tz: string;
   shiftsByDay: Map<ISODate, ShiftView[]>;
+  holidays: ReturnType<typeof useHolidays>;
   timeOffOn: (day: ISODate) => TimeOffRequest[];
   compact: boolean;
   onDayClick: (day: ISODate) => void;
@@ -468,12 +480,13 @@ function MonthGrid({
           const inMonth = day.slice(0, 7) === monthKey;
           const isToday = day === today;
           const weekend = dayOfWeek(day) === 0 || dayOfWeek(day) === 6;
+          const holiday = holidays.get(day);
           return (
             <div
               key={day}
               role="button"
               tabIndex={0}
-              aria-label={`${formatDay(day, 'long')}: ${shifts.length} shift${shifts.length === 1 ? '' : 's'}${off.length ? ', time off' : ''}`}
+              aria-label={`${formatDay(day, 'long')}${holiday ? ` (${holiday.map((h) => h.name).join(', ')})` : ''}: ${shifts.length} shift${shifts.length === 1 ? '' : 's'}${off.length ? ', time off' : ''}`}
               onClick={() => onDayClick(day)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -482,26 +495,37 @@ function MonthGrid({
                 }
               }}
               className={cx(
-                'group relative flex cursor-pointer flex-col gap-1 rounded-lg border p-1 text-left transition hover:border-indigo-300 hover:bg-indigo-50/40',
+                'group relative flex cursor-pointer flex-col gap-1 rounded-lg border p-1 text-left transition hover:border-brand-300 hover:bg-brand-50/40',
                 compact ? 'min-h-14' : 'min-h-28 p-1.5',
-                inMonth ? 'border-slate-200 bg-white' : 'border-transparent bg-slate-50/80',
+                inMonth ? 'border-slate-200 bg-surface/70' : 'border-transparent bg-slate-50/60',
                 weekend && inMonth && 'bg-slate-50/60',
+                holiday && inMonth && 'bg-rose-50/50',
               )}
             >
-              <span
-                className={cx(
-                  'flex size-6 items-center justify-center rounded-full text-xs font-semibold',
-                  isToday
-                    ? 'bg-indigo-600 text-white'
-                    : inMonth
-                      ? 'text-slate-700'
-                      : 'text-slate-400',
-                )}
-              >
-                {DateTime.fromISO(day).day}
+              <span className="flex min-w-0 items-center gap-1">
+                <span
+                  className={cx(
+                    'flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+                    isToday
+                      ? 'neon bg-neon text-white'
+                      : inMonth
+                        ? 'text-slate-700'
+                        : 'text-slate-400',
+                  )}
+                >
+                  {DateTime.fromISO(day).day}
+                </span>
               </span>
+              {holiday &&
+                (compact ? (
+                  <Leaf className="absolute top-1 right-1 size-3 text-rose-600" aria-hidden />
+                ) : (
+                  <span className="flex min-w-0">
+                    <HolidayBadge holidays={holiday} wrap />
+                  </span>
+                ))}
               {!compact && (
-                <span className="absolute top-1.5 right-1.5 hidden text-[10px] font-semibold text-indigo-600 group-hover:block">
+                <span className="absolute top-1.5 right-1.5 hidden text-[10px] font-semibold text-brand-600 group-hover:block">
                   + Time off
                 </span>
               )}
@@ -524,7 +548,7 @@ function MonthGrid({
                         'size-2 rounded-full',
                         s.status === 'pending' && 'ring-2 ring-amber-300',
                       )}
-                      style={{ backgroundColor: s.label?.color ?? s.tier.color }}
+                      style={{ backgroundColor: shiftColor(s) }}
                     />
                   ))}
                 </div>
@@ -548,8 +572,8 @@ function MonthGrid({
                       <ShiftChip
                         shift={s}
                         tz={tz}
-                        color={s.label?.color ?? s.tier.color}
-                        labelName={s.label?.name ?? s.tier.name}
+                        color={shiftColor(s)}
+                        labelName={s.label?.name}
                         status={s.status}
                         compact
                         onClick={() => onShiftClick(s)}
@@ -584,12 +608,13 @@ function ShiftDetailsDialog({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const timeFormat = useTimeFormat();
   const now = useNow();
   const ended = Date.parse(shift.endTime) < now;
   return (
     <Modal
       title={formatDay(localDate(shift.startTime, tz), 'long')}
-      description={formatTimeRange(shift.startTime, shift.endTime, tz)}
+      description={formatTimeRange(shift.startTime, shift.endTime, tz, { format: timeFormat })}
       onClose={onClose}
       size="sm"
       footer={
@@ -613,10 +638,16 @@ function ShiftDetailsDialog({
       <dl className="space-y-3 text-sm">
         <div className="flex justify-between gap-4">
           <dt className="text-slate-500">Schedule</dt>
-          <dd className="flex items-center gap-1.5 font-medium">
-            <ColorDot color={shift.tier.color} /> {shift.tier.name}
-          </dd>
+          <dd className="font-medium">{shift.scheduleName}</dd>
         </div>
+        {shift.tier && (
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Tier</dt>
+            <dd className="flex items-center gap-1.5 font-medium">
+              <ColorDot color={shift.tier.color} /> {shift.tier.name}
+            </dd>
+          </div>
+        )}
         {shift.label && (
           <div className="flex justify-between gap-4">
             <dt className="text-slate-500">Label</dt>

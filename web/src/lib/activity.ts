@@ -1,4 +1,4 @@
-import { formatDateRange, formatShiftWhen } from '@shared/time';
+import { addDays, diffDays, formatDateRange, formatShiftWhen, type TimeFormat } from '@shared/time';
 import type { AuditEntry } from '@shared/types';
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -13,7 +13,11 @@ function plural(n: number, word: string) {
 }
 
 /** Human-readable description of an audit entry (without the actor's name). */
-export function describeActivity(entry: AuditEntry, tz: string): string {
+export function describeActivity(
+  entry: AuditEntry,
+  tz: string,
+  format: TimeFormat = '12h',
+): string {
   const d = entry.details;
   switch (entry.action) {
     case 'org.setup':
@@ -27,16 +31,36 @@ export function describeActivity(entry: AuditEntry, tz: string): string {
         num(d.removed) && `${num(d.removed)} removed`,
       ].filter(Boolean);
       const what = parts.length ? parts.join(', ') : 'no changes';
-      return `${d.firstPublish ? 'published' : 'published changes to'} ${str(d.title)} — ${what}, ${plural(num(d.emails), 'email')} sent`;
+      const emails = `${plural(num(d.emails), 'email')} sent`;
+      // Older entries (fixed-length schedules) have no range.
+      if (!d.range)
+        return `${d.firstPublish ? 'published' : 'published changes to'} ${str(d.title)} — ${what}, ${emails}`;
+      const where =
+        d.range === 'all dates'
+          ? `every change on ${str(d.title)}`
+          : `${str(d.range)} on ${str(d.title)}`;
+      return `published ${where} — ${what}, ${emails}`;
     }
     case 'schedule.updated':
       return `edited the details of ${str(d.title)}`;
+    case 'schedule.renamed':
+      return `renamed ${str(d.previous) || 'a schedule'} to ${str(d.title)}`;
+    case 'schedule.copied': {
+      const from = str(d.from);
+      const to = str(d.to);
+      const target = str(d.targetStart);
+      const into =
+        from && to && target
+          ? ` into ${formatDateRange(target, addDays(target, diffDays(from, to)))}`
+          : '';
+      return `copied ${plural(num(d.copied), 'shift')} on ${str(d.title)}${from && to ? ` from ${formatDateRange(from, to)}` : ''}${into}`;
+    }
     case 'schedule.deleted':
       return `deleted ${str(d.title)}${num(d.notified) ? ` and notified ${plural(num(d.notified), 'person')}` : ''}`;
     case 'schedule.changes_discarded':
-      return `discarded ${plural(num(d.discarded), 'unpublished change')} on ${str(d.title)}`;
+      return `discarded ${plural(num(d.discarded), 'unpublished change')} on ${str(d.title)}${d.range && d.range !== 'all dates' ? ` (${str(d.range)})` : ''}`;
     case 'shift.confirmed':
-      return `confirmed their ${str(d.tierName)} shift ${d.startTime ? formatShiftWhen(str(d.startTime), str(d.endTime), tz) : ''}`;
+      return `confirmed their ${d.tierName ? `${str(d.tierName)} ` : ''}shift ${d.startTime ? formatShiftWhen(str(d.startTime), str(d.endTime), tz, format) : ''}`.trimEnd();
     case 'shift.confirmed_all':
       return `confirmed ${plural(num(d.count), 'shift')}`;
     case 'time_off.requested':

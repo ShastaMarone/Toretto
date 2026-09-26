@@ -40,7 +40,7 @@ export function originCheck(config: Config): RequestHandler {
   return (req, _res, next) => {
     if (safe.has(req.method)) return next();
     const origin = req.get('origin');
-    if (!origin || origin === config.appOrigin) return next();
+    if (!origin || config.allowedOrigins.includes(origin)) return next();
     if (!config.isProduction && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
       return next();
     }

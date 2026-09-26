@@ -7,7 +7,8 @@ import { toast } from 'sonner';
 import { api } from '../../api/client';
 import { usePeople, useTimeOffRequests, useTimeOffTypes } from '../../api/queries';
 import { Button } from '../../components/ui/Button';
-import { Field, FormError, Input, Select, Textarea } from '../../components/ui/Form';
+import { Field, FormError, Select, Textarea } from '../../components/ui/Form';
+import { DateInput } from '../../components/ui/Pickers';
 import { Modal } from '../../components/ui/Modal';
 import {
   Avatar,
@@ -313,26 +314,22 @@ function AddTimeOffDialog({ onClose, onSaved }: { onClose: () => void; onSaved: 
             </Select>
           </Field>
           <Field label="First day" error={errors.startDate}>
-            <Input
-              type="date"
-              required
+            <DateInput
               value={form.startDate}
-              onChange={(e) =>
+              onChange={(startDate) =>
                 setForm({
                   ...form,
-                  startDate: e.target.value,
-                  endDate: form.endDate < e.target.value ? e.target.value : form.endDate,
+                  startDate,
+                  endDate: form.endDate < startDate ? startDate : form.endDate,
                 })
               }
             />
           </Field>
           <Field label="Last day" error={errors.endDate}>
-            <Input
-              type="date"
-              required
+            <DateInput
               min={form.startDate}
               value={form.endDate}
-              onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+              onChange={(endDate) => setForm({ ...form, endDate })}
             />
           </Field>
         </div>

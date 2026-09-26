@@ -1,16 +1,23 @@
 import { Check, LoaderCircle } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { colorFor, initials, PALETTE } from '../../lib/colors';
 import { cx } from '../../lib/cx';
+import { Popover } from './Popover';
 
-export type Tone = 'gray' | 'green' | 'amber' | 'red' | 'indigo' | 'blue' | 'purple';
+export type Tone = 'gray' | 'green' | 'amber' | 'red' | 'brand' | 'blue' | 'purple';
 
 const tones: Record<Tone, string> = {
   gray: 'bg-slate-100 text-slate-700 ring-slate-500/15',
   green: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
   amber: 'bg-amber-50 text-amber-800 ring-amber-600/25',
   red: 'bg-rose-50 text-rose-700 ring-rose-600/20',
-  indigo: 'bg-indigo-50 text-indigo-700 ring-indigo-600/20',
+  brand: 'bg-brand-50 text-brand-700 ring-brand-600/20',
   blue: 'bg-sky-50 text-sky-700 ring-sky-600/20',
   purple: 'bg-violet-50 text-violet-700 ring-violet-600/20',
 };
@@ -39,7 +46,7 @@ export function Badge({
 
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cx('rounded-xl bg-white shadow-sm ring-1 ring-slate-200', className)}>
+    <div className={cx('glass underglow rounded-2xl ring-1 ring-slate-200/80', className)}>
       {children}
     </div>
   );
@@ -96,7 +103,7 @@ export function ErrorBlock({ error, onRetry }: { error: unknown; onRetry?: () =>
       <p className="font-medium text-slate-800">Couldn't load this page</p>
       <p className="text-slate-500">{error instanceof Error ? error.message : 'Unknown error'}</p>
       {onRetry && (
-        <button className="font-semibold text-indigo-600 hover:text-indigo-500" onClick={onRetry}>
+        <button className="font-semibold text-brand-600 hover:text-brand-500" onClick={onRetry}>
           Try again
         </button>
       )}
@@ -206,7 +213,7 @@ export function Tabs<T extends string>({
     <div
       role="tablist"
       className={cx(
-        'flex gap-1 overflow-x-auto rounded-lg bg-slate-100 p-1 scrollbar-thin',
+        'flex gap-1 overflow-x-auto rounded-xl bg-slate-100/80 p-1 ring-1 ring-inset ring-slate-200/60 backdrop-blur scrollbar-thin',
         className,
       )}
     >
@@ -218,15 +225,15 @@ export function Tabs<T extends string>({
           aria-selected={o.value === value}
           onClick={() => onChange(o.value)}
           className={cx(
-            'flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+            'flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition',
             o.value === value
-              ? 'bg-white text-slate-900 shadow-sm'
+              ? 'bg-surface text-slate-900 shadow-sm dark:bg-brand-600/25 dark:text-brand-900 dark:shadow-[0_0_18px_-6px_var(--glow)] dark:ring-1 dark:ring-inset dark:ring-brand-400/40'
               : 'text-slate-600 hover:text-slate-900',
           )}
         >
           {o.label}
           {o.count !== undefined && o.count > 0 && (
-            <span className="rounded-full bg-indigo-100 px-1.5 text-xs font-semibold text-indigo-700">
+            <span className="rounded-full bg-brand-100 px-1.5 text-xs font-semibold text-brand-700">
               {o.count}
             </span>
           )}
@@ -244,7 +251,10 @@ export interface MenuItem {
   disabled?: boolean;
 }
 
-/** A small dropdown for overflow actions. */
+/**
+ * A small dropdown for overflow actions. It opens in a Popover, so the edge of
+ * the card holding the button can't cut it off, and it works in dialogs too.
+ */
 export function Menu({
   trigger,
   items,
@@ -255,61 +265,83 @@ export function Menu({
   label: string;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLDivElement>(null);
 
+  const close = (refocus: boolean) => {
+    setOpen(false);
+    if (refocus) button.current?.focus();
+  };
+
+  // Move focus into the list when it opens.
   useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
+    if (open) list.current?.querySelector<HTMLElement>('[role="menuitem"]:enabled')?.focus();
   }, [open]);
 
+  const onListKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const enabled = [
+      ...(list.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:enabled') ?? []),
+    ];
+    const at = enabled.indexOf(document.activeElement as HTMLElement);
+    const focus = (i: number) => {
+      e.preventDefault();
+      enabled[(i + enabled.length) % enabled.length]?.focus();
+    };
+    if (e.key === 'ArrowDown') focus(at + 1);
+    else if (e.key === 'ArrowUp') focus(at - 1);
+    else if (e.key === 'Home') focus(0);
+    else if (e.key === 'End') focus(enabled.length - 1);
+    // Tab carries on from the button, as if the list were right after it.
+    else if (e.key === 'Tab') close(true);
+  };
+
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={button}
         type="button"
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-white text-slate-600 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50"
+        onClick={() => (open ? close(false) : setOpen(true))}
+        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface/70 text-slate-600 shadow-sm ring-1 ring-inset ring-slate-300 backdrop-blur hover:bg-slate-50 dark:ring-slate-200"
       >
         {trigger}
       </button>
       {open && (
-        <div
-          role="menu"
-          className="absolute right-0 z-30 mt-1 w-52 overflow-hidden rounded-lg bg-white py-1 shadow-lg ring-1 ring-slate-900/10"
-        >
-          {items.map((item) => (
-            <button
-              key={item.label}
-              role="menuitem"
-              type="button"
-              disabled={item.disabled}
-              onClick={() => {
-                setOpen(false);
-                item.onSelect();
-              }}
-              className={cx(
-                'flex w-full items-center gap-2 px-3 py-2 text-left text-sm disabled:opacity-50 [&>svg]:size-4',
-                item.danger ? 'text-rose-600 hover:bg-rose-50' : 'text-slate-700 hover:bg-slate-50',
-              )}
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <Popover anchor={button} align="end" onClose={(reason) => close(reason === 'escape')}>
+          <div
+            ref={list}
+            role="menu"
+            aria-label={label}
+            onKeyDown={onListKey}
+            className="w-56 py-1"
+          >
+            {items.map((item) => (
+              <button
+                key={item.label}
+                role="menuitem"
+                type="button"
+                disabled={item.disabled}
+                onClick={() => {
+                  close(true);
+                  item.onSelect();
+                }}
+                className={cx(
+                  'flex w-full items-center gap-2 px-3 py-2 text-left text-sm outline-none disabled:opacity-50 [&>svg]:size-4',
+                  item.danger
+                    ? 'text-rose-600 hover:bg-rose-50 focus-visible:bg-rose-50'
+                    : 'text-slate-700 hover:bg-slate-100 focus-visible:bg-slate-100',
+                )}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </Popover>
       )}
-    </div>
+    </>
   );
 }
 

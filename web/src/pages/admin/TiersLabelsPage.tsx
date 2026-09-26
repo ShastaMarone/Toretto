@@ -34,6 +34,7 @@ export default function TiersLabelsPage() {
     void queryClient.invalidateQueries({ queryKey: keys.tiers });
     void queryClient.invalidateQueries({ queryKey: keys.labels });
     void queryClient.invalidateQueries({ queryKey: ['schedule'] });
+    void queryClient.invalidateQueries({ queryKey: ['team'] });
   };
   const removeTier = useMutation({
     mutationFn: (tier: Tier) => api.delete(`/tiers/${tier.id}`),
@@ -63,7 +64,7 @@ export default function TiersLabelsPage() {
     <>
       <PageHeader
         title="Tiers & labels"
-        description="Each tier has its own schedule. Labels (On-Call, Training, Overtime…) tag shifts — make them for one tier or for all tiers."
+        description="Tiers group people on the schedule and color their shifts. Labels (On-Call, Training, Overtime…) tag shifts — make them for one tier or for everyone."
         actions={
           <Button
             variant="primary"
@@ -144,7 +145,7 @@ export default function TiersLabelsPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div>
             <h2 className="font-semibold text-slate-900">Labels for every tier</h2>
-            <p className="text-sm text-slate-500">Available on every tier's schedule.</p>
+            <p className="text-sm text-slate-500">Available for everyone, in any tier.</p>
           </div>
           <Button
             size="sm"
@@ -192,8 +193,8 @@ export default function TiersLabelsPage() {
           onConfirm={() => removeTier.mutate(editing.tier)}
           onClose={() => setEditing(null)}
         >
-          Its labels are deleted and its people become “no tier”. A tier that still has schedules
-          can't be deleted — rename it instead.
+          Its labels are deleted too. A tier can only be deleted once no one is in it and none of
+          its labels are used on shifts — otherwise, rename it instead.
         </ConfirmDialog>
       )}
       {editing?.kind === 'delete-label' && (

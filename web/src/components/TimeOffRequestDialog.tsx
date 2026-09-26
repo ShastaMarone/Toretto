@@ -16,9 +16,10 @@ import { keys, useMyShifts, useTimeOffTypes } from '../api/queries';
 import { alpha } from '../lib/colors';
 import { cx } from '../lib/cx';
 import { fieldErrors, formMessage } from '../lib/forms';
-import { useViewerZone } from '../lib/session';
+import { useTimeFormat, useViewerZone } from '../lib/session';
 import { Button } from './ui/Button';
-import { Field, FormError, Input, Textarea } from './ui/Form';
+import { Field, FormError, Textarea } from './ui/Form';
+import { DateInput } from './ui/Pickers';
 import { Modal } from './ui/Modal';
 import { Spinner } from './ui/Misc';
 
@@ -31,6 +32,7 @@ export function TimeOffRequestDialog({
   onClose: () => void;
 }) {
   const tz = useViewerZone();
+  const timeFormat = useTimeFormat();
   const queryClient = useQueryClient();
   const types = useTimeOffTypes();
   const [typeId, setTypeId] = useState<string | null>(null);
@@ -129,14 +131,11 @@ export function TimeOffRequestDialog({
         </fieldset>
         <div className="grid grid-cols-2 gap-3">
           <Field label="First day" error={errors.startDate}>
-            <Input
-              type="date"
-              required
+            <DateInput
               value={startDate}
-              onChange={(e) => {
-                const value = e.target.value;
+              onChange={(value) => {
                 setStartDate(value);
-                if (value && endDate < value) setEndDate(value);
+                if (endDate < value) setEndDate(value);
               }}
             />
           </Field>
@@ -144,13 +143,7 @@ export function TimeOffRequestDialog({
             label="Last day"
             error={errors.endDate ?? (!validRange ? 'Must be on or after the first day' : null)}
           >
-            <Input
-              type="date"
-              required
-              min={startDate}
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
+            <DateInput min={startDate} value={endDate} onChange={setEndDate} />
           </Field>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -178,7 +171,8 @@ export function TimeOffRequestDialog({
               {shifts.data.map((s) => (
                 <li key={s.id}>
                   {formatDay(localDate(s.startTime, tz))} ·{' '}
-                  {formatTimeRange(s.startTime, s.endTime, tz)} ({s.tier.name})
+                  {formatTimeRange(s.startTime, s.endTime, tz, { format: timeFormat })}
+                  {s.label && ` (${s.label.name})`}
                 </li>
               ))}
             </ul>

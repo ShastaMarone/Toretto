@@ -6,7 +6,7 @@ import type {
   NotificationEntry,
   OrgSettings,
   Person,
-  ScheduleDetail,
+  ScheduleRange,
   ScheduleSummary,
   ShiftView,
   Team,
@@ -15,7 +15,7 @@ import type {
   TimeOffRequest,
   TimeOffType,
 } from '@shared/types';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api, qs } from './client';
 
 export const keys = {
@@ -26,11 +26,10 @@ export const keys = {
   timeOffTypes: (all: boolean) => ['time-off-types', all] as const,
   people: ['people'] as const,
   schedules: ['schedules'] as const,
-  schedule: (id: string) => ['schedule', id] as const,
+  schedule: (id: string, from: string, to: string) => ['schedule', id, from, to] as const,
   myShifts: (from: string, to: string) => ['my-shifts', from, to] as const,
   myTimeOff: ['my-time-off'] as const,
-  team: (from: string, to: string, tierId: string, teamId: string) =>
-    ['team', from, to, tierId, teamId] as const,
+  team: (from: string, to: string) => ['team', from, to] as const,
   timeOff: (status: string) => ['time-off', status] as const,
   overview: ['overview'] as const,
   activity: ['activity'] as const,
@@ -60,10 +59,13 @@ export const usePeople = () =>
   useQuery({ queryKey: keys.people, queryFn: () => api.get<Person[]>('/users') });
 export const useSchedules = () =>
   useQuery({ queryKey: keys.schedules, queryFn: () => api.get<ScheduleSummary[]>('/schedules') });
-export const useSchedule = (id: string) =>
+export const useScheduleRange = (id: string, from: string, to: string) =>
   useQuery({
-    queryKey: keys.schedule(id),
-    queryFn: () => api.get<ScheduleDetail>(`/schedules/${id}`),
+    queryKey: keys.schedule(id, from, to),
+    queryFn: () => api.get<ScheduleRange>(`/schedules/${id}${qs({ from, to })}`),
+    enabled: Boolean(id),
+    // Keep showing the previous week while the next one loads.
+    placeholderData: keepPreviousData,
   });
 export const useMyShifts = (from: string, to: string) =>
   useQuery({
@@ -72,11 +74,11 @@ export const useMyShifts = (from: string, to: string) =>
   });
 export const useMyTimeOff = () =>
   useQuery({ queryKey: keys.myTimeOff, queryFn: () => api.get<TimeOffRequest[]>('/my/time-off') });
-export const useTeamSchedule = (from: string, to: string, tierId: string, teamId: string) =>
+export const useTeamSchedule = (from: string, to: string) =>
   useQuery({
-    queryKey: keys.team(from, to, tierId, teamId),
-    queryFn: () => api.get<TeamSchedule>(`/team/schedule${qs({ from, to, tierId, teamId })}`),
-    placeholderData: (previous) => previous,
+    queryKey: keys.team(from, to),
+    queryFn: () => api.get<TeamSchedule>(`/team/schedule${qs({ from, to })}`),
+    placeholderData: keepPreviousData,
   });
 export const useTimeOffRequests = (status: string) =>
   useQuery({

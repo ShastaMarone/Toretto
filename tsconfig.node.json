@@ -25,6 +25,7 @@
     "e2e",
     "vite.config.ts",
     "vitest.config.ts",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "playwright.vercel.config.ts"
   ]
 }

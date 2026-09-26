@@ -6,10 +6,14 @@ import {
   eachDay,
   formatDateRange,
   formatHours,
+  formatShiftWhen,
+  formatTimeOfDay,
   formatTimeRange,
   formatTimeRangeCompact,
+  formatTimestamp,
   localDate,
   moveShiftToDate,
+  parseTimeOfDay,
   shiftHours,
   shiftTimesFromLocal,
   startOfWeek,
@@ -78,6 +82,59 @@ describe('shift times', () => {
     expect(formatTimeRangeCompact(day.startTime, day.endTime, TZ)).toBe('8am–4:30pm');
     const night = shiftTimesFromLocal('2026-10-06', '21:00', '23:00', TZ);
     expect(formatTimeRangeCompact(night.startTime, night.endTime, TZ)).toBe('9–11pm');
+  });
+
+  it('writes times in 24-hour format when asked', () => {
+    const day = shiftTimesFromLocal('2026-10-06', '09:00', '17:30', TZ);
+    expect(formatTimeRange(day.startTime, day.endTime, TZ, { format: '24h' })).toBe(
+      '09:00 – 17:30',
+    );
+    expect(formatTimeRange(day.startTime, day.endTime, TZ, { short: true, format: '24h' })).toBe(
+      '09:00–17:30',
+    );
+    expect(formatTimeRangeCompact(day.startTime, day.endTime, TZ, '24h')).toBe('9–17:30');
+    const night = shiftTimesFromLocal('2026-10-06', '22:00', '06:00', TZ);
+    expect(formatShiftWhen(night.startTime, night.endTime, TZ, '24h')).toBe(
+      'Tue, Oct 6 · 22:00 – 06:00 (+1)',
+    );
+    expect(formatTimestamp(night.startTime, TZ, '24h')).toBe('Oct 6, 2026, 22:00');
+    expect(formatTimestamp(night.startTime, TZ)).toBe('Oct 6, 2026, 10:00 PM');
+  });
+
+  it('formats and reads times of day', () => {
+    expect(formatTimeOfDay('00:00')).toBe('12:00 AM');
+    expect(formatTimeOfDay('12:00')).toBe('12:00 PM');
+    expect(formatTimeOfDay('15:30')).toBe('3:30 PM');
+    expect(formatTimeOfDay('09:00', '12h', true)).toBe('9am');
+    expect(formatTimeOfDay('09:30', '12h', true)).toBe('9:30am');
+    expect(formatTimeOfDay('09:05', '24h')).toBe('09:05');
+
+    const cases: [string, string | null][] = [
+      ['9', '09:00'],
+      ['9am', '09:00'],
+      ['9 AM', '09:00'],
+      ['9:30pm', '21:30'],
+      ['930p', '21:30'],
+      ['9.30 p.m.', '21:30'],
+      ['12am', '00:00'],
+      ['12pm', '12:00'],
+      ['21:30', '21:30'],
+      ['2130', '21:30'],
+      ['0930', '09:30'],
+      ['noon', '12:00'],
+      ['midnight', '00:00'],
+      ['24:00', null],
+      ['13pm', null],
+      ['9:75', null],
+      ['soon', null],
+      ['', null],
+    ];
+    for (const [text, expected] of cases) expect(parseTimeOfDay(text), text).toBe(expected);
+    // End times without am/pm land after the start when that's the only sensible reading.
+    expect(parseTimeOfDay('5', { after: '09:00' })).toBe('17:00');
+    expect(parseTimeOfDay('5am', { after: '09:00' })).toBe('05:00');
+    expect(parseTimeOfDay('6', { after: '22:00' })).toBe('06:00');
+    expect(parseTimeOfDay('17', { after: '09:00' })).toBe('17:00');
   });
 
   it('moves a shift to another day keeping wall-clock times across DST', () => {

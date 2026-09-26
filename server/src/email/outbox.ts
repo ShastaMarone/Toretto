@@ -18,7 +18,8 @@ export type NotificationKind =
   | 'shift_reminder'
   | 'time_off_requested'
   | 'time_off_reviewed'
-  | 'time_off_cancelled';
+  | 'time_off_cancelled'
+  | 'shifts_confirmed';
 
 export interface EnqueueInput {
   userId: string | null;

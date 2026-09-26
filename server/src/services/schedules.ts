@@ -2,20 +2,22 @@ import type {
   BuilderShift,
   ChangeCounts,
   ChangeState,
-  CreateScheduleResult,
+  CopyResult,
   Label,
   PersonRow,
-  ScheduleDetail,
-  ScheduleStatus,
+  ScheduleRange,
   ScheduleSummary,
   TimeOffEntry,
 } from '@shared/types';
-import { addDays, diffDays, formatDateRange, localDate, moveShiftToDate } from '@shared/time';
+import { addDays, dayRangeToUtc, diffDays, localDate, moveShiftToDate } from '@shared/time';
 import type { AuthUser } from '../auth/types';
 import { withTransaction, type Db, type Queryable } from '../db';
 import { badRequest, conflict, notFound } from '../errors';
 import { audit } from './audit';
 import { getSettings } from './settings';
+
+/** Longest range the builder loads, publishes or copies at once. */
+export const MAX_RANGE_DAYS = 62;
 
 /** True when a shift's working copy differs from what the team sees. */
 export const HAS_UNPUBLISHED_CHANGE = `(
@@ -26,35 +28,42 @@ export const HAS_UNPUBLISHED_CHANGE = `(
   OR s.end_time IS DISTINCT FROM s.published_end_time
   OR s.notes IS DISTINCT FROM s.published_notes)`;
 
+/**
+ * A shift belongs to a date range when its working copy or the published
+ * version the team sees starts in it ($2 and $3 are the UTC bounds).
+ */
+export const IN_RANGE = `(
+  (s.deleted_at IS NULL AND s.start_time >= $2 AND s.start_time < $3)
+  OR (s.published_at IS NOT NULL AND s.published_start_time >= $2 AND s.published_start_time < $3))`;
+
 const SUMMARY_SQL = `
-  SELECT sc.id, sc.tier_id AS "tierId", t.name AS "tierName", t.color AS "tierColor", sc.name,
-         sc.start_date AS "startDate", sc.end_date AS "endDate", sc.status,
+  SELECT sc.id, sc.name, sc.is_default AS "isDefault",
          sc.published_at AS "publishedAt", pb.name AS "publishedByName",
-         count(s.id) FILTER (WHERE s.deleted_at IS NULL)::int AS "shiftCount",
-         count(s.id) FILTER (WHERE s.published_at IS NOT NULL AND s.deleted_at IS NULL
-                               AND s.status = 'confirmed')::int AS "confirmedCount",
-         count(s.id) FILTER (WHERE s.published_at IS NOT NULL AND s.deleted_at IS NULL
-                               AND s.status = 'pending')::int AS "pendingCount",
          count(s.id) FILTER (WHERE ${HAS_UNPUBLISHED_CHANGE})::int AS "pendingChanges",
-         sc.updated_at AS "updatedAt"
+         min((LEAST(CASE WHEN s.deleted_at IS NULL THEN s.start_time END, s.published_start_time)
+              AT TIME ZONE os.timezone)::date) FILTER (WHERE ${HAS_UNPUBLISHED_CHANGE}) AS "firstChangeDate",
+         max((GREATEST(CASE WHEN s.deleted_at IS NULL THEN s.start_time END, s.published_start_time)
+              AT TIME ZONE os.timezone)::date) FILTER (WHERE ${HAS_UNPUBLISHED_CHANGE}) AS "lastChangeDate",
+         sc.created_at AS "createdAt"
     FROM schedules sc
-    JOIN tiers t ON t.id = sc.tier_id
+    CROSS JOIN org_settings os
     LEFT JOIN users pb ON pb.id = sc.published_by
     LEFT JOIN shifts s ON s.schedule_id = sc.id`;
-const SUMMARY_GROUP = 'GROUP BY sc.id, t.id, pb.id';
+const SUMMARY_GROUP = 'GROUP BY sc.id, pb.id';
 
-export async function listSchedules(
-  db: Queryable,
-  filters: { tierId?: string; status?: ScheduleStatus; endingAfter?: string } = {},
-): Promise<ScheduleSummary[]> {
+/** The default schedule's id, creating it if it's missing (e.g. after a wipe). */
+export async function ensureDefaultSchedule(db: Queryable): Promise<string> {
+  await db.query(
+    `INSERT INTO schedules (name, is_default) VALUES ('Main schedule', true)
+     ON CONFLICT (is_default) WHERE is_default DO NOTHING`,
+  );
+  const { rows } = await db.query<{ id: string }>('SELECT id FROM schedules WHERE is_default');
+  return rows[0]!.id;
+}
+
+export async function listSchedules(db: Queryable): Promise<ScheduleSummary[]> {
   const { rows } = await db.query<ScheduleSummary>(
-    `${SUMMARY_SQL}
-      WHERE ($1::uuid IS NULL OR sc.tier_id = $1)
-        AND ($2::text IS NULL OR sc.status = $2)
-        AND ($3::date IS NULL OR sc.end_date >= $3)
-      ${SUMMARY_GROUP}
-      ORDER BY sc.start_date DESC, t.sort_order, t.name`,
-    [filters.tierId ?? null, filters.status ?? null, filters.endingAfter ?? null],
+    `${SUMMARY_SQL} ${SUMMARY_GROUP} ORDER BY sc.is_default DESC, lower(sc.name)`,
   );
   return rows;
 }
@@ -70,55 +79,36 @@ export async function getScheduleSummary(db: Queryable, id: string): Promise<Sch
 
 export interface LockedSchedule {
   id: string;
-  tierId: string;
-  tierName: string;
-  name: string | null;
-  startDate: string;
-  endDate: string;
-  status: ScheduleStatus;
+  name: string;
+  isDefault: boolean;
 }
 
 /** Load a schedule and lock its row for the rest of the transaction. */
 export async function lockSchedule(db: Queryable, id: string): Promise<LockedSchedule> {
   const { rows } = await db.query<LockedSchedule>(
-    `SELECT sc.id, sc.tier_id AS "tierId", t.name AS "tierName", sc.name,
-            sc.start_date AS "startDate", sc.end_date AS "endDate", sc.status
-       FROM schedules sc JOIN tiers t ON t.id = sc.tier_id
-      WHERE sc.id = $1
-        FOR UPDATE OF sc`,
+    `SELECT id, name, is_default AS "isDefault" FROM schedules WHERE id = $1 FOR UPDATE`,
     [id],
   );
   if (!rows[0]) throw notFound('Schedule');
   return rows[0];
 }
 
-export function scheduleTitle(s: { tierName: string; startDate: string; endDate: string }): string {
-  return `${s.tierName} · ${formatDateRange(s.startDate, s.endDate)}`;
+export interface DateRange {
+  from: string;
+  to: string;
 }
 
-export async function assertNoScheduleOverlap(
-  db: Queryable,
-  tierId: string,
-  startDate: string,
-  endDate: string,
-  excludeId: string | null = null,
-): Promise<void> {
-  const { rows } = await db.query<{ startDate: string; endDate: string }>(
-    `SELECT start_date AS "startDate", end_date AS "endDate" FROM schedules
-      WHERE tier_id = $1 AND id IS DISTINCT FROM $4 AND start_date <= $3 AND end_date >= $2
-      LIMIT 1`,
-    [tierId, startDate, endDate, excludeId],
-  );
-  if (rows[0]) {
-    throw conflict(
-      `This tier already has a schedule for ${formatDateRange(rows[0].startDate, rows[0].endDate)}. Schedules for the same tier can't overlap.`,
-      'SCHEDULE_OVERLAP',
-    );
+/** Validate a range of organization calendar days and return its UTC bounds. */
+export function rangeBounds(range: DateRange, tz: string): { from: string; to: string } {
+  if (range.to < range.from) throw badRequest('The last day must be on or after the first day');
+  if (diffDays(range.from, range.to) >= MAX_RANGE_DAYS) {
+    throw badRequest(`Pick at most ${MAX_RANGE_DAYS} days at a time`);
   }
+  return dayRangeToUtc(range.from, range.to, tz);
 }
 
 // ---------------------------------------------------------------------------
-// Builder detail
+// Builder data for a date range
 // ---------------------------------------------------------------------------
 
 interface ShiftRow {
@@ -197,30 +187,40 @@ export const LABEL_SQL = `
          (SELECT count(*)::int FROM shifts s WHERE s.label_id = l.id AND s.deleted_at IS NULL) AS "shiftCount"
     FROM labels l`;
 
-export async function getScheduleDetail(db: Queryable, id: string): Promise<ScheduleDetail> {
+export async function getScheduleRange(
+  db: Queryable,
+  id: string,
+  range: DateRange,
+): Promise<ScheduleRange> {
+  const { timezone } = await getSettings(db);
+  const bounds = rangeBounds(range, timezone);
   const schedule = await getScheduleSummary(db, id);
   const { rows: shiftRows } = await db.query<ShiftRow>(
-    `${SHIFT_ROW_SQL} WHERE s.schedule_id = $1 ORDER BY s.start_time, s.id`,
-    [id],
+    `${SHIFT_ROW_SQL}
+      WHERE s.schedule_id = $1 AND ${IN_RANGE}
+      ORDER BY s.start_time, s.id`,
+    [id, bounds.from, bounds.to],
   );
-  const shifts = shiftRows.map(toBuilderShift);
+  const all = shiftRows.map(toBuilderShift);
+  const [fromMs, toMs] = [Date.parse(bounds.from), Date.parse(bounds.to)];
+  const inRange = (s: BuilderShift) =>
+    s.changeState !== 'removed' &&
+    Date.parse(s.startTime) >= fromMs &&
+    Date.parse(s.startTime) < toMs;
+  const shifts = all.filter(inRange);
+  const removedShifts = all.filter((s) => !inRange(s));
 
-  const { rows: members } = await db.query<PersonRow>(
+  const { rows: people } = await db.query<PersonRow>(
     `SELECT u.id, u.name, u.tier_id AS "tierId", u.team_id AS "teamId",
             (u.deactivated_at IS NULL) AS active
        FROM users u
-      WHERE (u.tier_id = $1 AND u.deactivated_at IS NULL)
-         OR u.id IN (SELECT user_id FROM shifts WHERE schedule_id = $2
-                     UNION
-                     SELECT published_user_id FROM shifts
-                      WHERE schedule_id = $2 AND published_user_id IS NOT NULL)
+      WHERE u.deactivated_at IS NULL OR u.id = ANY($1)
       ORDER BY lower(u.name)`,
-    [schedule.tierId, id],
+    [[...new Set(all.flatMap((s) => [s.userId, s.published?.userId ?? s.userId]))]],
   );
 
   const { rows: labels } = await db.query<Label>(
-    `${LABEL_SQL} WHERE l.tier_id = $1 OR l.tier_id IS NULL ORDER BY (l.tier_id IS NULL), lower(l.name)`,
-    [schedule.tierId],
+    `${LABEL_SQL} ORDER BY (l.tier_id IS NULL) DESC, lower(l.name)`,
   );
 
   const { rows: timeOff } = await db.query<TimeOffEntry>(
@@ -230,11 +230,11 @@ export async function getScheduleDetail(db: Queryable, id: string): Promise<Sche
       WHERE r.user_id = ANY($1) AND r.status IN ('pending', 'approved')
         AND r.start_date <= $3 AND r.end_date >= $2
       ORDER BY r.start_date`,
-    [members.map((m) => m.id), schedule.startDate, schedule.endDate],
+    [people.map((p) => p.id), range.from, range.to],
   );
 
   const changes: ChangeCounts = { added: 0, updated: 0, removed: 0, total: 0 };
-  for (const s of shifts) {
+  for (const s of all) {
     if (s.changeState === 'new') changes.added++;
     else if (s.changeState === 'updated') changes.updated++;
     else if (s.changeState === 'removed') changes.removed++;
@@ -243,9 +243,11 @@ export async function getScheduleDetail(db: Queryable, id: string): Promise<Sche
 
   return {
     schedule,
-    shifts: shifts.filter((s) => s.changeState !== 'removed'),
-    removedShifts: shifts.filter((s) => s.changeState === 'removed'),
-    members,
+    from: range.from,
+    to: range.to,
+    shifts,
+    removedShifts,
+    people,
     labels,
     timeOff,
     changes,
@@ -253,126 +255,152 @@ export async function getScheduleDetail(db: Queryable, id: string): Promise<Sche
 }
 
 // ---------------------------------------------------------------------------
-// Create (optionally copying another schedule's shifts)
+// Create, rename, copy
 // ---------------------------------------------------------------------------
 
-export interface CreateScheduleInput {
-  tierId: string;
-  startDate: string;
-  endDate: string;
-  name: string | null;
-  copyFromScheduleId: string | null;
+function nameTaken(err: unknown): boolean {
+  return (err as { code?: string; constraint?: string })?.constraint === 'schedules_name_unique';
 }
 
 export async function createSchedule(
   db: Db,
   actor: AuthUser,
-  input: CreateScheduleInput,
-): Promise<CreateScheduleResult> {
-  if (input.endDate < input.startDate)
-    throw badRequest('End date must be on or after the start date');
-  if (diffDays(input.startDate, input.endDate) >= 42) {
-    throw badRequest('A schedule can cover at most 6 weeks');
+  input: { name: string },
+): Promise<ScheduleSummary> {
+  try {
+    const id = await withTransaction(db, async (client) => {
+      const { rows } = await client.query<{ id: string }>(
+        'INSERT INTO schedules (name, created_by) VALUES ($1, $2) RETURNING id',
+        [input.name, actor.id],
+      );
+      const scheduleId = rows[0]!.id;
+      await audit(
+        client,
+        actor.id,
+        'schedule.created',
+        { type: 'schedule', id: scheduleId },
+        { title: input.name },
+      );
+      return scheduleId;
+    });
+    return getScheduleSummary(db, id);
+  } catch (err) {
+    if (nameTaken(err)) throw conflict('There is already a schedule with that name.', 'NAME_TAKEN');
+    throw err;
   }
-  const { id, copied, skipped } = await withTransaction(db, async (client) => {
-    const { rows: tiers } = await client.query<{ id: string; name: string }>(
-      'SELECT id, name FROM tiers WHERE id = $1 FOR SHARE',
-      [input.tierId],
+}
+
+export async function renameSchedule(
+  db: Db,
+  actor: AuthUser,
+  id: string,
+  name: string,
+): Promise<ScheduleSummary> {
+  try {
+    await withTransaction(db, async (client) => {
+      const schedule = await lockSchedule(client, id);
+      await client.query('UPDATE schedules SET name = $2 WHERE id = $1', [id, name]);
+      await audit(
+        client,
+        actor.id,
+        'schedule.renamed',
+        { type: 'schedule', id },
+        { title: name, previous: schedule.name },
+      );
+    });
+  } catch (err) {
+    if (nameTaken(err)) throw conflict('There is already a schedule with that name.', 'NAME_TAKEN');
+    throw err;
+  }
+  return getScheduleSummary(db, id);
+}
+
+/**
+ * Copy the shifts in one range of days into the same number of days starting
+ * at `targetStart`, as unpublished additions. Each copy keeps its weekday
+ * offset, wall-clock times, person, label and note. Copies that would
+ * double-book someone, or are for deactivated people, are skipped.
+ */
+export async function copyShifts(
+  db: Db,
+  actor: AuthUser,
+  scheduleId: string,
+  input: { from: string; to: string; targetStart: string },
+): Promise<CopyResult> {
+  return withTransaction(db, async (client) => {
+    const schedule = await lockSchedule(client, scheduleId);
+    const { timezone } = await getSettings(client);
+    const source = rangeBounds(input, timezone);
+    const offset = diffDays(input.from, input.targetStart);
+    const targetEnd = addDays(input.to, offset);
+    if (offset === 0) throw badRequest('Pick a different week to copy into');
+    if (input.targetStart <= input.to && targetEnd >= input.from) {
+      throw badRequest("The days you copy into can't overlap the days you copy from");
+    }
+    const { rows: shifts } = await client.query<{
+      userId: string;
+      labelId: string | null;
+      startTime: string;
+      endTime: string;
+      notes: string | null;
+      active: boolean;
+    }>(
+      `SELECT s.user_id AS "userId", s.label_id AS "labelId",
+              s.start_time AS "startTime", s.end_time AS "endTime", s.notes,
+              (u.deactivated_at IS NULL) AS active
+         FROM shifts s JOIN users u ON u.id = s.user_id
+        WHERE s.schedule_id = $1 AND s.deleted_at IS NULL
+          AND s.start_time >= $2 AND s.start_time < $3
+        ORDER BY s.start_time`,
+      [scheduleId, source.from, source.to],
     );
-    const tier = tiers[0];
-    if (!tier) throw notFound('Tier');
-    // Serialize schedule creation per tier so the overlap check is reliable.
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`schedule:${tier.id}`]);
-    await assertNoScheduleOverlap(client, tier.id, input.startDate, input.endDate);
-    const { rows } = await client.query<{ id: string }>(
-      `INSERT INTO schedules (tier_id, name, start_date, end_date, created_by)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [tier.id, input.name, input.startDate, input.endDate, actor.id],
-    );
-    const scheduleId = rows[0]!.id;
-    const result = input.copyFromScheduleId
-      ? await copyShifts(client, input.copyFromScheduleId, scheduleId, tier.id, input, actor)
-      : { copied: 0, skipped: 0 };
+    // Same per-person locks as single-shift edits (sorted to avoid deadlocks),
+    // so the overlap checks below can't race a concurrent edit.
+    for (const userId of [...new Set(shifts.map((s) => s.userId))].sort()) {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${userId}`]);
+    }
+    let copied = 0;
+    let skipped = 0;
+    for (const shift of shifts) {
+      const day = addDays(localDate(shift.startTime, timezone), offset);
+      const moved = moveShiftToDate(shift.startTime, shift.endTime, day, timezone);
+      const { rows: overlap } = await client.query(
+        `SELECT 1 FROM shifts WHERE user_id = $1 AND deleted_at IS NULL
+            AND start_time < $3 AND end_time > $2 LIMIT 1`,
+        [shift.userId, moved.startTime, moved.endTime],
+      );
+      if (!shift.active || overlap.length) {
+        skipped++;
+        continue;
+      }
+      await client.query(
+        `INSERT INTO shifts (schedule_id, user_id, label_id, start_time, end_time, notes, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          scheduleId,
+          shift.userId,
+          shift.labelId,
+          moved.startTime,
+          moved.endTime,
+          shift.notes,
+          actor.id,
+        ],
+      );
+      copied++;
+    }
     await audit(
       client,
       actor.id,
-      'schedule.created',
+      'schedule.copied',
       { type: 'schedule', id: scheduleId },
       {
-        title: `${tier.name} · ${formatDateRange(input.startDate, input.endDate)}`,
-        copied: result.copied,
+        title: schedule.name,
+        from: input.from,
+        to: input.to,
+        targetStart: input.targetStart,
+        copied,
       },
     );
-    return { id: scheduleId, ...result };
+    return { copied, skipped };
   });
-  return { schedule: await getScheduleSummary(db, id), copied, skipped };
-}
-
-async function copyShifts(
-  client: Queryable,
-  sourceId: string,
-  targetId: string,
-  targetTierId: string,
-  target: { startDate: string; endDate: string },
-  actor: AuthUser,
-): Promise<{ copied: number; skipped: number }> {
-  const { rows: sources } = await client.query<{ startDate: string }>(
-    'SELECT start_date AS "startDate" FROM schedules WHERE id = $1',
-    [sourceId],
-  );
-  if (!sources[0]) throw notFound('Schedule to copy from');
-  const { timezone } = await getSettings(client);
-  const offset = diffDays(sources[0].startDate, target.startDate);
-  const { rows: shifts } = await client.query<{
-    userId: string;
-    labelId: string | null;
-    labelTierId: string | null;
-    startTime: string;
-    endTime: string;
-    notes: string | null;
-    active: boolean;
-  }>(
-    `SELECT s.user_id AS "userId", s.label_id AS "labelId", l.tier_id AS "labelTierId",
-            s.start_time AS "startTime", s.end_time AS "endTime", s.notes,
-            (u.deactivated_at IS NULL) AS active
-       FROM shifts s
-       JOIN users u ON u.id = s.user_id
-       LEFT JOIN labels l ON l.id = s.label_id
-      WHERE s.schedule_id = $1 AND s.deleted_at IS NULL
-      ORDER BY s.start_time`,
-    [sourceId],
-  );
-  // Same per-person locks as single-shift edits (sorted to avoid deadlocks),
-  // so the overlap checks below can't race a concurrent edit.
-  for (const userId of [...new Set(shifts.map((s) => s.userId))].sort()) {
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${userId}`]);
-  }
-  let copied = 0;
-  let skipped = 0;
-  for (const shift of shifts) {
-    const day = addDays(localDate(shift.startTime, timezone), offset);
-    if (!shift.active || day < target.startDate || day > target.endDate) {
-      skipped++;
-      continue;
-    }
-    const moved = moveShiftToDate(shift.startTime, shift.endTime, day, timezone);
-    const { rows: overlap } = await client.query(
-      `SELECT 1 FROM shifts WHERE user_id = $1 AND deleted_at IS NULL
-          AND start_time < $3 AND end_time > $2 LIMIT 1`,
-      [shift.userId, moved.startTime, moved.endTime],
-    );
-    if (overlap.length) {
-      skipped++;
-      continue;
-    }
-    // Tier-specific labels from another tier don't apply here.
-    const labelId = shift.labelTierId && shift.labelTierId !== targetTierId ? null : shift.labelId;
-    await client.query(
-      `INSERT INTO shifts (schedule_id, user_id, label_id, start_time, end_time, notes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [targetId, shift.userId, labelId, moved.startTime, moved.endTime, shift.notes, actor.id],
-    );
-    copied++;
-  }
-  return { copied, skipped };
 }
