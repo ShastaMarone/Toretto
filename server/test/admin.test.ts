@@ -304,6 +304,24 @@ describe('settings', () => {
     await admin.patch('/api/admin/settings').send({ emailRetentionDays: 90 });
   });
 
+  it('flags overtime past 8 hours a day and 40 a week unless changed', async () => {
+    expect((await admin.get('/api/admin/settings')).body).toMatchObject({
+      overtimeDailyHours: 8,
+      overtimeWeeklyHours: 40,
+    });
+    const ontario = await admin
+      .patch('/api/admin/settings')
+      .send({ overtimeDailyHours: null, overtimeWeeklyHours: 44 });
+    expect(ontario.body).toMatchObject({ overtimeDailyHours: null, overtimeWeeklyHours: 44 });
+    for (const bad of [{ overtimeDailyHours: 0 }, { overtimeWeeklyHours: 200 }]) {
+      expect((await admin.patch('/api/admin/settings').send(bad)).status).toBe(400);
+    }
+    await admin
+      .patch('/api/admin/settings')
+      .send({ overtimeDailyHours: 8, overtimeWeeklyHours: 40 })
+      .expect(200);
+  });
+
   it('lets people set their own time zone', async () => {
     const res = await member.patch('/api/me').send({ timezone: 'America/Halifax', name: 'Mo M.' });
     expect(res.body.user).toMatchObject({ timezone: 'America/Halifax', name: 'Mo M.' });

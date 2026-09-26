@@ -22,12 +22,19 @@ import type {
 } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
-import { CopyPlus, Ellipsis, Plus, Send, Undo2 } from 'lucide-react';
+import { AlarmClock, CopyPlus, Ellipsis, Plus, Send, Undo2 } from 'lucide-react';
 import { useMemo, useState, type DragEvent, type ReactNode } from 'react';
 import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
-import { keys, useScheduleRange, useSchedules, useTeams, useTiers } from '../../api/queries';
+import {
+  keys,
+  useScheduleRange,
+  useSchedules,
+  useSettings,
+  useTeams,
+  useTiers,
+} from '../../api/queries';
 import { CalendarNav, TierFilter } from '../../components/schedule/CalendarBits';
 import { ScheduleGrid } from '../../components/schedule/ScheduleGrid';
 import { ScheduleSwitcher } from '../../components/schedule/ScheduleSwitcher';
@@ -41,10 +48,19 @@ import { ScheduleLegend, ShiftChip, TimeOffChip } from '../../components/schedul
 import { Button } from '../../components/ui/Button';
 import { Field, FormError, Input, Select } from '../../components/ui/Form';
 import { ConfirmDialog, Modal } from '../../components/ui/Modal';
-import { Avatar, ErrorBlock, LoadingBlock, Menu, Spinner, Tabs } from '../../components/ui/Misc';
+import {
+  Avatar,
+  Badge,
+  ErrorBlock,
+  LoadingBlock,
+  Menu,
+  Spinner,
+  Tabs,
+} from '../../components/ui/Misc';
 import { cx } from '../../lib/cx';
 import { fieldErrors, formMessage } from '../../lib/forms';
 import { useHolidays } from '../../lib/holidays';
+import { overtimeIn, overtimeRules } from '../../lib/overtime';
 import {
   draftFromShift,
   groupByTier,
@@ -178,6 +194,7 @@ function Builder({
   const navigate = useNavigate();
   const tiers = useTiers();
   const teams = useTeams();
+  const rules = overtimeRules(useSettings().data);
   const days = useMemo(() => eachDay(data.from, data.to), [data.from, data.to]);
   const compact = days.length > 14;
   const holidays = useHolidays(data.from, data.to);
@@ -612,6 +629,14 @@ function Builder({
         }}
         renderPerson={(person) => {
           const personShifts = shifts.filter((s) => s.userId === person.id);
+          const overtime = overtimeIn(
+            personShifts,
+            data.from,
+            data.to,
+            tz,
+            org.weekStartsOn,
+            rules,
+          );
           return (
             <div className="flex items-center gap-2.5">
               <Avatar name={person.name} size="sm" className="hidden sm:inline-flex" />
@@ -623,6 +648,14 @@ function Builder({
                     : 'No shifts'}
                   {!person.active && ' · deactivated'}
                 </p>
+                {overtime.hours > 0 && (
+                  <span title={overtime.reasons.join('\n')}>
+                    <Badge tone="amber" className="mt-0.5 px-1.5 py-0 text-[11px]">
+                      <AlarmClock className="size-3" aria-hidden />
+                      {formatHours(overtime.hours)} overtime
+                    </Badge>
+                  </span>
+                )}
               </div>
             </div>
           );

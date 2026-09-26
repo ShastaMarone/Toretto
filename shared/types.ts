@@ -79,6 +79,10 @@ export interface OrgSettings {
   timeFormat: TimeFormat;
   /** Days the email log keeps sent and failed emails; null keeps them forever. */
   emailRetentionDays: number | null;
+  /** Overtime past this many hours in a day (null: no daily limit). */
+  overtimeDailyHours: number | null;
+  /** Overtime past this many hours in a week (null: no weekly limit). */
+  overtimeWeeklyHours: number | null;
 }
 
 export interface Tier {

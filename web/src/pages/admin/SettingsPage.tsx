@@ -56,6 +56,8 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
         holidayRegion: form.holidayRegion,
         timeFormat: form.timeFormat,
         emailRetentionDays: form.emailRetentionDays,
+        overtimeDailyHours: form.overtimeDailyHours,
+        overtimeWeeklyHours: form.overtimeWeeklyHours,
       }),
     onSuccess: (s) => {
       queryClient.setQueryData(keys.settings, s);
@@ -161,6 +163,28 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
             )}
           </Select>
         </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Overtime after, in a day">
+            <HoursSelect
+              value={form.overtimeDailyHours}
+              options={[8, 10, 12]}
+              none="No daily limit"
+              onChange={(overtimeDailyHours) => setForm({ ...form, overtimeDailyHours })}
+            />
+          </Field>
+          <Field label="Overtime after, in a week">
+            <HoursSelect
+              value={form.overtimeWeeklyHours}
+              options={[40, 44, 48]}
+              none="No weekly limit"
+              onChange={(overtimeWeeklyHours) => setForm({ ...form, overtimeWeeklyHours })}
+            />
+          </Field>
+          <p className="-mt-2 text-xs text-slate-500 sm:col-span-2">
+            Flagged in the schedule builder and the Hours page. 8 a day and 40 a week are the Canada
+            Labour Code's standard hours; many provinces use 44 a week.
+          </p>
+        </div>
         <Field
           label="Email log"
           hint="Older emails are deleted from Activity → Email log. The audit trail is always kept."
@@ -489,5 +513,32 @@ function TimeOffTypeDialog({
         />
       </div>
     </Modal>
+  );
+}
+
+function HoursSelect({
+  value,
+  options,
+  none,
+  onChange,
+}: {
+  value: number | null;
+  options: number[];
+  none: string;
+  onChange: (value: number | null) => void;
+}) {
+  const choices = value === null || options.includes(value) ? options : [...options, value];
+  return (
+    <Select
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+    >
+      {choices.map((hours) => (
+        <option key={hours} value={hours}>
+          {hours} hours
+        </option>
+      ))}
+      <option value="">{none}</option>
+    </Select>
   );
 }

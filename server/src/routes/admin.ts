@@ -195,6 +195,8 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
           .optional(),
         timeFormat: z.enum(['12h', '24h']).optional(),
         emailRetentionDays: z.number().int().min(1).max(3650).nullable().optional(),
+        overtimeDailyHours: z.number().positive().max(24).nullable().optional(),
+        overtimeWeeklyHours: z.number().positive().max(168).nullable().optional(),
       }),
       req.body,
     );
@@ -208,7 +210,9 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
               week_starts_on = COALESCE($3, week_starts_on), reminder_hours = COALESCE($4, reminder_hours),
               self_signup = COALESCE($5, self_signup), allowed_domains = COALESCE($6, allowed_domains),
               holiday_region = COALESCE($7, holiday_region), time_format = COALESCE($8, time_format),
-              email_retention_days = CASE WHEN $9 THEN $10 ELSE email_retention_days END`,
+              email_retention_days = CASE WHEN $9 THEN $10 ELSE email_retention_days END,
+              overtime_daily_hours = CASE WHEN $11 THEN $12 ELSE overtime_daily_hours END,
+              overtime_weekly_hours = CASE WHEN $13 THEN $14 ELSE overtime_weekly_hours END`,
       [
         body.orgName ?? null,
         body.timezone ?? null,
@@ -220,6 +224,10 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
         body.timeFormat ?? null,
         body.emailRetentionDays !== undefined,
         body.emailRetentionDays ?? null,
+        body.overtimeDailyHours !== undefined,
+        body.overtimeDailyHours ?? null,
+        body.overtimeWeeklyHours !== undefined,
+        body.overtimeWeeklyHours ?? null,
       ],
     );
     await audit(db, req.user!.id, 'settings.updated', { type: 'org' }, body);
