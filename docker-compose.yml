@@ -1,0 +1,28 @@
+# Local development services: `docker compose up -d`
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: toretto
+      POSTGRES_PASSWORD: toretto
+      POSTGRES_DB: toretto
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U toretto']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional: catch-all SMTP server with a web inbox at http://localhost:8025
+  # Use with EMAIL_TRANSPORT=smtp and SMTP_URL=smtp://localhost:1025
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+
+volumes:
+  pgdata:
