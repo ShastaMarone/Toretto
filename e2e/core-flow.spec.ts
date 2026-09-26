@@ -1,4 +1,11 @@
-import { expect, test, type APIRequestContext, type Browser, type Page } from '@playwright/test';
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Browser,
+  type Locator,
+  type Page,
+} from '@playwright/test';
 
 // The core loop from the playbook, end to end in a real browser:
 // setup → invite → build & publish → email → confirm → time off → approval.
@@ -28,6 +35,23 @@ function linkIn(email: MailboxMessage, path: string): string {
   const match = new RegExp(`https?://[^\\s]+${path}[^\\s]*`).exec(email.text);
   if (!match) throw new Error(`No ${path} link in "${email.subject}"`);
   return match[0];
+}
+
+/**
+ * Passes only if the element is what's actually drawn at its center, i.e. not
+ * cut off by a container's edge or covered by something else. (Playwright's
+ * own checks can scroll a clipped container to reach it; a person can't.)
+ */
+async function expectOnTop(locator: Locator) {
+  await expect
+    .poll(() =>
+      locator.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const hit = el.ownerDocument.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return hit !== null && el.contains(hit);
+      }),
+    )
+    .toBe(true);
 }
 
 async function newPage(browser: Browser): Promise<Page> {
@@ -79,6 +103,15 @@ test('admin invites a team member, who sets a password', async ({ request }) => 
   await dialog.getByLabel('Tier').selectOption({ label: 'Tier 1' });
   await dialog.getByRole('button', { name: 'Send invite' }).click();
   await expect(admin.getByText('Invite sent', { exact: true })).toBeVisible();
+
+  // Row menus aren't cut off by the bottom of the list.
+  await admin
+    .getByRole('button', { name: /^Actions for / })
+    .last()
+    .click();
+  await expectOnTop(admin.getByRole('menuitem', { name: 'Edit' }));
+  await admin.keyboard.press('Escape');
+  await expect(admin.getByRole('menu')).toHaveCount(0);
 
   const invite = await waitForEmail(request, { to: MEMBER.email, kind: 'invite' });
   expect(invite.subject).toBe('Robin Admin invited you to the Support Team schedule');

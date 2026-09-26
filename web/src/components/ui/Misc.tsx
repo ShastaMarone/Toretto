@@ -1,5 +1,13 @@
 import { Check, LoaderCircle } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { colorFor, initials, PALETTE } from '../../lib/colors';
 import { cx } from '../../lib/cx';
 
@@ -244,7 +252,11 @@ export interface MenuItem {
   disabled?: boolean;
 }
 
-/** A small dropdown for overflow actions. */
+/**
+ * A small dropdown for overflow actions. The list is drawn on top of the page
+ * rather than inside the card holding the button, so a card's clipped edges
+ * can't cut it off. It opens below the button, or above when there's no room.
+ */
 export function Menu({
   trigger,
   items,
@@ -255,63 +267,133 @@ export function Menu({
   label: string;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const placed = position !== null;
+
+  const close = (refocus: boolean) => {
+    setOpen(false);
+    setPosition(null);
+    if (refocus) button.current?.focus();
+  };
+
+  // Keep the list next to the button and on screen, even while scrolling.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const anchor = button.current?.getBoundingClientRect();
+      const el = list.current;
+      if (!anchor || !el) return;
+      const gap = 4;
+      const margin = 8;
+      const below = anchor.bottom + gap;
+      const above = anchor.top - gap - el.offsetHeight;
+      const fitsBelow = below + el.offsetHeight <= window.innerHeight - margin;
+      setPosition({
+        top: fitsBelow || above < margin ? below : above,
+        left: Math.max(
+          margin,
+          Math.min(anchor.right - el.offsetWidth, window.innerWidth - margin - el.offsetWidth),
+        ),
+      });
+    };
+    place();
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (!button.current?.contains(target) && !list.current?.contains(target)) close(false);
     };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
-    document.addEventListener('mousedown', onDown);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close(true);
+    };
+    document.addEventListener('pointerdown', onDown);
     document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('pointerdown', onDown);
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
 
+  // Move focus into the list once it's on screen.
+  useEffect(() => {
+    if (placed) list.current?.querySelector<HTMLElement>('[role="menuitem"]:enabled')?.focus();
+  }, [placed]);
+
+  const onListKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const enabled = [
+      ...(list.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:enabled') ?? []),
+    ];
+    const at = enabled.indexOf(document.activeElement as HTMLElement);
+    const focus = (i: number) => {
+      e.preventDefault();
+      enabled[(i + enabled.length) % enabled.length]?.focus();
+    };
+    if (e.key === 'ArrowDown') focus(at + 1);
+    else if (e.key === 'ArrowUp') focus(at - 1);
+    else if (e.key === 'Home') focus(0);
+    else if (e.key === 'End') focus(enabled.length - 1);
+    // Tab continues from the button, as if the list were right after it.
+    else if (e.key === 'Tab') close(true);
+  };
+
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={button}
         type="button"
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-surface/70 text-slate-600 shadow-sm ring-1 ring-inset ring-slate-300 backdrop-blur hover:bg-slate-50 dark:ring-slate-200"
+        onClick={() => (open ? close(false) : setOpen(true))}
+        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface/70 text-slate-600 shadow-sm ring-1 ring-inset ring-slate-300 backdrop-blur hover:bg-slate-50 dark:ring-slate-200"
       >
         {trigger}
       </button>
-      {open && (
-        <div
-          role="menu"
-          className="glass absolute right-0 z-30 mt-1 w-56 overflow-hidden rounded-xl py-1 shadow-xl ring-1 ring-slate-200"
-        >
-          {items.map((item) => (
-            <button
-              key={item.label}
-              role="menuitem"
-              type="button"
-              disabled={item.disabled}
-              onClick={() => {
-                setOpen(false);
-                item.onSelect();
-              }}
-              className={cx(
-                'flex w-full items-center gap-2 px-3 py-2 text-left text-sm disabled:opacity-50 [&>svg]:size-4',
-                item.danger
-                  ? 'text-rose-600 hover:bg-rose-50'
-                  : 'text-slate-700 hover:bg-slate-100',
-              )}
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+      {open &&
+        createPortal(
+          <div
+            ref={list}
+            role="menu"
+            aria-label={label}
+            onKeyDown={onListKey}
+            style={position ?? { top: 0, left: 0, visibility: 'hidden' }}
+            className="glass fixed z-50 w-56 overflow-hidden rounded-xl py-1 shadow-xl ring-1 ring-slate-200"
+          >
+            {items.map((item) => (
+              <button
+                key={item.label}
+                role="menuitem"
+                type="button"
+                disabled={item.disabled}
+                onClick={() => {
+                  close(true);
+                  item.onSelect();
+                }}
+                className={cx(
+                  'flex w-full items-center gap-2 px-3 py-2 text-left text-sm outline-none disabled:opacity-50 [&>svg]:size-4',
+                  item.danger
+                    ? 'text-rose-600 hover:bg-rose-50 focus-visible:bg-rose-50'
+                    : 'text-slate-700 hover:bg-slate-100 focus-visible:bg-slate-100',
+                )}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
