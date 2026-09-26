@@ -49,7 +49,7 @@ import {
 import { cx } from '../../lib/cx';
 import { useHolidays } from '../../lib/holidays';
 import { groupByDay, shiftColor } from '../../lib/schedule';
-import { useBootstrapData, useViewerZone } from '../../lib/session';
+import { useBootstrapData, useTimeFormat, useViewerZone } from '../../lib/session';
 import { zoneLabel } from '../../lib/timezones';
 import { useMediaQuery } from '../../lib/useMediaQuery';
 import { useNow } from '../../lib/useNow';
@@ -89,6 +89,7 @@ function useConfirmShifts() {
 export default function MySchedulePage() {
   const { org } = useBootstrapData();
   const tz = useViewerZone();
+  const timeFormat = useTimeFormat();
   const today = todayIn(tz);
   const isDesktop = useMediaQuery('(min-width: 768px)');
   const [month, setMonth] = useState(startOfMonth(today));
@@ -179,7 +180,7 @@ export default function MySchedulePage() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-slate-900">
                     {formatDay(localDate(s.startTime, tz))} ·{' '}
-                    {formatTimeRange(s.startTime, s.endTime, tz)}
+                    {formatTimeRange(s.startTime, s.endTime, tz, { format: timeFormat })}
                   </p>
                   <p className="text-xs text-slate-500">
                     {[s.label?.name, s.notes].filter(Boolean).join(' · ') || s.scheduleName}
@@ -280,7 +281,7 @@ export default function MySchedulePage() {
                       <DateBadge date={localDate(s.startTime, tz)} />
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-slate-900">
-                          {formatTimeRange(s.startTime, s.endTime, tz)}
+                          {formatTimeRange(s.startTime, s.endTime, tz, { format: timeFormat })}
                         </p>
                         <p className="truncate text-xs text-slate-500">
                           {s.label?.name ?? s.scheduleName}
@@ -607,12 +608,13 @@ function ShiftDetailsDialog({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const timeFormat = useTimeFormat();
   const now = useNow();
   const ended = Date.parse(shift.endTime) < now;
   return (
     <Modal
       title={formatDay(localDate(shift.startTime, tz), 'long')}
-      description={formatTimeRange(shift.startTime, shift.endTime, tz)}
+      description={formatTimeRange(shift.startTime, shift.endTime, tz, { format: timeFormat })}
       onClose={onClose}
       size="sm"
       footer={

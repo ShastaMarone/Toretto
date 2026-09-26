@@ -13,7 +13,13 @@ import {
   renameSchedule,
   type DateRange,
 } from '../services/schedules';
-import { createShift, deleteShift, restoreShift, updateShift } from '../services/shifts';
+import {
+  createShift,
+  createShifts,
+  deleteShift,
+  restoreShift,
+  updateShift,
+} from '../services/shifts';
 
 const ShiftBody = z.object({
   userId: zId,
@@ -21,6 +27,17 @@ const ShiftBody = z.object({
   startTime: zDateTime,
   endTime: zDateTime,
   notes: zText(500),
+});
+
+/** The same shift on several days (a repeating shift): up to 200 at once. */
+const RepeatBody = z.object({
+  userId: zId,
+  labelId: zId.nullable().default(null),
+  notes: zText(500),
+  shifts: z
+    .array(z.object({ startTime: zDateTime, endTime: zDateTime }))
+    .min(1, 'Pick at least one day')
+    .max(200, 'That repeats too many times (200 at most)'),
 });
 
 /**
@@ -105,6 +122,12 @@ export function scheduleRoutes({ db, config, kick }: AppDeps): Router {
     const { id } = parse(zIdParam, req.params);
     const body = parse(ShiftBody, req.body);
     res.status(201).json(await createShift(db, req.user!, id, body));
+  });
+
+  r.post('/:id/shifts/bulk', async (req, res) => {
+    const { id } = parse(zIdParam, req.params);
+    const body = parse(RepeatBody, req.body);
+    res.status(201).json(await createShifts(db, req.user!, id, body));
   });
 
   return r;

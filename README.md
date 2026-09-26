@@ -37,11 +37,12 @@ neon dark theme.
 - **Tiers** (Tier 1, 2, 3 — rename or add more). Everyone is scheduled on the same calendar, grouped by tier. Tier chips filter it down to one or more tiers.
 - **Custom labels** such as On-Call, Training and Overtime, either for one tier's people or for everyone.
 - **Schedule builder**: an open-ended calendar, with no dates to set up first. It shows a week, 2 weeks or a month as a people × days grid. Click **+** to add a shift, drag a shift to move it, and hold <kbd>Alt</kbd>/<kbd>Ctrl</kbd> while dragging to copy it. The builder:
-  - suggests shift times already used on the schedule
+  - suggests shift times already used on the schedule, and lets you type times ("3pm", "15:30") or pick them from a list that shows each shift's length
   - rejects overlapping shifts, including across schedules
   - flags anyone on time off that day
   - shows statutory holidays
   - can copy last week (or the 2 weeks before) forward as drafts
+- **Repeating shifts**. When adding a shift, choose **Repeats** (every weekday, every day, weekly, or custom days) and an end date, and optionally skip statutory holidays. Each day becomes its own shift, so a single day can still be changed at the last minute. Days the person already works, or has approved time off, are skipped and listed.
 - **More schedules if you need them**. The **Main schedule** is always there. Add others (holiday coverage, a project, a second site) from the schedule's name menu. Each one covers every tier, and the team sees all of them together.
 - **Draft → Publish**. Drafts are invisible to the team. **Publish** the days you're looking at, or every change at once. Publishing emails every affected person **once**, with all their shifts and a Confirm link for each one.
 - **Edit after publishing**. The team keeps seeing the published version until you publish again. Then only the people affected get an email ("new", "changed" with the old time struck through, "cancelled"). Changed shifts need to be confirmed again. You can **Discard** unpublished changes to go back to the published version.
@@ -61,7 +62,7 @@ neon dark theme.
 - **Team Schedule**: everyone's published shifts across every tier (week, 2 weeks or month), filterable by tier, team and schedule. Coworkers see that someone is off, not why.
 - **Light, dark or system theme**, with frosted-glass panels and neon glows in the dark theme. Saved per device.
 - Works on phones. The calendars switch to a compact dot view and a day-by-day agenda.
-- Times are shown in each person's own time zone, in the app and in emails.
+- Times are shown in each person's own time zone, in the app and in emails, as 12-hour ("3:00 PM") or 24-hour ("15:00") times. The organization sets the default; anyone can pick their own in their profile.
 
 ## Quick start (local)
 
@@ -92,8 +93,9 @@ confirmation links, schedule emails) appears in the **dev mailbox** at
 ## Configuration
 
 All settings are environment variables (see [`.env.example`](.env.example)).
-Organization name, time zone, week start, statutory holiday region, reminder
-timing and sign-up policy are changed in the app under **Settings**.
+Organization name, time zone, week start, 12/24-hour time format, statutory
+holiday region, reminder timing and sign-up policy are changed in the app under
+**Settings**.
 
 | Variable                                            | Default                                   | Purpose                                                                                                                             |
 | --------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
@@ -240,18 +242,18 @@ a password, then an admin assigns their tier.
 
 The tables follow the playbook, with a few additions (✚) the features need:
 
-| Table                                     | Purpose                                                                                                                                               |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users`                                   | name, email, role (`admin`/`member`), `tier_id`, `team_id`, personal time zone ✚, admin email preferences ✚, email-confirmed/deactivated timestamps ✚ |
-| `tiers`, `teams`                          | Tier 1/2/3 (renameable, colored) and optional teams                                                                                                   |
-| `labels`                                  | admin-defined shift labels; `tier_id` = only for that tier's people, `NULL` = everyone                                                                |
-| `schedules`                               | a named, open-ended calendar for every tier; the **main schedule** (`is_default`) always exists                                                       |
-| `shifts`                                  | person, label, start/end, notes, `status` pending/confirmed — plus a **published snapshot** ✚ (see below)                                             |
-| `time_off_types` ✚, `time_off_requests` ✚ | Paid Holiday, Personal Day, …; requests with pending/approved/declined/cancelled                                                                      |
-| `notifications`                           | the email outbox and notification log (recipient, kind, status, attempts, sent time, related shifts)                                                  |
-| `audit_log` ✚                             | who did what, when                                                                                                                                    |
-| `sessions` ✚, `auth_tokens` ✚             | sign-in sessions and single-use email links, stored as SHA-256 hashes                                                                                 |
-| `org_settings` ✚                          | organization name, time zone, week start, holiday region, reminder delay, sign-up policy                                                              |
+| Table                                     | Purpose                                                                                                                                                                     |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users`                                   | name, email, role (`admin`/`member`), `tier_id`, `team_id`, personal time zone and 12/24-hour format ✚, admin email preferences ✚, email-confirmed/deactivated timestamps ✚ |
+| `tiers`, `teams`                          | Tier 1/2/3 (renameable, colored) and optional teams                                                                                                                         |
+| `labels`                                  | admin-defined shift labels; `tier_id` = only for that tier's people, `NULL` = everyone                                                                                      |
+| `schedules`                               | a named, open-ended calendar for every tier; the **main schedule** (`is_default`) always exists                                                                             |
+| `shifts`                                  | person, label, start/end, notes, `status` pending/confirmed — plus a **published snapshot** ✚ (see below)                                                                   |
+| `time_off_types` ✚, `time_off_requests` ✚ | Paid Holiday, Personal Day, …; requests with pending/approved/declined/cancelled                                                                                            |
+| `notifications`                           | the email outbox and notification log (recipient, kind, status, attempts, sent time, related shifts)                                                                        |
+| `audit_log` ✚                             | who did what, when                                                                                                                                                          |
+| `sessions` ✚, `auth_tokens` ✚             | sign-in sessions and single-use email links, stored as SHA-256 hashes                                                                                                       |
+| `org_settings` ✚                          | organization name, time zone, week start, time format, holiday region, reminder delay, sign-up policy                                                                       |
 
 ### Publish → notify → confirm
 
@@ -324,6 +326,7 @@ across daylight-saving changes.
 | Shift swaps/trades?               | **Out of scope for v1.** People contact their admin, who edits and re-publishes. Only the affected people are emailed. |
 | Multiple time zones?              | **Supported.** Schedules are built in the organization's zone; each person sees their own.                             |
 | One schedule per tier?            | **No.** One calendar for every tier, with extra schedules only when you want a separate roster.                        |
+| Repeating shifts as a series?     | **No.** Repeating creates separate shifts, so any one day can change without "this or all?" questions.                 |
 | Statutory holidays?               | **Canadian**, federal by default or any province/territory. Shown on calendars; they don't block scheduling.           |
 
 Other choices worth knowing:

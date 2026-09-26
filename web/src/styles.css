@@ -185,3 +185,80 @@
 @utility scrollbar-thin {
   scrollbar-width: thin;
 }
+
+/*
+ * Themed dropdown lists for <select> where the browser supports styling them
+ * (Chrome and Edge 135+); other browsers keep their own. Kept outside Tailwind's
+ * layers so these win over the fallback spacing on the Select component.
+ */
+@supports (appearance: base-select) {
+  select,
+  ::picker(select) {
+    appearance: base-select;
+  }
+  select {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding-right: 0.75rem;
+  }
+  select::picker-icon {
+    margin-left: auto;
+    color: var(--color-slate-400);
+    transition: rotate 150ms ease;
+  }
+  select:open::picker-icon {
+    rotate: 180deg;
+  }
+  ::picker(select) {
+    margin-block: 4px;
+    padding: 4px;
+    border: 0;
+    border-radius: 0.75rem;
+    background-color: var(--color-surface);
+    color: var(--color-slate-900);
+    box-shadow:
+      0 0 0 1px var(--color-slate-200),
+      0 18px 40px -14px var(--glow);
+    max-height: min(22rem, 70dvh);
+    scrollbar-width: thin;
+  }
+  select option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.625rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--color-slate-700);
+  }
+  select option:hover,
+  select option:focus-visible {
+    outline: none;
+    background-color: var(--color-slate-100);
+    color: var(--color-slate-900);
+  }
+  select option:checked {
+    background-color: var(--color-brand-50);
+    color: var(--color-brand-700);
+    font-weight: 600;
+  }
+  select option::checkmark {
+    order: 1;
+    margin-left: auto;
+    color: var(--color-brand-600);
+  }
+  select optgroup {
+    padding-top: 0.25rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--color-slate-400);
+  }
+  select optgroup option {
+    font-weight: 400;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+}

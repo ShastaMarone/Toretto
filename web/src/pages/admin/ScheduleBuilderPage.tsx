@@ -17,6 +17,7 @@ import type {
   CopyResult,
   PersonRow,
   PublishResult,
+  RepeatResult,
   ScheduleRange,
   ScheduleSummary,
 } from '@shared/types';
@@ -37,6 +38,7 @@ import {
 import { ScheduleSwitcher } from '../../components/schedule/ScheduleSwitcher';
 import {
   ShiftDialog,
+  type RepeatPayload,
   type ShiftDraft,
   type ShiftPayload,
 } from '../../components/schedule/ShiftDialog';
@@ -66,7 +68,7 @@ import {
   viewRange,
   type CalendarView,
 } from '../../lib/schedule';
-import { useBootstrapData } from '../../lib/session';
+import { useBootstrapData, useTimeFormat } from '../../lib/session';
 import { zoneLabel } from '../../lib/timezones';
 import { useScrollToToday } from '../../lib/useScrollToToday';
 
@@ -185,6 +187,7 @@ function Builder({
 }) {
   const { org } = useBootstrapData();
   const { schedule } = data;
+  const timeFormat = useTimeFormat();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const tiers = useTiers();
@@ -261,6 +264,27 @@ function Builder({
       api.post<BuilderShift>(`/schedules/${schedule.id}/shifts`, payload),
     onSuccess: () => {
       setDialog(null);
+      refresh();
+    },
+  });
+  const createMany = useMutation({
+    mutationFn: (payload: RepeatPayload) =>
+      api.post<RepeatResult>(`/schedules/${schedule.id}/shifts/bulk`, payload),
+    onSuccess: ({ created, skipped }, payload) => {
+      setDialog(null);
+      const days = skipped.map((s) => formatDay(localDate(s.startTime, tz)));
+      const name = data.people.find((p) => p.id === payload.userId)?.name ?? 'They';
+      const message = created
+        ? `Added ${created} shift${created === 1 ? '' : 's'}`
+        : 'No shifts added';
+      const description =
+        skipped.length === 0
+          ? 'Publish when you’re ready for the team to see them.'
+          : skipped.length <= 3
+            ? `Skipped ${skipped.map((s, i) => `${days[i]} (${s.detail})`).join(', ')}.`
+            : `Skipped ${skipped.length} days from ${days[0]} to ${days.at(-1)}: ${name} already works or has time off then.`;
+      if (created) toast.success(message, { description });
+      else toast.warning(message, { description });
       refresh();
     },
   });
@@ -461,7 +485,7 @@ function Builder({
             Every tier on one calendar · {shifts.length} shift{shifts.length === 1 ? '' : 's'} ·{' '}
             {formatHours(totalHours(shifts))} this {periodWord}
             {schedule.publishedAt &&
-              ` · last published ${formatTimestamp(schedule.publishedAt, tz)}${schedule.publishedByName ? ` by ${schedule.publishedByName}` : ''}`}
+              ` · last published ${formatTimestamp(schedule.publishedAt, tz, timeFormat)}${schedule.publishedByName ? ` by ${schedule.publishedByName}` : ''}`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -799,12 +823,14 @@ function Builder({
           labels={data.labels}
           timeOff={data.timeOff}
           allShifts={data.shifts}
-          saving={create.isPending}
-          error={create.error}
+          saving={create.isPending || createMany.isPending}
+          error={create.error ?? createMany.error}
           onSave={(payload) => create.mutate(payload)}
+          onSaveMany={(payload) => createMany.mutate(payload)}
           onClose={() => {
             setDialog(null);
             create.reset();
+            createMany.reset();
           }}
         />
       )}

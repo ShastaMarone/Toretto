@@ -274,12 +274,18 @@ describe('settings', () => {
       timezone: 'America/Edmonton',
       weekStartsOn: 0,
       holidayRegion: 'CA',
+      timeFormat: '12h',
     });
     const alberta = await admin.patch('/api/admin/settings').send({ holidayRegion: 'AB' });
     expect(alberta.body.holidayRegion).toBe('AB');
     expect((await admin.patch('/api/admin/settings').send({ holidayRegion: 'XX' })).status).toBe(
       400,
     );
+    const clock = await admin.patch('/api/admin/settings').send({ timeFormat: '24h' });
+    expect(clock.body.timeFormat).toBe('24h');
+    expect((await member.get('/api/bootstrap')).body.org.timeFormat).toBe('24h');
+    expect((await admin.patch('/api/admin/settings').send({ timeFormat: '25h' })).status).toBe(400);
+    await admin.patch('/api/admin/settings').send({ timeFormat: '12h' });
   });
 
   it('lets people set their own time zone', async () => {
@@ -287,6 +293,18 @@ describe('settings', () => {
     expect(res.body.user).toMatchObject({ timezone: 'America/Halifax', name: 'Mo M.' });
     const reset = await member.patch('/api/me').send({ timezone: null });
     expect(reset.body.user.timezone).toBeNull();
+  });
+
+  it('lets people pick 12- or 24-hour times, or follow the organization', async () => {
+    expect((await member.get('/api/bootstrap')).body.user.timeFormat).toBeNull();
+    const own = await member.patch('/api/me').send({ timeFormat: '24h' });
+    expect(own.body.user.timeFormat).toBe('24h');
+    // Other profile edits leave it alone.
+    const renamed = await member.patch('/api/me').send({ name: 'Mo M.' });
+    expect(renamed.body.user.timeFormat).toBe('24h');
+    expect((await member.patch('/api/me').send({ timeFormat: 'metric' })).status).toBe(400);
+    const reset = await member.patch('/api/me').send({ timeFormat: null });
+    expect(reset.body.user.timeFormat).toBeNull();
   });
 
   it('changes a password after checking the current one', async () => {

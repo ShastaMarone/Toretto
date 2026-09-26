@@ -1,4 +1,4 @@
-import { addDays, diffDays, formatDateRange, formatShiftWhen } from '@shared/time';
+import { addDays, diffDays, formatDateRange, formatShiftWhen, type TimeFormat } from '@shared/time';
 import type { AuditEntry } from '@shared/types';
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -13,7 +13,11 @@ function plural(n: number, word: string) {
 }
 
 /** Human-readable description of an audit entry (without the actor's name). */
-export function describeActivity(entry: AuditEntry, tz: string): string {
+export function describeActivity(
+  entry: AuditEntry,
+  tz: string,
+  format: TimeFormat = '12h',
+): string {
   const d = entry.details;
   switch (entry.action) {
     case 'org.setup':
@@ -56,7 +60,7 @@ export function describeActivity(entry: AuditEntry, tz: string): string {
     case 'schedule.changes_discarded':
       return `discarded ${plural(num(d.discarded), 'unpublished change')} on ${str(d.title)}${d.range && d.range !== 'all dates' ? ` (${str(d.range)})` : ''}`;
     case 'shift.confirmed':
-      return `confirmed their ${d.tierName ? `${str(d.tierName)} ` : ''}shift ${d.startTime ? formatShiftWhen(str(d.startTime), str(d.endTime), tz) : ''}`.trimEnd();
+      return `confirmed their ${d.tierName ? `${str(d.tierName)} ` : ''}shift ${d.startTime ? formatShiftWhen(str(d.startTime), str(d.endTime), tz, format) : ''}`.trimEnd();
     case 'shift.confirmed_all':
       return `confirmed ${plural(num(d.count), 'shift')}`;
     case 'time_off.requested':

@@ -1,6 +1,4 @@
 import {
-  createContext,
-  use,
   useId,
   type InputHTMLAttributes,
   type ReactNode,
@@ -8,14 +6,7 @@ import {
   type TextareaHTMLAttributes,
 } from 'react';
 import { cx } from '../../lib/cx';
-
-interface FieldInfo {
-  id: string;
-  describedBy?: string;
-  invalid: boolean;
-}
-
-const FieldContext = createContext<FieldInfo | null>(null);
+import { controlClass, FieldContext, useField } from './field';
 
 export function Field({
   label,
@@ -60,25 +51,12 @@ export function Field({
   );
 }
 
-const control =
-  'block w-full rounded-lg border-0 bg-surface text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 transition placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-600 focus:shadow-[0_0_0_4px_var(--glow-soft)] disabled:bg-slate-50 disabled:text-slate-500';
-
-function useField(id?: string) {
-  const field = use(FieldContext);
-  return {
-    id: id ?? field?.id,
-    'aria-describedby': field?.describedBy,
-    'aria-invalid': field?.invalid || undefined,
-    invalid: field?.invalid ?? false,
-  };
-}
-
 export function Input({ className, id, ...props }: InputHTMLAttributes<HTMLInputElement>) {
   const { invalid, ...aria } = useField(id);
   return (
     <input
       {...aria}
-      className={cx(control, 'h-10 px-3', invalid && 'ring-rose-400', className)}
+      className={cx(controlClass, 'h-10 px-3', invalid && 'ring-rose-400', className)}
       {...props}
     />
   );
@@ -94,7 +72,7 @@ export function Select({
   return (
     <select
       {...aria}
-      className={cx(control, 'h-10 pl-3 pr-8', invalid && 'ring-rose-400', className)}
+      className={cx(controlClass, 'h-10 pl-3 pr-8', invalid && 'ring-rose-400', className)}
       {...props}
     >
       {children}
@@ -107,7 +85,7 @@ export function Textarea({ className, id, ...props }: TextareaHTMLAttributes<HTM
   return (
     <textarea
       {...aria}
-      className={cx(control, 'min-h-20 px-3 py-2', invalid && 'ring-rose-400', className)}
+      className={cx(controlClass, 'min-h-20 px-3 py-2', invalid && 'ring-rose-400', className)}
       {...props}
     />
   );

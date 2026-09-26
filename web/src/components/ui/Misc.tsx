@@ -1,15 +1,14 @@
 import { Check, LoaderCircle } from 'lucide-react';
 import {
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react';
-import { createPortal } from 'react-dom';
 import { colorFor, initials, PALETTE } from '../../lib/colors';
 import { cx } from '../../lib/cx';
+import { Popover } from './Popover';
 
 export type Tone = 'gray' | 'green' | 'amber' | 'red' | 'brand' | 'blue' | 'purple';
 
@@ -253,9 +252,8 @@ export interface MenuItem {
 }
 
 /**
- * A small dropdown for overflow actions. The list is drawn on top of the page
- * rather than inside the card holding the button, so a card's clipped edges
- * can't cut it off. It opens below the button, or above when there's no room.
+ * A small dropdown for overflow actions. It opens in a Popover, so the edge of
+ * the card holding the button can't cut it off, and it works in dialogs too.
  */
 export function Menu({
   trigger,
@@ -267,67 +265,18 @@ export function Menu({
   label: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const button = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const placed = position !== null;
 
   const close = (refocus: boolean) => {
     setOpen(false);
-    setPosition(null);
     if (refocus) button.current?.focus();
   };
 
-  // Keep the list next to the button and on screen, even while scrolling.
-  useLayoutEffect(() => {
-    if (!open) return;
-    const place = () => {
-      const anchor = button.current?.getBoundingClientRect();
-      const el = list.current;
-      if (!anchor || !el) return;
-      const gap = 4;
-      const margin = 8;
-      const below = anchor.bottom + gap;
-      const above = anchor.top - gap - el.offsetHeight;
-      const fitsBelow = below + el.offsetHeight <= window.innerHeight - margin;
-      setPosition({
-        top: fitsBelow || above < margin ? below : above,
-        left: Math.max(
-          margin,
-          Math.min(anchor.right - el.offsetWidth, window.innerWidth - margin - el.offsetWidth),
-        ),
-      });
-    };
-    place();
-    window.addEventListener('scroll', place, true);
-    window.addEventListener('resize', place);
-    return () => {
-      window.removeEventListener('scroll', place, true);
-      window.removeEventListener('resize', place);
-    };
-  }, [open]);
-
+  // Move focus into the list when it opens.
   useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      const target = e.target as Node;
-      if (!button.current?.contains(target) && !list.current?.contains(target)) close(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close(true);
-    };
-    document.addEventListener('pointerdown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
+    if (open) list.current?.querySelector<HTMLElement>('[role="menuitem"]:enabled')?.focus();
   }, [open]);
-
-  // Move focus into the list once it's on screen.
-  useEffect(() => {
-    if (placed) list.current?.querySelector<HTMLElement>('[role="menuitem"]:enabled')?.focus();
-  }, [placed]);
 
   const onListKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     const enabled = [
@@ -342,7 +291,7 @@ export function Menu({
     else if (e.key === 'ArrowUp') focus(at - 1);
     else if (e.key === 'Home') focus(0);
     else if (e.key === 'End') focus(enabled.length - 1);
-    // Tab continues from the button, as if the list were right after it.
+    // Tab carries on from the button, as if the list were right after it.
     else if (e.key === 'Tab') close(true);
   };
 
@@ -359,15 +308,14 @@ export function Menu({
       >
         {trigger}
       </button>
-      {open &&
-        createPortal(
+      {open && (
+        <Popover anchor={button} align="end" onClose={(reason) => close(reason === 'escape')}>
           <div
             ref={list}
             role="menu"
             aria-label={label}
             onKeyDown={onListKey}
-            style={position ?? { top: 0, left: 0, visibility: 'hidden' }}
-            className="glass fixed z-50 w-56 overflow-hidden rounded-xl py-1 shadow-xl ring-1 ring-slate-200"
+            className="w-56 py-1"
           >
             {items.map((item) => (
               <button
@@ -390,9 +338,9 @@ export function Menu({
                 {item.label}
               </button>
             ))}
-          </div>,
-          document.body,
-        )}
+          </div>
+        </Popover>
+      )}
     </>
   );
 }

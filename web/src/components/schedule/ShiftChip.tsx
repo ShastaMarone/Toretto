@@ -3,6 +3,7 @@ import type { ShiftStatus, TimeOffEntry } from '@shared/types';
 import { Check, Clock, Plane, StickyNote, Undo2 } from 'lucide-react';
 import type { DragEvent, ReactNode } from 'react';
 import { alpha } from '../../lib/colors';
+import { useTimeFormat } from '../../lib/session';
 import { cx } from '../../lib/cx';
 
 export function StatusIcon({ status, className }: { status: ShiftStatus; className?: string }) {
@@ -63,9 +64,10 @@ export function ShiftChip({
   /** Tighter layout for small cells (month view): no icons, collapsed am/pm. */
   compact?: boolean;
 }) {
+  const timeFormat = useTimeFormat();
   const time = compact
-    ? formatTimeRangeCompact(shift.startTime, shift.endTime, tz)
-    : formatTimeRange(shift.startTime, shift.endTime, tz, { short: true });
+    ? formatTimeRangeCompact(shift.startTime, shift.endTime, tz, timeFormat)
+    : formatTimeRange(shift.startTime, shift.endTime, tz, { short: true, format: timeFormat });
   const Tag = onClick ? 'button' : 'div';
   const muted = 'var(--color-slate-300)';
   const edge = removed ? muted : alpha(color, status === 'pending' ? 0.8 : 0.35);

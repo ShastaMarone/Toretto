@@ -1,5 +1,5 @@
 import { formatDateRange, formatShiftWhen, localDate } from '@shared/time';
-import type { PublishResult, ShiftStatus } from '@shared/types';
+import type { PublishResult, ShiftStatus, TimeFormat } from '@shared/types';
 import type { AuthUser } from '../auth/types';
 import type { Config } from '../config';
 import { withTransaction, type Db, type Queryable } from '../db';
@@ -14,7 +14,7 @@ import {
   type DateRange,
   type LockedSchedule,
 } from './schedules';
-import { getSettings, zoneFor } from './settings';
+import { getSettings, timeFormatFor, zoneFor } from './settings';
 
 interface Snapshot {
   id: string;
@@ -133,9 +133,11 @@ async function notifyPeople(
     name: string;
     email: string;
     timezone: string | null;
+    timeFormat: TimeFormat | null;
     tierColor: string | null;
   }>(
-    `SELECT u.id, u.name, u.email, u.timezone, t.color AS "tierColor"
+    `SELECT u.id, u.name, u.email, u.timezone, u.time_format AS "timeFormat",
+            t.color AS "tierColor"
        FROM users u LEFT JOIN tiers t ON t.id = u.tier_id
       WHERE u.id = ANY($1) AND u.deactivated_at IS NULL`,
     [[...changes.keys()]],
@@ -183,6 +185,7 @@ async function notifyPeople(
         {
           recipientName: person.name,
           tz,
+          timeFormat: timeFormatFor(person, settings),
           scheduleName,
           startDate: days[0]!,
           endDate: days[days.length - 1]!,
@@ -386,9 +389,9 @@ export async function discardChanges(
       [reverted.map((r) => r.id)],
     );
     if (clashes[0]) {
-      const { timezone } = await getSettings(client);
+      const { timezone, timeFormat } = await getSettings(client);
       throw conflict(
-        `Can't discard: ${clashes[0].name} would be double-booked ${formatShiftWhen(clashes[0].startTime, clashes[0].endTime, timezone)}. Move or remove their other shift first.`,
+        `Can't discard: ${clashes[0].name} would be double-booked ${formatShiftWhen(clashes[0].startTime, clashes[0].endTime, timezone, timeFormat)}. Move or remove their other shift first.`,
         'SHIFT_OVERLAP',
       );
     }

@@ -39,6 +39,7 @@ export function toSessionUser(user: AuthUser): SessionUser {
     tierId: user.tierId,
     teamId: user.teamId,
     timezone: user.timezone,
+    timeFormat: user.timeFormat,
     hasPassword: user.hasPassword,
     notifyTimeOff: user.notifyTimeOff,
     notifyConfirmations: user.notifyConfirmations,

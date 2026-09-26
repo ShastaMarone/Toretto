@@ -1,5 +1,5 @@
-import type { BuilderShift } from '@shared/types';
-import { formatShiftWhen } from '@shared/time';
+import { formatShiftWhen, localDate } from '@shared/time';
+import type { BuilderShift, RepeatResult } from '@shared/types';
 import type { AuthUser } from '../auth/types';
 import { withTransaction, type Db, type Queryable } from '../db';
 import { badRequest, conflict, notFound } from '../errors';
@@ -16,13 +16,7 @@ export interface ShiftInput {
   notes: string | null;
 }
 
-async function validateShift(
-  db: Queryable,
-  input: ShiftInput,
-  opts: { scheduleId?: string; excludeShiftId?: string; checkUser: boolean; checkLabel: boolean },
-): Promise<void> {
-  // Serialize edits per person so two concurrent saves can't both pass the overlap check.
-  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${input.userId}`]);
+function checkTimes(input: { startTime: string; endTime: string }): void {
   const start = Date.parse(input.startTime);
   const end = Date.parse(input.endTime);
   if (!(end > start)) {
@@ -33,8 +27,18 @@ async function validateShift(
   if (end - start > MAX_SHIFT_HOURS * 3_600_000) {
     throw badRequest('A shift can be at most 7 days long', { endTime: 'Too long' });
   }
+}
 
-  const { timezone } = await getSettings(db);
+/**
+ * Lock the person's shifts (so two concurrent saves can't both pass the
+ * overlap check), then check they can be scheduled and can have the label.
+ */
+async function checkPersonAndLabel(
+  db: Queryable,
+  input: ShiftInput,
+  opts: { checkUser: boolean; checkLabel: boolean },
+): Promise<{ name: string }> {
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${input.userId}`]);
   const { rows: users } = await db.query<{
     name: string;
     active: boolean;
@@ -73,14 +77,24 @@ async function validateShift(
       );
     }
   }
+  return user;
+}
 
-  const { rows: overlaps } = await db.query<{
-    id: string;
-    startTime: string;
-    endTime: string;
-    scheduleName: string;
-    otherSchedule: boolean;
-  }>(
+interface Overlap {
+  id: string;
+  startTime: string;
+  endTime: string;
+  scheduleName: string;
+  otherSchedule: boolean;
+}
+
+/** The person's first other shift (on any schedule) that overlaps this one. */
+async function findOverlap(
+  db: Queryable,
+  input: ShiftInput,
+  opts: { scheduleId?: string; excludeShiftId?: string },
+): Promise<Overlap | undefined> {
+  const { rows } = await db.query<Overlap>(
     `SELECT s.id, s.start_time AS "startTime", s.end_time AS "endTime",
             sc.name AS "scheduleName", (sc.id IS DISTINCT FROM $5) AS "otherSchedule"
        FROM shifts s
@@ -97,11 +111,22 @@ async function validateShift(
       opts.scheduleId ?? null,
     ],
   );
-  const overlap = overlaps[0];
+  return rows[0];
+}
+
+async function validateShift(
+  db: Queryable,
+  input: ShiftInput,
+  opts: { scheduleId?: string; excludeShiftId?: string; checkUser: boolean; checkLabel: boolean },
+): Promise<void> {
+  checkTimes(input);
+  const user = await checkPersonAndLabel(db, input, opts);
+  const overlap = await findOverlap(db, input, opts);
   if (overlap) {
+    const { timezone, timeFormat } = await getSettings(db);
     const where = overlap.otherSchedule ? ` on ${overlap.scheduleName}` : '';
     throw conflict(
-      `${user.name} already has a shift${where} ${formatShiftWhen(overlap.startTime, overlap.endTime, timezone)} that overlaps this one`,
+      `${user.name} already has a shift${where} ${formatShiftWhen(overlap.startTime, overlap.endTime, timezone, timeFormat)} that overlaps this one`,
       'SHIFT_OVERLAP',
       { shiftId: overlap.id },
     );
@@ -133,6 +158,85 @@ export async function createShift(
     return rows[0]!.id;
   });
   return getBuilderShift(db, id);
+}
+
+export interface RepeatInput {
+  userId: string;
+  labelId: string | null;
+  notes: string | null;
+  shifts: { startTime: string; endTime: string }[];
+}
+
+/**
+ * Add the same shift on several days at once (a repeating shift). Each one is
+ * an ordinary draft, edited on its own afterwards. Days when the person
+ * already works, or has approved time off, are skipped and reported.
+ */
+export async function createShifts(
+  db: Db,
+  actor: AuthUser,
+  scheduleId: string,
+  input: RepeatInput,
+): Promise<RepeatResult> {
+  return withTransaction(db, async (client) => {
+    await lockSchedule(client, scheduleId);
+    const times = [...input.shifts].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    times.forEach(checkTimes);
+    await checkPersonAndLabel(
+      client,
+      { ...input, ...times[0]! },
+      { checkUser: true, checkLabel: true },
+    );
+    const { timezone } = await getSettings(client);
+    const days = times.map((t) => localDate(t.startTime, timezone));
+    const { rows: timeOff } = await client.query<{
+      startDate: string;
+      endDate: string;
+      typeName: string;
+    }>(
+      `SELECT r.start_date AS "startDate", r.end_date AS "endDate", tt.name AS "typeName"
+         FROM time_off_requests r JOIN time_off_types tt ON tt.id = r.type_id
+        WHERE r.user_id = $1 AND r.status = 'approved' AND r.start_date <= $3 AND r.end_date >= $2`,
+      [input.userId, days[0], days[days.length - 1]],
+    );
+
+    const result: RepeatResult = { created: 0, skipped: [] };
+    for (const [i, time] of times.entries()) {
+      const day = days[i]!;
+      const off = timeOff.find((t) => t.startDate <= day && t.endDate >= day);
+      if (off) {
+        result.skipped.push({ ...time, reason: 'time_off', detail: off.typeName });
+        continue;
+      }
+      // Earlier days of this repeat count too (they're in the same transaction).
+      const overlap = await findOverlap(client, { ...input, ...time }, { scheduleId });
+      if (overlap) {
+        result.skipped.push({
+          ...time,
+          reason: 'overlap',
+          detail: overlap.otherSchedule
+            ? `already has a shift on ${overlap.scheduleName}`
+            : 'already has a shift',
+        });
+        continue;
+      }
+      await client.query(
+        `INSERT INTO shifts (schedule_id, user_id, label_id, start_time, end_time, notes, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          scheduleId,
+          input.userId,
+          input.labelId,
+          time.startTime,
+          time.endTime,
+          input.notes,
+          actor.id,
+        ],
+      );
+      result.created++;
+    }
+    return result;
+  });
 }
 
 async function lockShift(client: Queryable, id: string) {

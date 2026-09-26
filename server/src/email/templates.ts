@@ -5,6 +5,7 @@ import {
   formatShiftWhen,
   localDate,
   tzAbbreviation,
+  type TimeFormat,
 } from '@shared/time';
 import { html, safeColor, type SafeHtml } from './html';
 
@@ -151,6 +152,7 @@ function shiftCard(
   ctx: EmailContext,
   shift: EmailShift,
   tz: string,
+  format: TimeFormat,
   opts: { cancelled?: boolean; before?: EmailShift } = {},
 ): SafeHtml {
   const accent = opts.cancelled ? '#cbd5e1' : safeColor(shift.color ?? BRAND);
@@ -168,8 +170,8 @@ function shiftCard(
   >
     <tr>
       <td style="padding:12px 14px;font-family:${FONT};">
-        ${before ? html`<div style="font-size:13px;color:#94a3b8;text-decoration:line-through;">Was: ${formatShiftWhen(before.startTime, before.endTime, tz)}${before.labelName !== shift.labelName && before.labelName ? ` · ${before.labelName}` : ''}</div>` : ''}
-        <div style="${titleStyle}">${formatShiftWhen(shift.startTime, shift.endTime, tz)}</div>
+        ${before ? html`<div style="font-size:13px;color:#94a3b8;text-decoration:line-through;">Was: ${formatShiftWhen(before.startTime, before.endTime, tz, format)}${before.labelName !== shift.labelName && before.labelName ? ` · ${before.labelName}` : ''}</div>` : ''}
+        <div style="${titleStyle}">${formatShiftWhen(shift.startTime, shift.endTime, tz, format)}</div>
         ${shiftMeta(shift) ? html`<div style="font-size:13px;color:#475569;">${shiftMeta(shift)}</div>` : ''}
         ${shift.notes ? html`<div style="font-size:13px;color:#64748b;margin-top:4px;">Note: ${shift.notes}</div>` : ''}
         ${shift.needsConfirmation && !opts.cancelled ? html`<div style="margin-top:8px;font-size:14px;">${link(`${ctx.appUrl}/confirm-shift/${shift.id}`, 'Confirm this shift →')}</div>` : ''}
@@ -178,10 +180,16 @@ function shiftCard(
   </table>`;
 }
 
-function shiftText(ctx: EmailContext, shift: EmailShift, tz: string, prefix = '-'): string {
+function shiftText(
+  ctx: EmailContext,
+  shift: EmailShift,
+  tz: string,
+  format: TimeFormat,
+  prefix = '-',
+): string {
   const meta = shiftMeta(shift);
   const lines = [
-    `${prefix} ${formatShiftWhen(shift.startTime, shift.endTime, tz)}${meta ? ` (${meta})` : ''}`,
+    `${prefix} ${formatShiftWhen(shift.startTime, shift.endTime, tz, format)}${meta ? ` (${meta})` : ''}`,
   ];
   if (shift.notes) lines.push(`  Note: ${shift.notes}`);
   if (shift.needsConfirmation) lines.push(`  Confirm: ${ctx.appUrl}/confirm-shift/${shift.id}`);
@@ -328,6 +336,7 @@ Forgot your password? ${input.resetUrl}`;
 export interface ScheduleEmailInput {
   recipientName: string;
   tz: string;
+  timeFormat: TimeFormat;
   /** Named only when the organization has more than one schedule. */
   scheduleName: string | null;
   /** First and last day of this person's changes. */
@@ -344,7 +353,7 @@ export function confirmShiftsUrl(ctx: EmailContext, shiftIds: string[]): string 
 }
 
 export function scheduleTemplate(ctx: EmailContext, input: ScheduleEmailInput): RenderedEmail {
-  const { tz, added, updated, removed } = input;
+  const { tz, timeFormat: format, added, updated, removed } = input;
   const range =
     input.startDate === input.endDate
       ? formatDay(input.startDate)
@@ -386,9 +395,9 @@ export function scheduleTemplate(ctx: EmailContext, input: ScheduleEmailInput): 
 
   const body = html`${heading(title)}
   ${para(intro)}
-  ${added.length ? html`${onlyAdded ? '' : sectionTitle('New shifts')}${added.map((s) => shiftCard(ctx, s, tz))}` : ''}
-  ${updated.length ? html`${sectionTitle('Changed shifts')}${updated.map((u) => shiftCard(ctx, u.after, tz, { before: u.before }))}` : ''}
-  ${removed.length ? html`${onlyRemoved ? '' : sectionTitle('Cancelled shifts')}${removed.map((s) => shiftCard(ctx, s, tz, { cancelled: true }))}` : ''}
+  ${added.length ? html`${onlyAdded ? '' : sectionTitle('New shifts')}${added.map((s) => shiftCard(ctx, s, tz, format))}` : ''}
+  ${updated.length ? html`${sectionTitle('Changed shifts')}${updated.map((u) => shiftCard(ctx, u.after, tz, format, { before: u.before }))}` : ''}
+  ${removed.length ? html`${onlyRemoved ? '' : sectionTitle('Cancelled shifts')}${removed.map((s) => shiftCard(ctx, s, tz, format, { cancelled: true }))}` : ''}
   ${cta}
   ${toConfirm.length ? muted(html`Or ${link(`${ctx.appUrl}/my-schedule`, 'open your schedule')} to review everything first.`) : ''}
   ${muted(tzNote(tz, firstAt))}`;
@@ -396,20 +405,20 @@ export function scheduleTemplate(ctx: EmailContext, input: ScheduleEmailInput): 
   const textParts = [intro, ''];
   if (added.length) {
     if (!onlyAdded) textParts.push('NEW SHIFTS');
-    textParts.push(...added.map((s) => shiftText(ctx, s, tz)), '');
+    textParts.push(...added.map((s) => shiftText(ctx, s, tz, format)), '');
   }
   if (updated.length) {
     textParts.push('CHANGED SHIFTS');
     for (const u of updated) {
-      textParts.push(`- Was: ${formatShiftWhen(u.before.startTime, u.before.endTime, tz)}`);
-      textParts.push(shiftText(ctx, u.after, tz, '  Now:'));
+      textParts.push(`- Was: ${formatShiftWhen(u.before.startTime, u.before.endTime, tz, format)}`);
+      textParts.push(shiftText(ctx, u.after, tz, format, '  Now:'));
     }
     textParts.push('');
   }
   if (removed.length) {
     if (!onlyRemoved) textParts.push('CANCELLED SHIFTS');
     textParts.push(
-      ...removed.map((s) => shiftText(ctx, { ...s, needsConfirmation: false }, tz)),
+      ...removed.map((s) => shiftText(ctx, { ...s, needsConfirmation: false }, tz, format)),
       '',
     );
   }
@@ -431,9 +440,15 @@ export function scheduleTemplate(ctx: EmailContext, input: ScheduleEmailInput): 
 /** Tells an admin that someone confirmed their shifts. */
 export function shiftsConfirmedTemplate(
   ctx: EmailContext,
-  input: { recipientName: string; personName: string; tz: string; shifts: EmailShift[] },
+  input: {
+    recipientName: string;
+    personName: string;
+    tz: string;
+    timeFormat: TimeFormat;
+    shifts: EmailShift[];
+  },
 ): RenderedEmail {
-  const { shifts, tz } = input;
+  const { shifts, tz, timeFormat: format } = input;
   const first = shifts[0]!;
   const subject =
     shifts.length === 1
@@ -444,13 +459,13 @@ export function shiftsConfirmedTemplate(
   const listed = shifts.map((s) => ({ ...s, needsConfirmation: false }));
   const body = html`${heading(shifts.length === 1 ? 'Shift confirmed' : 'Shifts confirmed')}
   ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
-  ${listed.map((s) => shiftCard(ctx, s, tz))} ${button(url, 'Open dashboard')}
+  ${listed.map((s) => shiftCard(ctx, s, tz, format))} ${button(url, 'Open dashboard')}
   ${muted(html`${tzNote(tz, first.startTime)} You can turn these emails off in ${link(`${ctx.appUrl}/profile`, 'your profile')}.`)}`;
   const text = [
     `Hi ${firstName(input.recipientName)},`,
     '',
     summary,
-    ...listed.map((s) => shiftText(ctx, s, tz)),
+    ...listed.map((s) => shiftText(ctx, s, tz, format)),
     '',
     `Dashboard: ${url}`,
     '',
@@ -462,9 +477,9 @@ export function shiftsConfirmedTemplate(
 
 export function reminderTemplate(
   ctx: EmailContext,
-  input: { recipientName: string; tz: string; shifts: EmailShift[] },
+  input: { recipientName: string; tz: string; timeFormat: TimeFormat; shifts: EmailShift[] },
 ): RenderedEmail {
-  const { shifts, tz } = input;
+  const { shifts, tz, timeFormat: format } = input;
   const first = shifts[0]!;
   const subject =
     shifts.length === 1
@@ -472,12 +487,12 @@ export function reminderTemplate(
       : `Reminder: please confirm your ${shifts.length} upcoming shifts`;
   const intro = `Hi ${firstName(input.recipientName)}, ${shifts.length === 1 ? 'this shift is' : 'these shifts are'} still waiting for your confirmation:`;
   const body = html`${heading('Please confirm your shifts')} ${para(intro)}
-  ${shifts.map((s) => shiftCard(ctx, { ...s, needsConfirmation: true }, tz))}
+  ${shifts.map((s) => shiftCard(ctx, { ...s, needsConfirmation: true }, tz, format))}
   ${button(`${ctx.appUrl}/my-schedule`, 'Review my shifts')} ${muted(tzNote(tz, first.startTime))}`;
   const text = [
     intro,
     '',
-    ...shifts.map((s) => shiftText(ctx, { ...s, needsConfirmation: true }, tz)),
+    ...shifts.map((s) => shiftText(ctx, { ...s, needsConfirmation: true }, tz, format)),
     '',
     `My schedule: ${ctx.appUrl}/my-schedule`,
     '',

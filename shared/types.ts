@@ -1,8 +1,10 @@
 // API contract shared by the server and the web app.
 // Timestamps are ISO-8601 strings in UTC; calendar days are 'YYYY-MM-DD'.
 import type { HolidayRegion } from './holidays';
+import type { TimeFormat } from './time';
 
 export type { HolidayRegion } from './holidays';
+export type { TimeFormat } from './time';
 
 export type Role = 'admin' | 'member';
 export type UserStatus = 'invited' | 'active' | 'deactivated';
@@ -31,6 +33,8 @@ export interface SessionUser {
   teamId: string | null;
   /** Personal time zone; null means the organization's. */
   timezone: string | null;
+  /** Personal 12/24-hour choice; null means the organization's. */
+  timeFormat: TimeFormat | null;
   hasPassword: boolean;
   /** Admins: email me when someone requests time off. */
   notifyTimeOff: boolean;
@@ -44,6 +48,8 @@ export interface OrgInfo {
   weekStartsOn: WeekStart;
   /** Statutory holidays shown on calendars. */
   holidayRegion: HolidayRegion;
+  /** Default 12/24-hour format for everyone (and emails). */
+  timeFormat: TimeFormat;
 }
 
 export interface Bootstrap {
@@ -65,6 +71,7 @@ export interface OrgSettings {
   selfSignup: boolean;
   allowedDomains: string[];
   holidayRegion: HolidayRegion;
+  timeFormat: TimeFormat;
 }
 
 export interface Tier {
@@ -223,6 +230,18 @@ export interface ShiftView {
   /** The person's tier (null if they don't have one). */
   tier: { id: string; name: string; color: string } | null;
   scheduleName: string;
+}
+
+/** Adding a repeating shift: one shift per day, minus the days skipped. */
+export interface RepeatResult {
+  created: number;
+  skipped: {
+    startTime: string;
+    endTime: string;
+    reason: 'overlap' | 'time_off';
+    /** "Vacation", "already has a shift", ... */
+    detail: string;
+  }[];
 }
 
 export interface TeamSchedule {

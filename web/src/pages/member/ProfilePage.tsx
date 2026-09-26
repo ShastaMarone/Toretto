@@ -1,4 +1,4 @@
-import type { SessionUser } from '@shared/types';
+import type { SessionUser, TimeFormat } from '@shared/types';
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -6,7 +6,7 @@ import { api } from '../../api/client';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { TimezoneSelect } from '../../components/TimezoneSelect';
 import { Button } from '../../components/ui/Button';
-import { Field, FormError, Input, Toggle } from '../../components/ui/Form';
+import { Field, FormError, Input, Select, Toggle } from '../../components/ui/Form';
 import { Card, CardHeader, PageHeader } from '../../components/ui/Misc';
 import { fieldErrors, formMessage } from '../../lib/forms';
 import { useBootstrapData, useCurrentUser, useSetSessionUser } from '../../lib/session';
@@ -18,11 +18,17 @@ export default function ProfilePage() {
   const setSessionUser = useSetSessionUser();
   const [name, setName] = useState(user.name);
   const [timezone, setTimezone] = useState(user.timezone ?? '');
+  const [timeFormat, setTimeFormat] = useState<TimeFormat | ''>(user.timeFormat ?? '');
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
 
   const saveProfile = useMutation({
-    mutationFn: () => api.patch<{ user: SessionUser }>('/me', { name, timezone: timezone || null }),
+    mutationFn: () =>
+      api.patch<{ user: SessionUser }>('/me', {
+        name,
+        timezone: timezone || null,
+        timeFormat: timeFormat || null,
+      }),
     onSuccess: ({ user }) => {
       setSessionUser(user);
       toast.success('Profile saved');
@@ -88,6 +94,19 @@ export default function ProfilePage() {
                 onChange={setTimezone}
                 defaultOption={`Same as the team — ${zoneLabel(org.timezone)}`}
               />
+            </Field>
+            <Field label="Time format" hint="For times in the app and in your emails.">
+              <Select
+                value={timeFormat}
+                onChange={(e) => setTimeFormat(e.target.value as TimeFormat | '')}
+              >
+                <option value="">
+                  Same as the team —{' '}
+                  {org.timeFormat === '24h' ? '24-hour (15:00)' : '12-hour (3:00 PM)'}
+                </option>
+                <option value="12h">12-hour (3:00 PM)</option>
+                <option value="24h">24-hour (15:00)</option>
+              </Select>
             </Field>
             <div className="flex justify-end">
               <Button type="submit" variant="primary" loading={saveProfile.isPending}>

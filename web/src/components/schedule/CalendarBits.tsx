@@ -3,10 +3,12 @@ import { formatDay, type ISODate } from '@shared/time';
 import type { Tier } from '@shared/types';
 import { CalendarDays, ChevronLeft, ChevronRight, Leaf } from 'lucide-react';
 import { DateTime } from 'luxon';
-import { useRef, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { cx } from '../../lib/cx';
 import { Button } from '../ui/Button';
 import { ColorDot } from '../ui/Misc';
+import { Calendar } from '../ui/Pickers';
+import { Popover } from '../ui/Popover';
 
 /** "Thanksgiving" pill for a day that's a statutory holiday. */
 export function HolidayBadge({
@@ -167,7 +169,12 @@ export function CalendarNav({
   value: ISODate;
   onPick: (date: ISODate) => void;
 }) {
-  const picker = useRef<HTMLInputElement>(null);
+  const [picking, setPicking] = useState(false);
+  const pickButton = useRef<HTMLButtonElement>(null);
+  const stopPicking = (refocus: boolean) => {
+    setPicking(false);
+    if (refocus) pickButton.current?.focus();
+  };
   return (
     <div className="flex items-center gap-2">
       <div className="flex items-center rounded-xl bg-surface/70 shadow-sm ring-1 ring-inset ring-slate-300 backdrop-blur dark:ring-slate-200">
@@ -179,26 +186,34 @@ export function CalendarNav({
         >
           <ChevronLeft className="size-4" />
         </button>
-        <span className="relative min-w-44 border-x border-slate-200 px-3 text-center text-sm font-semibold tabular-nums text-slate-800">
+        <button
+          ref={pickButton}
+          type="button"
+          aria-haspopup="dialog"
+          aria-expanded={picking}
+          onClick={() => setPicking((p) => !p)}
+          className="flex min-w-44 items-center justify-center gap-1.5 self-stretch border-x border-slate-200 px-3 text-sm font-semibold tabular-nums text-slate-800 hover:bg-slate-100/70"
+        >
           {label}
-          <button
-            type="button"
-            aria-label="Pick a date"
-            onClick={() => picker.current?.showPicker?.()}
-            className="ml-1.5 inline-flex align-[-2px] text-slate-400 hover:text-brand-600"
+          <CalendarDays className="size-4 text-slate-400" aria-hidden />
+          <span className="sr-only">, pick a date</span>
+        </button>
+        {picking && (
+          <Popover
+            anchor={pickButton}
+            role="dialog"
+            aria-label="Choose a date"
+            onClose={(reason) => stopPicking(reason === 'escape')}
           >
-            <CalendarDays className="size-4" />
-          </button>
-          <input
-            ref={picker}
-            type="date"
-            tabIndex={-1}
-            aria-hidden
-            value={value}
-            onChange={(e) => e.target.value && onPick(e.target.value)}
-            className="pointer-events-none absolute inset-0 opacity-0"
-          />
-        </span>
+            <Calendar
+              value={value}
+              onPick={(day) => {
+                stopPicking(true);
+                onPick(day);
+              }}
+            />
+          </Popover>
+        )}
         <button
           type="button"
           onClick={onNext}

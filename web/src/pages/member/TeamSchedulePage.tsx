@@ -48,7 +48,7 @@ import {
   viewRange,
   type CalendarView,
 } from '../../lib/schedule';
-import { useBootstrapData, useCurrentUser, useViewerZone } from '../../lib/session';
+import { useBootstrapData, useCurrentUser, useTimeFormat, useViewerZone } from '../../lib/session';
 import { zoneLabel } from '../../lib/timezones';
 import { useScrollToToday } from '../../lib/useScrollToToday';
 
@@ -490,6 +490,7 @@ function DayAgenda({
   offPeople: PersonRow[];
   showSchedule: boolean;
 }) {
+  const timeFormat = useTimeFormat();
   const isToday = day === today;
   return (
     <Card>
@@ -539,7 +540,7 @@ function DayAgenda({
                   </p>
                   <p className="truncate text-xs text-slate-500">
                     {[
-                      formatTimeRange(s.startTime, s.endTime, tz),
+                      formatTimeRange(s.startTime, s.endTime, tz, { format: timeFormat }),
                       s.tier?.name,
                       s.label?.name,
                       showSchedule && s.scheduleName,

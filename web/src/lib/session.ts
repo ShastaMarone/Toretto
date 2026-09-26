@@ -1,4 +1,4 @@
-import type { Bootstrap, SessionUser } from '@shared/types';
+import type { Bootstrap, SessionUser, TimeFormat } from '@shared/types';
 import { useQueryClient } from '@tanstack/react-query';
 import { keys, useBootstrap } from '../api/queries';
 
@@ -29,6 +29,12 @@ export function useCurrentUser(): SessionUser {
 export function useViewerZone(): string {
   const { user, org } = useBootstrapData();
   return user?.timezone ?? org.timezone;
+}
+
+/** Whether the signed-in person reads times as "3:00 PM" or "15:00". */
+export function useTimeFormat(): TimeFormat {
+  const { user, org } = useBootstrapData();
+  return user?.timeFormat ?? org.timeFormat;
 }
 
 /** Call after any auth change (login, logout, profile edit) to refresh the session. */

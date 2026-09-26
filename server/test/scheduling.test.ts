@@ -48,6 +48,7 @@ beforeAll(async () => {
     timezone: 'America/Vancouver',
   });
   people.cy = await createUser(ctx.db, { name: 'Cy Tran', tierId: tier2 });
+  await ctx.db.query(`UPDATE users SET time_format = '24h' WHERE id = $1`, [people.cy.id]);
   admin = ctx.agent();
   ana = ctx.agent();
   ben = ctx.agent();
@@ -226,6 +227,10 @@ describe('publish → notify → confirm', () => {
       formatTimeRange(shifts.benTue!.startTime, shifts.benTue!.endTime, 'America/Vancouver'),
     );
     expect(benMail!.text).toContain('(America/Vancouver)');
+    // Cy reads 24-hour times.
+    const [cyMail] = await emails(ctx.db, { to: people.cy!.email });
+    expect(cyMail!.text).toContain('09:00 – 17:00');
+    expect(anaMail!.text).toContain('9:00 AM – 5:00 PM');
 
     const summary = (await builder(main, week(2))).schedule;
     expect(summary.pendingChanges).toBe(1); // the draft the week after

@@ -1,6 +1,6 @@
 import { HOLIDAY_REGIONS, holidaysBetween } from '@shared/holidays';
 import { addDays, formatDay, todayIn } from '@shared/time';
-import type { HolidayRegion, OrgSettings, Team, TimeOffType } from '@shared/types';
+import type { HolidayRegion, OrgSettings, Team, TimeFormat, TimeOffType } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Archive, ArchiveRestore, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -54,6 +54,7 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
         selfSignup: form.selfSignup,
         allowedDomains: form.domains.split(/[\s,]+/).filter(Boolean),
         holidayRegion: form.holidayRegion,
+        timeFormat: form.timeFormat,
       }),
     onSuccess: (s) => {
       queryClient.setQueryData(keys.settings, s);
@@ -109,6 +110,18 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
             value={form.timezone}
             onChange={(timezone) => setForm({ ...form, timezone })}
           />
+        </Field>
+        <Field
+          label="Time format"
+          hint="The default for everyone, and for emails. People can pick their own in their profile."
+        >
+          <Select
+            value={form.timeFormat}
+            onChange={(e) => setForm({ ...form, timeFormat: e.target.value as TimeFormat })}
+          >
+            <option value="12h">12-hour (3:00 PM)</option>
+            <option value="24h">24-hour (15:00)</option>
+          </Select>
         </Field>
         <Field
           label="Statutory holidays"

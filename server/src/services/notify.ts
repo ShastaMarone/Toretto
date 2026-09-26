@@ -2,7 +2,8 @@ import type { Config } from '../config';
 import type { Queryable } from '../db';
 import { enqueueEmail, type NotificationKind } from '../email/outbox';
 import type { EmailContext, RenderedEmail } from '../email/templates';
-import { getSettings, zoneFor } from './settings';
+import type { TimeFormat } from '@shared/types';
+import { getSettings, timeFormatFor, zoneFor } from './settings';
 
 /** What an admin can choose to be emailed about (see Profile). */
 export type AdminTopic = 'time_off' | 'confirmations';
@@ -24,7 +25,10 @@ export async function notifyAdmins(
     exceptUserId: string;
     kind: NotificationKind;
     shiftIds?: string[];
-    render: (ctx: EmailContext, admin: { name: string; tz: string }) => RenderedEmail;
+    render: (
+      ctx: EmailContext,
+      admin: { name: string; tz: string; timeFormat: TimeFormat },
+    ) => RenderedEmail;
   },
 ): Promise<number> {
   const settings = await getSettings(client);
@@ -34,8 +38,9 @@ export async function notifyAdmins(
     name: string;
     email: string;
     timezone: string | null;
+    timeFormat: TimeFormat | null;
   }>(
-    `SELECT id, name, email, timezone FROM users
+    `SELECT id, name, email, timezone, time_format AS "timeFormat" FROM users
       WHERE role = 'admin' AND deactivated_at IS NULL AND email_verified_at IS NOT NULL
         AND id <> $1 AND ${PREFERENCE[input.topic]}`,
     [input.exceptUserId],
@@ -46,7 +51,11 @@ export async function notifyAdmins(
       to: admin.email,
       kind: input.kind,
       shiftIds: input.shiftIds,
-      email: input.render(ctx, { name: admin.name, tz: zoneFor(admin, settings) }),
+      email: input.render(ctx, {
+        name: admin.name,
+        tz: zoneFor(admin, settings),
+        timeFormat: timeFormatFor(admin, settings),
+      }),
     });
   }
   return admins.length;

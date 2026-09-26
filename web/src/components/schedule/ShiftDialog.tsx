@@ -1,21 +1,29 @@
 import {
+  addDays,
+  dayOfWeek,
+  eachDay,
   formatDay,
   formatShiftWhen,
-  formatTimeRange,
+  formatTimeOfDay,
   localTime,
   shiftTimesFromLocal,
+  startOfWeek,
   type ISODate,
+  type TimeFormat,
 } from '@shared/time';
 import type { BuilderShift, Label, PersonRow, Tier, TimeOffEntry } from '@shared/types';
-import { CalendarClock, Copy, Eye, Trash2 } from 'lucide-react';
+import { CalendarClock, Copy, Eye, Repeat, Trash2 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { alpha } from '../../lib/colors';
 import { cx } from '../../lib/cx';
 import { fieldErrors, formMessage } from '../../lib/forms';
+import { useHolidays } from '../../lib/holidays';
+import { useBootstrapData, useTimeFormat } from '../../lib/session';
 import { Button } from '../ui/Button';
-import { Field, FormError, Input, Select, Textarea } from '../ui/Form';
-import { Modal } from '../ui/Modal';
+import { Field, FormError, Select, Textarea } from '../ui/Form';
 import { Badge } from '../ui/Misc';
+import { Modal } from '../ui/Modal';
+import { DateInput, TimeInput } from '../ui/Pickers';
 
 export interface ShiftDraft {
   userId: string;
@@ -33,6 +41,29 @@ export interface ShiftPayload {
   endTime: string;
   notes: string | null;
 }
+
+/** The same shift on several days (see "Repeats"). */
+export interface RepeatPayload {
+  userId: string;
+  labelId: string | null;
+  notes: string | null;
+  shifts: { startTime: string; endTime: string }[];
+}
+
+/** Which weekdays a new shift repeats on (0 = Sunday), and until when. */
+interface RepeatRule {
+  days: number[];
+  until: ISODate;
+  skipHolidays: boolean;
+}
+
+type RepeatKind = 'none' | 'weekdays' | 'daily' | 'weekly' | 'custom';
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const WEEKDAYS = [1, 2, 3, 4, 5];
+const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
+/** Longest a repeat can run (about half a year). */
+const MAX_REPEAT_DAYS = 26 * 7;
 
 const DEFAULT_PRESETS: [string, string][] = [
   ['09:00', '17:00'],
@@ -57,10 +88,13 @@ function presetsFrom(shifts: BuilderShift[], tz: string): [string, string][] {
     .slice(0, 5);
 }
 
-function presetLabel(start: string, end: string, tz: string): string {
-  const { startTime, endTime } = shiftTimesFromLocal('2026-01-05', start, end, tz);
-  return formatTimeRange(startTime, endTime, tz, { short: true });
+function presetLabel(start: string, end: string, format: TimeFormat): string {
+  const overnight = end <= start ? ' (+1)' : '';
+  return `${formatTimeOfDay(start, format, true)}–${formatTimeOfDay(end, format, true)}${overnight}`;
 }
+
+const sameDays = (a: number[], b: number[]) =>
+  a.length === b.length && [...a].sort().join() === [...b].sort().join();
 
 export function ShiftDialog({
   mode,
@@ -76,6 +110,7 @@ export function ShiftDialog({
   deleting,
   error,
   onSave,
+  onSaveMany,
   onDelete,
   onDuplicate,
   onClose,
@@ -94,11 +129,16 @@ export function ShiftDialog({
   deleting?: boolean;
   error: unknown;
   onSave: (payload: ShiftPayload) => void;
+  /** When adding: save a repeating shift as one shift per day. */
+  onSaveMany?: (payload: RepeatPayload) => void;
   onDelete?: () => void;
   onDuplicate?: (draft: ShiftDraft) => void;
   onClose: () => void;
 }) {
+  const { org } = useBootstrapData();
+  const timeFormat = useTimeFormat();
   const [draft, setDraft] = useState<ShiftDraft>(initial);
+  const [repeat, setRepeat] = useState<RepeatRule | null>(null);
   const presets = useMemo(() => presetsFrom(allShifts, tz), [allShifts, tz]);
   const byId = new Map(people.map((p) => [p.id, p]));
   const person = byId.get(draft.userId);
@@ -120,14 +160,60 @@ export function ShiftDialog({
   const published = shift?.published;
   const set = (patch: Partial<ShiftDraft>) => setDraft((d) => ({ ...d, ...patch }));
 
+  // ---- repeating ------------------------------------------------------------
+  const endOfWeek = addDays(startOfWeek(draft.date, org.weekStartsOn), 6);
+  const until = repeat ? (repeat.until < draft.date ? draft.date : repeat.until) : draft.date;
+  const holidays = useHolidays(draft.date, until);
+  const repeatDays = repeat
+    ? eachDay(draft.date, until).filter((d) => repeat.days.includes(dayOfWeek(d)))
+    : [];
+  const holidayDays = repeatDays.filter((d) => holidays.has(d));
+  const occurrences = repeat
+    ? repeatDays.filter((d) => !(repeat.skipHolidays && holidays.has(d)))
+    : [draft.date];
+  const repeatKind: RepeatKind = !repeat
+    ? 'none'
+    : sameDays(repeat.days, WEEKDAYS)
+      ? 'weekdays'
+      : sameDays(repeat.days, EVERY_DAY)
+        ? 'daily'
+        : sameDays(repeat.days, [dayOfWeek(draft.date)])
+          ? 'weekly'
+          : 'custom';
+  const chooseRepeat = (kind: RepeatKind) => {
+    if (kind === 'none') return setRepeat(null);
+    const skipHolidays = repeat?.skipHolidays ?? false;
+    const days =
+      kind === 'weekdays'
+        ? WEEKDAYS
+        : kind === 'daily'
+          ? EVERY_DAY
+          : kind === 'weekly'
+            ? [dayOfWeek(draft.date)]
+            : (repeat?.days ?? [dayOfWeek(draft.date)]);
+    let next =
+      kind === 'weekly' ? addDays(draft.date, 27) : kind === 'custom' && repeat ? until : endOfWeek;
+    // Starting on a Saturday with "every weekday"? Run into next week.
+    if (!eachDay(draft.date, next).some((d) => days.includes(dayOfWeek(d))))
+      next = addDays(next, 7);
+    setRepeat({ days, until: next, skipHolidays });
+  };
+  const repeating = mode === 'create' && repeat !== null;
+
   const submit = () => {
-    const times = shiftTimesFromLocal(draft.date, draft.start, draft.end, tz);
-    onSave({
+    const base = {
       userId: draft.userId,
       labelId: draft.labelId,
       notes: draft.notes.trim() || null,
-      ...times,
-    });
+    };
+    if (repeating && onSaveMany) {
+      onSaveMany({
+        ...base,
+        shifts: occurrences.map((d) => shiftTimesFromLocal(d, draft.start, draft.end, tz)),
+      });
+    } else {
+      onSave({ ...base, ...shiftTimesFromLocal(draft.date, draft.start, draft.end, tz) });
+    }
   };
 
   return (
@@ -135,7 +221,7 @@ export function ShiftDialog({
       title={mode === 'create' ? 'Add shift' : 'Edit shift'}
       description={
         mode === 'edit' && shift
-          ? `${personName(shift.userId)} · ${formatShiftWhen(shift.startTime, shift.endTime, tz)}`
+          ? `${personName(shift.userId)} · ${formatShiftWhen(shift.startTime, shift.endTime, tz, timeFormat)}`
           : undefined
       }
       onClose={onClose}
@@ -159,8 +245,17 @@ export function ShiftDialog({
               Duplicate
             </Button>
           )}
-          <Button type="submit" variant="primary" loading={saving}>
-            {mode === 'create' ? 'Add shift' : 'Save changes'}
+          <Button
+            type="submit"
+            variant="primary"
+            loading={saving}
+            disabled={repeating && occurrences.length === 0}
+          >
+            {mode === 'edit'
+              ? 'Save changes'
+              : repeating
+                ? `Add ${occurrences.length} shift${occurrences.length === 1 ? '' : 's'}`
+                : 'Add shift'}
           </Button>
         </>
       }
@@ -178,7 +273,7 @@ export function ShiftDialog({
             {shift.changeState === 'updated' && published && (
               <span className="flex items-center gap-1">
                 <Eye className="size-3.5" /> Team currently sees {personName(published.userId)},{' '}
-                {formatShiftWhen(published.startTime, published.endTime, tz)}
+                {formatShiftWhen(published.startTime, published.endTime, tz, timeFormat)}
               </span>
             )}
             {shift.status === 'confirmed' && (
@@ -213,25 +308,18 @@ export function ShiftDialog({
               ))}
             </Select>
           </Field>
-          <Field label="Day" error={errors.startTime} hint={formatDay(draft.date)}>
-            <Input
-              type="date"
-              required
-              value={draft.date}
-              onChange={(e) => e.target.value && set({ date: e.target.value })}
-            />
+          <Field label={repeating ? 'Starting' : 'Day'} error={errors.startTime}>
+            <DateInput value={draft.date} onChange={(date) => set({ date })} />
           </Field>
         </div>
 
         <div>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Starts">
-              <Input
-                type="time"
-                required
+              <TimeInput
                 value={draft.start}
-                step={300}
-                onChange={(e) => set({ start: e.target.value })}
+                format={timeFormat}
+                onChange={(start) => set({ start })}
               />
             </Field>
             <Field
@@ -239,12 +327,11 @@ export function ShiftDialog({
               error={errors.endTime}
               hint={overnight ? 'Ends the next day' : undefined}
             >
-              <Input
-                type="time"
-                required
+              <TimeInput
                 value={draft.end}
-                step={300}
-                onChange={(e) => set({ end: e.target.value })}
+                format={timeFormat}
+                after={draft.start}
+                onChange={(end) => set({ end })}
               />
             </Field>
           </div>
@@ -255,17 +342,39 @@ export function ShiftDialog({
                 type="button"
                 onClick={() => set({ start, end })}
                 className={cx(
-                  'rounded-full px-2.5 py-1 text-xs font-medium',
+                  'rounded-full px-2.5 py-1 text-xs font-medium tabular-nums',
                   draft.start === start && draft.end === end
                     ? 'neon bg-neon text-white'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200',
                 )}
               >
-                {presetLabel(start, end, tz)}
+                {presetLabel(start, end, timeFormat)}
               </button>
             ))}
           </div>
         </div>
+
+        {mode === 'create' && onSaveMany && (
+          <RepeatSection
+            kind={repeatKind}
+            rule={repeat}
+            date={draft.date}
+            until={until}
+            endOfWeek={endOfWeek}
+            weekStartsOn={org.weekStartsOn}
+            occurrences={occurrences}
+            holidayDays={holidayDays}
+            holidayNames={(d) =>
+              holidays
+                .get(d)
+                ?.map((h) => h.name)
+                .join(', ') ?? ''
+            }
+            personName={personName(draft.userId)}
+            onKind={chooseRepeat}
+            onChange={(patch) => setRepeat((r) => (r ? { ...r, ...patch } : r))}
+          />
+        )}
 
         <fieldset>
           <legend className="mb-1.5 text-sm font-medium text-slate-700">Label</legend>
@@ -294,7 +403,7 @@ export function ShiftDialog({
           {errors.labelId && <p className="mt-1.5 text-xs text-rose-600">{errors.labelId}</p>}
         </fieldset>
 
-        {offThatDay && (
+        {offThatDay && !repeating && (
           <div className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
             <CalendarClock className="mt-0.5 size-4 shrink-0" />
             <p>
@@ -316,6 +425,154 @@ export function ShiftDialog({
         </Field>
       </div>
     </Modal>
+  );
+}
+
+/** "Repeats": which weekdays, until when, and whether to skip holidays. */
+function RepeatSection({
+  kind,
+  rule,
+  date,
+  until,
+  endOfWeek,
+  weekStartsOn,
+  occurrences,
+  holidayDays,
+  holidayNames,
+  personName,
+  onKind,
+  onChange,
+}: {
+  kind: RepeatKind;
+  rule: RepeatRule | null;
+  date: ISODate;
+  until: ISODate;
+  endOfWeek: ISODate;
+  weekStartsOn: 0 | 1;
+  occurrences: ISODate[];
+  holidayDays: ISODate[];
+  holidayNames: (day: ISODate) => string;
+  personName: string;
+  onKind: (kind: RepeatKind) => void;
+  onChange: (patch: Partial<RepeatRule>) => void;
+}) {
+  const weekday = DAY_NAMES[dayOfWeek(date)]!;
+  const order = [0, 1, 2, 3, 4, 5, 6].map((i) => (i + weekStartsOn) % 7);
+  const shortcuts: [string, ISODate][] = [
+    ['This week', endOfWeek],
+    ['2 weeks', addDays(endOfWeek, 7)],
+    ['4 weeks', addDays(endOfWeek, 21)],
+    ['8 weeks', addDays(endOfWeek, 49)],
+  ];
+  const maxUntil = addDays(date, MAX_REPEAT_DAYS - 1);
+  return (
+    <div className="rounded-xl bg-slate-50/80 p-3 ring-1 ring-inset ring-slate-200/70">
+      <Field label="Repeats">
+        <Select value={kind} onChange={(e) => onKind(e.target.value as RepeatKind)}>
+          <option value="none">Doesn’t repeat</option>
+          <option value="weekdays">Every weekday (Monday to Friday)</option>
+          <option value="daily">Every day</option>
+          <option value="weekly">Weekly on {weekday}</option>
+          <option value="custom">Custom days…</option>
+        </Select>
+      </Field>
+      {rule && (
+        <div className="mt-3 space-y-3">
+          <fieldset>
+            <legend className="mb-1.5 text-sm font-medium text-slate-700">On</legend>
+            <div className="flex gap-1.5" role="group">
+              {order.map((dow) => {
+                const on = rule.days.includes(dow);
+                const name = DAY_NAMES[dow]!;
+                return (
+                  <button
+                    key={dow}
+                    type="button"
+                    aria-pressed={on}
+                    aria-label={name}
+                    title={name}
+                    onClick={() =>
+                      onChange({
+                        days: on ? rule.days.filter((d) => d !== dow) : [...rule.days, dow],
+                      })
+                    }
+                    className={cx(
+                      'flex size-9 items-center justify-center rounded-full text-xs font-semibold transition',
+                      on
+                        ? 'neon bg-neon text-white'
+                        : 'bg-surface text-slate-600 ring-1 ring-inset ring-slate-300 hover:text-slate-900',
+                    )}
+                  >
+                    {name.slice(0, 2)}
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+          <div className="space-y-2">
+            <Field label="Until">
+              <DateInput
+                value={until}
+                min={date}
+                max={maxUntil}
+                onChange={(day) => onChange({ until: day })}
+              />
+            </Field>
+            <div className="flex flex-wrap gap-1.5">
+              {shortcuts.map(([label, day]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => onChange({ until: day > maxUntil ? maxUntil : day })}
+                  className={cx(
+                    'rounded-full px-2.5 py-1 text-xs font-medium',
+                    until === day
+                      ? 'bg-brand-600 text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {holidayDays.length > 0 && (
+            <label className="flex items-start gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={rule.skipHolidays}
+                onChange={(e) => onChange({ skipHolidays: e.target.checked })}
+                className="mt-0.5 size-4 accent-brand-600"
+              />
+              <span>
+                Skip statutory holidays
+                <span className="block text-xs text-slate-500">
+                  {holidayDays.map((d) => `${holidayNames(d)} (${formatDay(d)})`).join(', ')}
+                </span>
+              </span>
+            </label>
+          )}
+          <p className="flex gap-2 text-sm text-slate-600">
+            <Repeat className="mt-0.5 size-4 shrink-0 text-brand-600" aria-hidden />
+            <span>
+              {occurrences.length === 0 ? (
+                'No days picked in this range.'
+              ) : (
+                <>
+                  <strong className="text-slate-900">
+                    {occurrences.length} shift{occurrences.length === 1 ? '' : 's'}
+                  </strong>
+                  , {formatDay(occurrences[0]!)}
+                  {occurrences.length > 1 && ` – ${formatDay(occurrences.at(-1)!)}`}. Each is its
+                  own shift, so you can still change any single day. Days {personName} already works
+                  or has approved time off are skipped.
+                </>
+              )}
+            </span>
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

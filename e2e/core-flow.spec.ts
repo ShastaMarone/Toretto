@@ -210,3 +210,35 @@ test('the member requests a personal day and the admin approves it', async ({ re
   await member.reload();
   await expect(member.getByText('Approved', { exact: true })).toBeVisible();
 });
+
+test('admin adds a shift that repeats Monday to Friday, typing the times', async () => {
+  await admin.goto('/admin/schedules');
+  // Two weeks out, where Priya has nothing yet.
+  await admin.getByRole('button', { name: 'Next', exact: true }).click();
+  await admin.getByRole('button', { name: 'Next', exact: true }).click();
+  await admin.getByRole('button', { name: /^Add shift for Priya Patel on Mon,/ }).click();
+  const dialog = admin.getByRole('dialog');
+  await dialog.getByLabel('Starts').fill('8am');
+  await dialog.getByLabel('Starts').press('Enter');
+  // "4" after an 8 AM start means 4 PM.
+  await dialog.getByLabel('Ends').fill('4');
+  await dialog.getByLabel('Ends').press('Enter');
+  await expect(dialog.getByLabel('Ends')).toHaveValue('4:00 PM');
+  await dialog.getByLabel('Repeats').selectOption('weekdays');
+  await dialog.getByRole('button', { name: 'Add 5 shifts' }).click();
+  await expect(admin.getByText('Added 5 shifts')).toBeVisible();
+  // Five separate drafts, one per weekday.
+  await expect(admin.getByRole('button', { name: /^8am–4pm, draft$/ })).toHaveCount(5);
+});
+
+test('people can switch to 24-hour times', async () => {
+  await member.goto('/profile');
+  await member.getByLabel('Time format').selectOption('24h');
+  await member.getByRole('button', { name: 'Save changes' }).click();
+  await expect(member.getByText('Profile saved')).toBeVisible();
+  await member.goto('/team');
+  await member.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(
+    member.getByRole('row', { name: /Priya Patel/ }).getByText('09:00–17:00'),
+  ).toBeVisible();
+});

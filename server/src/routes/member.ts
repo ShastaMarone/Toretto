@@ -50,6 +50,7 @@ async function afterConfirm(
         recipientName: admin.name,
         personName: user.name,
         tz: admin.tz,
+        timeFormat: admin.timeFormat,
         shifts: shifts.map((s) => ({
           id: s.id,
           startTime: s.startTime,

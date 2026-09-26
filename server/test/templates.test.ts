@@ -30,6 +30,7 @@ describe('email html', () => {
     const email = scheduleTemplate(ctx, {
       recipientName: 'Jo <b>Bold</b>',
       tz: 'America/Toronto',
+      timeFormat: '12h',
       scheduleName: 'Weekend "A"',
       startDate: '2026-10-05',
       endDate: '2026-10-11',
@@ -51,11 +52,39 @@ describe('email html', () => {
     expect(email.subject).toBe('Your schedule for Oct 5 – 11, 2026');
   });
 
+  it('writes times in 12- or 24-hour format for each reader', () => {
+    const shift = {
+      id: 'shift-1',
+      ...shiftOn('2026-10-06'),
+      labelName: null,
+      color: null,
+      notes: null,
+      needsConfirmation: true,
+    };
+    const input = {
+      recipientName: 'Jo',
+      tz: 'America/Toronto',
+      scheduleName: null,
+      startDate: '2026-10-06',
+      endDate: '2026-10-06',
+      added: [shift],
+      updated: [],
+      removed: [],
+    };
+    const email = scheduleTemplate(ctx, { ...input, timeFormat: '24h' });
+    expect(email.text).toContain('Tue, Oct 6 · 09:00 – 17:00');
+    expect(email.html).toContain('Tue, Oct 6 · 09:00 – 17:00');
+    expect(scheduleTemplate(ctx, { ...input, timeFormat: '12h' }).text).toContain(
+      'Tue, Oct 6 · 9:00 AM – 5:00 PM',
+    );
+  });
+
   it('tells admins who confirmed which shifts', () => {
     const email = shiftsConfirmedTemplate(ctx, {
       recipientName: 'Robin Admin',
       personName: 'Priya <P>',
       tz: 'America/Toronto',
+      timeFormat: '12h',
       shifts: [
         {
           id: 's1',

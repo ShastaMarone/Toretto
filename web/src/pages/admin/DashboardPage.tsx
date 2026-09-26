@@ -38,7 +38,7 @@ import {
   PageHeader,
 } from '../../components/ui/Misc';
 import { cx } from '../../lib/cx';
-import { useBootstrapData, useCurrentUser } from '../../lib/session';
+import { useBootstrapData, useCurrentUser, useTimeFormat } from '../../lib/session';
 
 function greeting(tz: string): string {
   const hour = DateTime.now().setZone(tz).hour;
@@ -117,6 +117,7 @@ export default function DashboardPage() {
   const user = useCurrentUser();
   const { org, devMailbox, emailConfigured } = useBootstrapData();
   const tz = user.timezone ?? org.timezone;
+  const timeFormat = useTimeFormat();
   const overview = useOverview();
 
   if (overview.isLoading) return <LoadingBlock />;
@@ -317,7 +318,9 @@ export default function DashboardPage() {
                         <p className="truncate text-sm font-medium text-slate-900">{userName}</p>
                         <p className="truncate text-xs text-slate-500">
                           Next: {formatDay(localDate(next.startTime, tz))} ·{' '}
-                          {formatTimeRange(next.startTime, next.endTime, tz)}
+                          {formatTimeRange(next.startTime, next.endTime, tz, {
+                            format: timeFormat,
+                          })}
                         </p>
                       </div>
                       <span className="flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-amber-700">

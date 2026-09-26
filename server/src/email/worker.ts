@@ -1,7 +1,8 @@
+import type { TimeFormat } from '@shared/types';
 import type { Config } from '../config';
 import { withTransaction, type Db } from '../db';
 import type { Logger } from '../logger';
-import { getSettings, zoneFor } from '../services/settings';
+import { getSettings, timeFormatFor, zoneFor } from '../services/settings';
 import { enqueueEmail } from './outbox';
 import { reminderTemplate, type EmailShift } from './templates';
 import type { Mailer } from './transport';
@@ -102,6 +103,7 @@ interface ReminderRow {
   userName: string;
   userEmail: string;
   userTimezone: string | null;
+  userTimeFormat: TimeFormat | null;
   startTime: string;
   endTime: string;
   notes: string | null;
@@ -134,7 +136,8 @@ export async function queueReminders(db: Db, config: Config, now = new Date()): 
           RETURNING s.id, s.published_user_id, s.published_label_id,
                     s.published_start_time, s.published_end_time, s.published_notes)
        SELECT due.id, u.id AS "userId", u.name AS "userName", u.email AS "userEmail",
-              u.timezone AS "userTimezone", due.published_start_time AS "startTime",
+              u.timezone AS "userTimezone", u.time_format AS "userTimeFormat",
+              due.published_start_time AS "startTime",
               due.published_end_time AS "endTime", due.published_notes AS notes,
               l.name AS "labelName", COALESCE(l.color, t.color) AS color
          FROM due
@@ -163,7 +166,12 @@ export async function queueReminders(db: Db, config: Config, now = new Date()): 
         userId: first.userId,
         to: first.userEmail,
         kind: 'shift_reminder',
-        email: reminderTemplate(ctx, { recipientName: first.userName, tz, shifts: emailShifts }),
+        email: reminderTemplate(ctx, {
+          recipientName: first.userName,
+          tz,
+          timeFormat: timeFormatFor({ timeFormat: first.userTimeFormat }, settings),
+          shifts: emailShifts,
+        }),
         shiftIds: shifts.map((s) => s.id),
       });
     }

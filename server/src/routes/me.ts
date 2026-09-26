@@ -15,6 +15,7 @@ export function meRoutes({ db }: AppDeps): Router {
       z.object({
         name: zName('Name', 100).optional(),
         timezone: zTimezone.nullable().optional(),
+        timeFormat: z.enum(['12h', '24h']).nullable().optional(),
         notifyTimeOff: z.boolean().optional(),
         notifyConfirmations: z.boolean().optional(),
       }),
@@ -25,7 +26,8 @@ export function meRoutes({ db }: AppDeps): Router {
       `UPDATE users SET name = COALESCE($2, name),
                         timezone = CASE WHEN $3 THEN $4 ELSE timezone END,
                         notify_time_off = COALESCE($5, notify_time_off),
-                        notify_confirmations = COALESCE($6, notify_confirmations)
+                        notify_confirmations = COALESCE($6, notify_confirmations),
+                        time_format = CASE WHEN $7 THEN $8 ELSE time_format END
         WHERE id = $1`,
       [
         user.id,
@@ -34,6 +36,8 @@ export function meRoutes({ db }: AppDeps): Router {
         body.timezone ?? null,
         body.notifyTimeOff ?? null,
         body.notifyConfirmations ?? null,
+        body.timeFormat !== undefined,
+        body.timeFormat ?? null,
       ],
     );
     res.json({ user: toSessionUser(await loadAuthUser(db, user.id)) });

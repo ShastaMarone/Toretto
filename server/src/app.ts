@@ -62,6 +62,7 @@ export function createApp(deps: AppDeps): express.Express {
         timezone: settings.timezone,
         weekStartsOn: settings.weekStartsOn,
         holidayRegion: settings.holidayRegion,
+        timeFormat: settings.timeFormat,
       },
       setupRequired: !(await hasAnyUsers(db)),
       selfSignup: settings.selfSignup,

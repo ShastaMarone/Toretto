@@ -12,12 +12,20 @@ describe('migrations', () => {
     const db = createPool(TEST_DB_URL, { searchPath: schema, max: 4 });
     try {
       const results = await Promise.all([migrate(db), migrate(db), migrate(db)]);
-      expect(results.flat()).toEqual(['001_initial.sql', '002_continuous_schedules.sql']);
+      expect(results.flat()).toEqual([
+        '001_initial.sql',
+        '002_continuous_schedules.sql',
+        '003_time_format.sql',
+      ]);
       // Exactly one instance did the work.
       expect(results.filter((r) => r.length > 0)).toHaveLength(1);
       expect(await migrate(db)).toEqual([]);
       const { rows } = await db.query('SELECT name FROM schema_migrations ORDER BY name');
-      expect(rows.map((r) => r.name)).toEqual(['001_initial.sql', '002_continuous_schedules.sql']);
+      expect(rows.map((r) => r.name)).toEqual([
+        '001_initial.sql',
+        '002_continuous_schedules.sql',
+        '003_time_format.sql',
+      ]);
     } finally {
       await db.end();
       await root.query(`DROP SCHEMA ${schema} CASCADE`);

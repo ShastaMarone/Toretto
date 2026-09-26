@@ -184,6 +184,7 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
         holidayRegion: z
           .enum(HOLIDAY_REGIONS.map((r) => r.value) as [HolidayRegion, ...HolidayRegion[]])
           .optional(),
+        timeFormat: z.enum(['12h', '24h']).optional(),
       }),
       req.body,
     );
@@ -196,7 +197,7 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
           SET org_name = COALESCE($1, org_name), timezone = COALESCE($2, timezone),
               week_starts_on = COALESCE($3, week_starts_on), reminder_hours = COALESCE($4, reminder_hours),
               self_signup = COALESCE($5, self_signup), allowed_domains = COALESCE($6, allowed_domains),
-              holiday_region = COALESCE($7, holiday_region)`,
+              holiday_region = COALESCE($7, holiday_region), time_format = COALESCE($8, time_format)`,
       [
         body.orgName ?? null,
         body.timezone ?? null,
@@ -205,6 +206,7 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
         body.selfSignup ?? null,
         domains ? [...new Set(domains)] : null,
         body.holidayRegion ?? null,
+        body.timeFormat ?? null,
       ],
     );
     await audit(db, req.user!.id, 'settings.updated', { type: 'org' }, body);
