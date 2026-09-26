@@ -57,7 +57,7 @@ You need **Node.js 22.22+** and **PostgreSQL 14+** (or Docker).
 ```bash
 npm install
 cp .env.example .env
-docker compose up -d db        # or use any Postgres; set DATABASE_URL in .env
+docker compose up -d --wait db # or use any Postgres; set DATABASE_URL in .env
 npm run seed                   # optional: demo team, schedules and time off
 npm run dev                    # API on :3001, web app on http://localhost:5173
 ```
