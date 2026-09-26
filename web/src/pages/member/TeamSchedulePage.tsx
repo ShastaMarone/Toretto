@@ -4,24 +4,18 @@ import {
   formatDay,
   formatHours,
   formatTimeRange,
-  isWeekend,
   todayIn,
   type ISODate,
 } from '@shared/time';
-import type { PersonRow, ShiftView, Tier, TimeOffEntry } from '@shared/types';
+import type { PersonRow, ShiftView, Tier } from '@shared/types';
 import type { Holiday } from '@shared/holidays';
 import { DateTime } from 'luxon';
 import { Users } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useSearchParams } from 'react-router';
 import { useTeamSchedule, useTeams, useTiers } from '../../api/queries';
-import {
-  CalendarNav,
-  DayHeader,
-  GroupRows,
-  HolidayBadge,
-  TierFilter,
-} from '../../components/schedule/CalendarBits';
+import { CalendarNav, HolidayBadge, TierFilter } from '../../components/schedule/CalendarBits';
+import { ScheduleGrid } from '../../components/schedule/ScheduleGrid';
 import { ScheduleLegend, ShiftChip, TimeOffChip } from '../../components/schedule/ShiftChip';
 import { Select } from '../../components/ui/Form';
 import {
@@ -50,7 +44,6 @@ import {
 } from '../../lib/schedule';
 import { useBootstrapData, useCurrentUser, useTimeFormat, useViewerZone } from '../../lib/session';
 import { zoneLabel } from '../../lib/timezones';
-import { useScrollToToday } from '../../lib/useScrollToToday';
 
 const VIEW_KEY = 'toretto:team-view';
 const NO_TIERS: Tier[] = [];
@@ -153,12 +146,9 @@ function TeamCalendar({
   const { org } = useBootstrapData();
   const days = useMemo(() => eachDay(from, to), [from, to]);
   const compact = days.length > 14;
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const tiers = useTiers();
   const teams = useTeams();
   const schedule = useTeamSchedule(from, to);
-  // The grid appears once the first load finishes.
-  const scroller = useScrollToToday<HTMLDivElement>(`${from}:${to}:${schedule.isSuccess}`);
   const holidays = useHolidays(from, to);
   const data = schedule.data;
   const tierList = tiers.data ?? NO_TIERS;
@@ -267,89 +257,66 @@ function TeamCalendar({
       ) : (
         <>
           {/* Desktop / tablet: people × days grid */}
-          <Card className="hidden overflow-hidden md:block">
-            <div ref={scroller} className="overflow-x-auto scrollbar-thin">
-              <table
-                className="w-full table-fixed border-collapse text-sm"
-                style={{ minWidth: compact ? 200 + days.length * 78 : 200 + days.length * 110 }}
-              >
-                <colgroup>
-                  <col className="w-52" />
-                  {days.map((d) => (
-                    <col key={d} />
+          <ScheduleGrid
+            className="hidden md:block"
+            days={days}
+            today={today}
+            holidays={holidays}
+            compact={compact}
+            groups={groups}
+            dayWidth={[78, 110]}
+            rowHeight="h-16"
+            highlight={(person) => person.id === me.id}
+            daySummary={(d) => {
+              const working = new Set((byDay.get(d) ?? []).map((s) => s.userId)).size;
+              if (!working) return '—';
+              return compact ? String(working) : `${working} working`;
+            }}
+            groupHours={(group) => {
+              const ids = new Set(group.people.map((p) => p.id));
+              return formatHours(totalHours(shifts.filter((s) => ids.has(s.userId))));
+            }}
+            renderPerson={(person) => {
+              const all = [...(byUserDay.get(person.id)?.values() ?? [])].flat();
+              return (
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={person.name} size="sm" />
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1.5 text-sm font-medium text-slate-900">
+                      <span className="truncate">{person.name}</span>
+                      {person.id === me.id && <Badge tone="brand">You</Badge>}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {all.length ? formatHours(totalHours(all)) : `Off this ${periodWord}`}
+                    </p>
+                  </div>
+                </div>
+              );
+            }}
+            renderCell={(person, day) => {
+              const off = offByUserDay.get(person.id)?.get(day);
+              return (
+                <div className="flex flex-col gap-1">
+                  {off && <TimeOffChip entry={off} compact={compact} />}
+                  {(byUserDay.get(person.id)?.get(day) ?? []).map((s) => (
+                    <ShiftChip
+                      key={s.id}
+                      shift={s}
+                      tz={tz}
+                      compact={compact}
+                      color={shiftColor(s)}
+                      labelName={compact ? null : s.label?.name}
+                      caption={
+                        manySchedules && !scheduleFilter && !compact ? s.scheduleName : undefined
+                      }
+                      status={s.status}
+                      mine={person.id === me.id}
+                    />
                   ))}
-                </colgroup>
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/70">
-                    <th
-                      scope="col"
-                      className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left align-top text-xs font-semibold text-slate-500"
-                    >
-                      {people.length} {people.length === 1 ? 'person' : 'people'}
-                    </th>
-                    {days.map((d) => {
-                      const working = new Set((byDay.get(d) ?? []).map((s) => s.userId)).size;
-                      return (
-                        <DayHeader
-                          key={d}
-                          day={d}
-                          today={today}
-                          holidays={holidays.get(d)}
-                          compact={compact}
-                          summary={
-                            working ? (compact ? String(working) : `${working} working`) : '—'
-                          }
-                        />
-                      );
-                    })}
-                  </tr>
-                </thead>
-                <tbody>
-                  {groups.map((group) => {
-                    const isCollapsed = collapsed.has(group.key);
-                    const ids = new Set(group.people.map((p) => p.id));
-                    return (
-                      <GroupRows
-                        key={group.key}
-                        label={group.tier?.name ?? 'No tier'}
-                        color={group.tier?.color ?? 'var(--color-slate-400)'}
-                        count={group.people.length}
-                        hours={formatHours(totalHours(shifts.filter((s) => ids.has(s.userId))))}
-                        colSpan={days.length + 1}
-                        collapsed={isCollapsed}
-                        onToggle={() =>
-                          setCollapsed((c) => {
-                            const next = new Set(c);
-                            if (next.has(group.key)) next.delete(group.key);
-                            else next.add(group.key);
-                            return next;
-                          })
-                        }
-                      >
-                        {!isCollapsed &&
-                          group.people.map((person) => (
-                            <TeamRow
-                              key={person.id}
-                              person={person}
-                              isMe={person.id === me.id}
-                              days={days}
-                              today={today}
-                              tz={tz}
-                              compact={compact}
-                              periodWord={periodWord}
-                              holidays={holidays}
-                              showSchedule={manySchedules && !scheduleFilter}
-                              byDay={byUserDay.get(person.id)}
-                              offByDay={offByUserDay.get(person.id)}
-                            />
-                          ))}
-                      </GroupRows>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                </div>
+              );
+            }}
+          />
 
           {/* Phones: agenda by day */}
           <div className="space-y-4 md:hidden">
@@ -383,89 +350,6 @@ function TeamCalendar({
         </>
       )}
     </>
-  );
-}
-
-function TeamRow({
-  person,
-  isMe,
-  days,
-  today,
-  tz,
-  compact,
-  periodWord,
-  holidays,
-  showSchedule,
-  byDay,
-  offByDay,
-}: {
-  person: PersonRow;
-  isMe: boolean;
-  days: ISODate[];
-  today: ISODate;
-  tz: string;
-  compact: boolean;
-  periodWord: string;
-  holidays: Map<ISODate, Holiday[]>;
-  showSchedule: boolean;
-  byDay: Map<ISODate, ShiftView[]> | undefined;
-  offByDay: Map<ISODate, TimeOffEntry> | undefined;
-}) {
-  const all = [...(byDay?.values() ?? [])].flat();
-  return (
-    <tr className={cx('border-b border-slate-100', isMe && 'bg-brand-50/40')}>
-      <th
-        scope="row"
-        className={cx(
-          'sticky left-0 z-10 px-4 py-2 text-left font-normal',
-          isMe ? 'bg-brand-50' : 'bg-surface',
-        )}
-      >
-        <div className="flex items-center gap-2.5">
-          <Avatar name={person.name} size="sm" />
-          <div className="min-w-0">
-            <p className="flex items-center gap-1.5 text-sm font-medium text-slate-900">
-              <span className="truncate">{person.name}</span>
-              {isMe && <Badge tone="brand">You</Badge>}
-            </p>
-            <p className="text-xs text-slate-500">
-              {all.length ? formatHours(totalHours(all)) : `Off this ${periodWord}`}
-            </p>
-          </div>
-        </div>
-      </th>
-      {days.map((day) => {
-        const off = offByDay?.get(day);
-        return (
-          <td
-            key={day}
-            className={cx(
-              'h-16 border-l border-slate-100 p-1 align-top',
-              isWeekend(day) && 'bg-slate-50/40',
-              holidays.has(day) && 'bg-rose-50/30',
-              day === today && 'bg-brand-50/40',
-            )}
-          >
-            <div className="flex flex-col gap-1">
-              {off && <TimeOffChip entry={off} compact={compact} />}
-              {(byDay?.get(day) ?? []).map((s) => (
-                <ShiftChip
-                  key={s.id}
-                  shift={s}
-                  tz={tz}
-                  compact={compact}
-                  color={shiftColor(s)}
-                  labelName={compact ? null : s.label?.name}
-                  caption={showSchedule && !compact ? s.scheduleName : undefined}
-                  status={s.status}
-                  mine={isMe}
-                />
-              ))}
-            </div>
-          </td>
-        );
-      })}
-    </tr>
   );
 }
 

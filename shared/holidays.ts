@@ -41,9 +41,6 @@ export const HOLIDAY_REGIONS: { value: HolidayRegion; label: string }[] = [
   { value: 'none', label: "Don't show holidays" },
 ];
 
-export const isHolidayRegion = (value: string): value is HolidayRegion =>
-  HOLIDAY_REGIONS.some((r) => r.value === value);
-
 export interface Holiday {
   date: ISODate;
   name: string;
