@@ -1,0 +1,234 @@
+import { addDays } from '@shared/time';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { enqueueEmail } from '../src/email/outbox';
+import type { Mailer, OutgoingEmail } from '../src/email/transport';
+import { createWorker, MAX_ATTEMPTS, processOutbox, queueReminders } from '../src/email/worker';
+import { createLogger } from '../src/logger';
+import {
+  clearEmails,
+  createTestContext,
+  createTier,
+  createUser,
+  emails,
+  login,
+  nextMonday,
+  shiftOn,
+  type TestContext,
+} from './helpers';
+
+let ctx: TestContext;
+const silent = createLogger('silent');
+
+function fakeMailer(opts: { fail?: boolean } = {}) {
+  const sent: OutgoingEmail[] = [];
+  const mailer: Mailer = {
+    async send(message) {
+      if (opts.fail) throw new Error('SMTP is down');
+      sent.push(message);
+      return { messageId: `msg-${sent.length}` };
+    },
+  };
+  return { mailer, sent };
+}
+
+const email = { subject: 'Hello', html: '<p>Hello</p>', text: 'Hello' };
+
+beforeAll(async () => {
+  ctx = await createTestContext();
+});
+afterAll(async () => {
+  await ctx.close();
+});
+beforeEach(() => clearEmails(ctx.db));
+
+describe('email outbox', () => {
+  it('delivers queued emails and records the provider id', async () => {
+    await enqueueEmail(ctx.db, { userId: null, to: 'a@example.com', kind: 'invite', email });
+    await enqueueEmail(ctx.db, { userId: null, to: 'b@example.com', kind: 'invite', email });
+    const { mailer, sent } = fakeMailer();
+    expect(await processOutbox(ctx.db, mailer, silent)).toBe(2);
+    expect(sent.map((m) => m.to).sort()).toEqual(['a@example.com', 'b@example.com']);
+    const { rows } = await ctx.db.query(
+      'SELECT status, provider_message_id, sent_at FROM notifications',
+    );
+    expect(rows.every((r) => r.status === 'sent' && r.provider_message_id && r.sent_at)).toBe(true);
+    expect(await processOutbox(ctx.db, mailer, silent)).toBe(0);
+  });
+
+  it('retries with backoff and gives up after the last attempt', async () => {
+    const id = await enqueueEmail(ctx.db, {
+      userId: null,
+      to: 'c@example.com',
+      kind: 'invite',
+      email,
+    });
+    const { mailer } = fakeMailer({ fail: true });
+    await processOutbox(ctx.db, mailer, silent);
+    let { rows } = await ctx.db.query(
+      `SELECT status, attempts, last_error, run_after > now() AS later FROM notifications WHERE id = $1`,
+      [id],
+    );
+    expect(rows[0]).toMatchObject({
+      status: 'queued',
+      attempts: 1,
+      last_error: 'SMTP is down',
+      later: true,
+    });
+
+    for (let i = 1; i < MAX_ATTEMPTS; i++) {
+      await ctx.db.query('UPDATE notifications SET run_after = now() WHERE id = $1', [id]);
+      await processOutbox(ctx.db, mailer, silent);
+    }
+    ({ rows } = await ctx.db.query('SELECT status, attempts FROM notifications WHERE id = $1', [
+      id,
+    ]));
+    expect(rows[0]).toMatchObject({ status: 'failed', attempts: MAX_ATTEMPTS });
+
+    // Admins can retry failed emails from the email log.
+    const admin = await createUser(ctx.db, { name: 'Retry Admin', role: 'admin' });
+    const agent = ctx.agent();
+    await login(agent, admin.email);
+    await agent.post(`/api/admin/notifications/${id}/retry`).expect(204);
+    const ok = fakeMailer();
+    await processOutbox(ctx.db, ok.mailer, silent);
+    expect(ok.sent.map((m) => m.to)).toContain('c@example.com');
+  });
+
+  it('recovers emails stuck in "sending" after a crash', async () => {
+    const id = await enqueueEmail(ctx.db, {
+      userId: null,
+      to: 'd@example.com',
+      kind: 'invite',
+      email,
+    });
+    await ctx.db.query(
+      `UPDATE notifications SET status = 'sending', locked_at = now() - interval '11 minutes' WHERE id = $1`,
+      [id],
+    );
+    const { mailer, sent } = fakeMailer();
+    await processOutbox(ctx.db, mailer, silent);
+    expect(sent.map((m) => m.to)).toEqual(['d@example.com']);
+  });
+
+  it('never re-sends rows another worker took over while this one looked stuck', async () => {
+    const first = await enqueueEmail(ctx.db, {
+      userId: null,
+      to: 'slow@example.com',
+      kind: 'invite',
+      email,
+    });
+    const second = await enqueueEmail(ctx.db, {
+      userId: null,
+      to: 'next@example.com',
+      kind: 'invite',
+      email,
+    });
+    // The slow one is older, so worker A sends it first.
+    await ctx.db.query(
+      `UPDATE notifications SET created_at = created_at + interval '1 second' WHERE id = $1`,
+      [second],
+    );
+    let release!: () => void;
+    const hung = new Promise<void>((resolve) => (release = resolve));
+    const slowSent: string[] = [];
+    const slow: Mailer = {
+      async send(message) {
+        if (message.to === 'slow@example.com') await hung;
+        slowSent.push(message.to);
+        return { messageId: 'slow' };
+      },
+    };
+    // Worker A claims both and hangs on the first send…
+    const workerA = processOutbox(ctx.db, slow, silent);
+    await new Promise((r) => setTimeout(r, 100));
+    // …long enough that worker B treats the batch as stuck and delivers it.
+    await ctx.db.query(
+      `UPDATE notifications SET locked_at = now() - interval '11 minutes' WHERE id = ANY($1)`,
+      [[first, second]],
+    );
+    const b = fakeMailer();
+    await processOutbox(ctx.db, b.mailer, silent);
+    expect(b.sent.map((m) => m.to).sort()).toEqual(['next@example.com', 'slow@example.com']);
+
+    release();
+    await workerA;
+    // A finishes its in-flight send, but must not touch the second email or B's results.
+    expect(slowSent).toEqual(['slow@example.com']);
+    const { rows } = await ctx.db.query(
+      `SELECT status, provider_message_id FROM notifications WHERE id = ANY($1)`,
+      [[first, second]],
+    );
+    expect(rows.map((r) => r.status)).toEqual(['sent', 'sent']);
+    expect(rows.every((r) => r.provider_message_id !== 'slow')).toBe(true);
+  });
+
+  it('runs in the background and wakes up when kicked', async () => {
+    const { mailer, sent } = fakeMailer();
+    const worker = createWorker({
+      db: ctx.db,
+      mailer,
+      logger: silent,
+      config: { ...ctx.config, workerPollMs: 60_000 },
+    });
+    worker.start();
+    try {
+      await new Promise((r) => setTimeout(r, 100));
+      await enqueueEmail(ctx.db, { userId: null, to: 'e@example.com', kind: 'invite', email });
+      worker.kick();
+      for (let i = 0; i < 50 && sent.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+      expect(sent.map((m) => m.to)).toEqual(['e@example.com']);
+    } finally {
+      await worker.stop();
+    }
+  });
+});
+
+describe('confirmation reminders', () => {
+  it('reminds people once about shifts still unconfirmed after the configured delay', async () => {
+    const tier = await createTier(ctx.db, 'Tier R');
+    const adminUser = await createUser(ctx.db, { name: 'Rem Admin', role: 'admin' });
+    const pat = await createUser(ctx.db, { name: 'Pat Pending', tierId: tier });
+    const cora = await createUser(ctx.db, { name: 'Cora Confirmed', tierId: tier });
+    const admin = ctx.agent();
+    await login(admin, adminUser.email);
+    const monday = nextMonday();
+    const { body } = await admin
+      .post('/api/schedules')
+      .send({ tierId: tier, startDate: monday, endDate: addDays(monday, 6) });
+    const id = body.schedule.id;
+    for (const [user, d] of [
+      [pat, 0],
+      [pat, 1],
+      [cora, 0],
+    ] as const) {
+      await admin
+        .post(`/api/schedules/${id}/shifts`)
+        .send({ userId: user.id, ...shiftOn(addDays(monday, d)) })
+        .expect(201);
+    }
+    await admin.post(`/api/schedules/${id}/publish`).expect(200);
+    const coraAgent = ctx.agent();
+    await login(coraAgent, cora.email);
+    await coraAgent.post('/api/my/shifts/confirm').send({ scheduleId: id }).expect(200);
+    await clearEmails(ctx.db);
+
+    // Too soon: nothing yet.
+    expect(await queueReminders(ctx.db, ctx.config)).toBe(0);
+
+    const later = new Date(Date.now() + 25 * 3_600_000);
+    expect(await queueReminders(ctx.db, ctx.config, later)).toBe(1);
+    const [reminder] = await emails(ctx.db, { kind: 'shift_reminder' });
+    expect(reminder!.toEmail).toBe(pat.email);
+    expect(reminder!.subject).toBe('Reminder: please confirm your 2 upcoming shifts');
+    expect(reminder!.shiftIds).toHaveLength(2);
+
+    // Only once per shift.
+    expect(await queueReminders(ctx.db, ctx.config, later)).toBe(0);
+
+    // A re-published change resets the reminder.
+    await ctx.db.query(`UPDATE org_settings SET reminder_hours = 0`);
+    expect(await queueReminders(ctx.db, ctx.config, new Date(Date.now() + 100 * 3_600_000))).toBe(
+      0,
+    );
+  });
+});

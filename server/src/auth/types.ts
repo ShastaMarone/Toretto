@@ -1,0 +1,17 @@
+import type { Role } from '@shared/types';
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  tierId: string | null;
+  teamId: string | null;
+  timezone: string | null;
+  hasPassword: boolean;
+}
+
+/** SQL select list producing an AuthUser from `users u`. */
+export const AUTH_USER_COLUMNS = `
+  u.id, u.name, u.email, u.role, u.tier_id AS "tierId", u.team_id AS "teamId",
+  u.timezone, (u.password_hash IS NOT NULL) AS "hasPassword"`;
