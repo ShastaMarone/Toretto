@@ -15,6 +15,7 @@ import { catalogRoutes } from './routes/catalog';
 import { meRoutes } from './routes/me';
 import { myRoutes, teamRoutes } from './routes/member';
 import { scheduleRoutes, shiftRoutes } from './routes/schedules';
+import { mySwapRoutes, swapAdminRoutes } from './routes/swaps';
 import { userRoutes } from './routes/users';
 import { getSettings } from './services/settings';
 
@@ -89,6 +90,7 @@ export function createApp(deps: AppDeps): express.Express {
   api.use('/dev', devRoutes(deps));
   api.use('/calendar', calendarRoutes(deps));
   api.use('/me', requireAuth, meRoutes(deps));
+  api.use('/my/swaps', requireAuth, mySwapRoutes(deps));
   api.use('/my', requireAuth, myRoutes(deps));
   api.use('/team', requireAuth, teamRoutes(deps));
   api.use('/tiers', requireAuth, catalog.tiers);
@@ -99,6 +101,7 @@ export function createApp(deps: AppDeps): express.Express {
   api.use('/schedules', requireAdmin, scheduleRoutes(deps));
   api.use('/shifts', requireAdmin, shiftRoutes(deps));
   api.use('/time-off', requireAdmin, timeOffAdminRoutes(deps));
+  api.use('/swaps', requireAdmin, swapAdminRoutes(deps));
   api.use('/admin', requireAdmin, adminRoutes(deps));
   api.use((_req, _res, next) => next(notFound('API endpoint')));
   app.use('/api', api);

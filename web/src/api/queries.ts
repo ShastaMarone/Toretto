@@ -9,6 +9,7 @@ import type {
   Person,
   ScheduleRange,
   ScheduleSummary,
+  ShiftSwap,
   ShiftView,
   Team,
   TeamSchedule,
@@ -37,6 +38,8 @@ export const keys = {
   notifications: (status: string) => ['notifications', status] as const,
   settings: ['settings'] as const,
   calendarFeed: ['calendar-feed'] as const,
+  mySwaps: ['my-swaps'] as const,
+  swaps: ['swaps'] as const,
 };
 
 export const useBootstrap = () =>
@@ -103,3 +106,7 @@ export const useSettings = () =>
   useQuery({ queryKey: keys.settings, queryFn: () => api.get<OrgSettings>('/admin/settings') });
 export const useCalendarFeed = () =>
   useQuery({ queryKey: keys.calendarFeed, queryFn: () => api.get<CalendarFeed>('/me/calendar') });
+export const useMySwaps = () =>
+  useQuery({ queryKey: keys.mySwaps, queryFn: () => api.get<ShiftSwap[]>('/my/swaps') });
+export const useSwaps = () =>
+  useQuery({ queryKey: keys.swaps, queryFn: () => api.get<ShiftSwap[]>('/swaps') });

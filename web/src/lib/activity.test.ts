@@ -78,6 +78,22 @@ describe('describeActivity', () => {
     );
   });
 
+  it('describes shift swaps', () => {
+    const { startTime, endTime } = shiftTimesFromLocal('2026-10-06', '09:00', '17:00', TZ);
+    expect(
+      describeActivity(
+        entry('swap.requested', { recipientName: 'Bo', startTime, endTime, trade: true }),
+        TZ,
+      ),
+    ).toBe('offered Bo their shift Tue, Oct 6 · 9:00 AM – 5:00 PM as a trade');
+    expect(
+      describeActivity(
+        entry('swap.approved', { requesterName: 'Ana', recipientName: 'Bo', startTime, endTime }),
+        TZ,
+      ),
+    ).toBe("approved Ana and Bo's swap (Tue, Oct 6 · 9:00 AM – 5:00 PM)");
+  });
+
   it('describes renaming and copying', () => {
     expect(
       describeActivity(entry('schedule.renamed', { title: 'Holidays', previous: 'Extra' }), TZ),

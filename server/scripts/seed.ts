@@ -12,6 +12,7 @@ import { seedDefaults } from '../src/services/defaults';
 import { publishSchedule } from '../src/services/publish';
 import { copyShifts, ensureDefaultSchedule } from '../src/services/schedules';
 import { createShift } from '../src/services/shifts';
+import { requestSwap, respondToSwap } from '../src/services/swaps';
 
 const { values } = parseArgs({
   options: {
@@ -388,6 +389,36 @@ for (const t of timeOff) {
     ],
   );
 }
+
+// ---- Swaps: one waiting for Sam, one waiting for an admin -------------------
+const authUser = async (person: string) =>
+  (
+    await db.query<AuthUser>(`SELECT ${AUTH_USER_COLUMNS} FROM users u WHERE u.id = $1`, [
+      ids[person],
+    ])
+  ).rows[0]!;
+const shiftOnDay = async (person: string, date: string) => {
+  const { from, to } = dayRangeToUtc(date, date, timezone);
+  const { rows } = await db.query<{ id: string }>(
+    `SELECT id FROM shifts WHERE published_user_id = $1
+        AND published_start_time >= $2 AND published_start_time < $3`,
+    [ids[person], from, to],
+  );
+  return rows[0]!.id;
+};
+await requestSwap(db, config, await authUser('priya'), {
+  shiftId: await shiftOnDay('priya', n[0]!),
+  recipientId: ids.sam!,
+  returnShiftId: null,
+  note: 'Dentist that morning',
+});
+const morganSwap = await requestSwap(db, config, await authUser('morgan'), {
+  shiftId: await shiftOnDay('morgan', n[3]!),
+  recipientId: ids.riley!,
+  returnShiftId: null,
+  note: null,
+});
+await respondToSwap(db, config, await authUser('riley'), morganSwap.id, 'accept');
 
 // Demo emails are already "delivered" so nothing gets sent to example.com.
 await db.query(`UPDATE notifications SET status = 'sent', sent_at = now() WHERE status = 'queued'`);

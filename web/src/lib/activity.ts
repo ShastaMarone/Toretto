@@ -11,6 +11,13 @@ function range(d: Record<string, unknown>, tz: string, format: TimeFormat): stri
   return d.startDate && d.endDate ? formatDateRange(str(d.startDate), str(d.endDate)) : '';
 }
 
+/** "Mon, Oct 5 · 9:00 AM – 5:00 PM" from startTime/endTime details. */
+function shiftWhen(d: Record<string, unknown>, tz: string, format: TimeFormat): string {
+  return d.startTime && d.endTime
+    ? formatShiftWhen(str(d.startTime), str(d.endTime), tz, format)
+    : '';
+}
+
 function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
@@ -76,6 +83,18 @@ export function describeActivity(
       return `cancelled their ${str(d.typeName)}, ${range(d, tz, format)}`;
     case 'time_off.added':
       return `added ${str(d.typeName)} for ${str(d.personName)}, ${range(d, tz, format)}`;
+    case 'swap.requested':
+      return `offered ${str(d.recipientName)} their shift ${shiftWhen(d, tz, format)}${d.trade ? ' as a trade' : ''}`;
+    case 'swap.accepted':
+      return `agreed to take ${str(d.requesterName)}'s shift ${shiftWhen(d, tz, format)}`;
+    case 'swap.declined':
+      return `declined ${str(d.requesterName)}'s swap request`;
+    case 'swap.cancelled':
+      return `withdrew their swap request to ${str(d.recipientName)}`;
+    case 'swap.approved':
+      return `approved ${str(d.requesterName)} and ${str(d.recipientName)}'s swap (${shiftWhen(d, tz, format)})`;
+    case 'swap.denied':
+      return `declined ${str(d.requesterName)} and ${str(d.recipientName)}'s swap`;
     case 'user.invited':
       return `invited ${str(d.name)} (${str(d.email)})`;
     case 'user.invite_resent':

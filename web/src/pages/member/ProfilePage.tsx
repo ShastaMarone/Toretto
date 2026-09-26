@@ -49,8 +49,11 @@ export default function ProfilePage() {
     },
   });
   const saveNotifications = useMutation({
-    mutationFn: (patch: { notifyTimeOff?: boolean; notifyConfirmations?: boolean }) =>
-      api.patch<{ user: SessionUser }>('/me', patch),
+    mutationFn: (patch: {
+      notifyTimeOff?: boolean;
+      notifyConfirmations?: boolean;
+      notifySwaps?: boolean;
+    }) => api.patch<{ user: SessionUser }>('/me', patch),
     onSuccess: ({ user }) => {
       setSessionUser(user);
       toast.success('Email preferences saved');
@@ -157,6 +160,13 @@ export default function ProfilePage() {
                 }
                 label="Shift confirmations"
                 description="When someone confirms one or more of their shifts."
+              />
+              <Toggle
+                checked={user.notifySwaps}
+                disabled={saveNotifications.isPending}
+                onChange={(notifySwaps) => saveNotifications.mutate({ notifySwaps })}
+                label="Shift swaps"
+                description="When coworkers agree to a swap that needs your approval."
               />
             </div>
           </Card>

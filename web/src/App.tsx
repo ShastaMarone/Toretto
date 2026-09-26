@@ -23,6 +23,7 @@ const SchedulesIndex = lazy(() =>
 );
 const TimeOffAdminPage = lazy(() => import('./pages/admin/TimeOffAdminPage'));
 const HoursPage = lazy(() => import('./pages/admin/HoursPage'));
+const ShiftRequestsPage = lazy(() => import('./pages/admin/ShiftRequestsPage'));
 const PeoplePage = lazy(() => import('./pages/admin/PeoplePage'));
 const TiersLabelsPage = lazy(() => import('./pages/admin/TiersLabelsPage'));
 const ActivityPage = lazy(() => import('./pages/admin/ActivityPage'));
@@ -85,6 +86,7 @@ export default function App() {
               <Route path="schedules/:id" element={<ScheduleBuilderPage />} />
               <Route path="time-off" element={<TimeOffAdminPage />} />
               <Route path="hours" element={<HoursPage />} />
+              <Route path="shift-requests" element={<ShiftRequestsPage />} />
               <Route path="people" element={<PeoplePage />} />
               <Route path="tiers" element={<TiersLabelsPage />} />
               <Route path="activity" element={<ActivityPage />} />

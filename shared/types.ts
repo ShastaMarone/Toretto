@@ -40,6 +40,8 @@ export interface SessionUser {
   notifyTimeOff: boolean;
   /** Admins: email me when someone confirms shifts. */
   notifyConfirmations: boolean;
+  /** Admins: email me about shift swaps and open shifts to approve. */
+  notifySwaps: boolean;
 }
 
 /** Someone's calendar feed link, or null while it's turned off. */
@@ -284,6 +286,58 @@ export interface TimeOffRequest {
   createdAt: string;
   /** Admin view only: scheduled shifts that overlap the requested days. */
   conflicts?: number;
+}
+
+export type SwapStatus =
+  /** Waiting for the coworker. */
+  | 'pending'
+  /** The coworker agreed; waiting for an admin. */
+  | 'accepted'
+  | 'approved'
+  /** The coworker said no. */
+  | 'declined'
+  /** An admin said no. */
+  | 'denied'
+  | 'cancelled'
+  /** A shift started before it was settled. */
+  | 'expired';
+
+/** A shift in a swap, as published. */
+export interface SwapShift {
+  id: string;
+  startTime: string;
+  endTime: string;
+  labelName: string | null;
+  /** The label's color, else the owner's tier's. */
+  color: string | null;
+  scheduleName: string;
+}
+
+export interface ShiftSwap {
+  id: string;
+  status: SwapStatus;
+  requester: { id: string; name: string };
+  recipient: { id: string; name: string };
+  /** The requester's shift, offered to the recipient. */
+  shift: SwapShift;
+  /** A trade: the recipient's shift the requester takes in return. */
+  returnShift: SwapShift | null;
+  note: string | null;
+  reviewNote: string | null;
+  reviewedByName: string | null;
+  createdAt: string;
+  respondedAt: string | null;
+  reviewedAt: string | null;
+}
+
+/** A coworker who could take a shift. */
+export interface SwapOption {
+  id: string;
+  name: string;
+  /** Why they can't take it ("Working then", "Off then"), or null if they can. */
+  busy: string | null;
+  /** Their upcoming shifts that could be traded for it (you're free then). */
+  shifts: SwapShift[];
 }
 
 export interface AuditEntry {

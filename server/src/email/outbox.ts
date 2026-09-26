@@ -19,7 +19,12 @@ export type NotificationKind =
   | 'time_off_requested'
   | 'time_off_reviewed'
   | 'time_off_cancelled'
-  | 'shifts_confirmed';
+  | 'shifts_confirmed'
+  | 'swap_requested'
+  | 'swap_accepted'
+  | 'swap_declined'
+  | 'swap_cancelled'
+  | 'swap_reviewed';
 
 export interface EnqueueInput {
   userId: string | null;

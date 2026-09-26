@@ -7,6 +7,7 @@ import {
   LogOut,
   Menu as MenuIcon,
   Plane,
+  Repeat,
   Settings,
   Timer,
   UserRound,
@@ -17,7 +18,7 @@ import { useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
-import { useTimeOffRequests } from '../../api/queries';
+import { useSwaps, useTimeOffRequests } from '../../api/queries';
 import { cx } from '../../lib/cx';
 import { useBootstrapData, useCurrentUser, useSetSessionUser } from '../../lib/session';
 import { ThemeToggle } from '../ThemeToggle';
@@ -81,6 +82,12 @@ function NavSection({
 function usePendingTimeOffCount(): number {
   const { data } = useTimeOffRequests('pending');
   return data?.length ?? 0;
+}
+
+/** Swaps the coworker agreed to, waiting for an admin. */
+function useSwapsToApprove(): number {
+  const { data } = useSwaps();
+  return data?.filter((w) => w.status === 'accepted').length ?? 0;
 }
 
 function Sidebar({ onNavigate }: { onNavigate: () => void }) {
@@ -156,6 +163,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
 
 function AdminNav({ onNavigate }: { onNavigate: () => void }) {
   const pending = usePendingTimeOffCount();
+  const swaps = useSwapsToApprove();
   return (
     <NavSection
       title="Manage"
@@ -164,6 +172,7 @@ function AdminNav({ onNavigate }: { onNavigate: () => void }) {
         { to: '/admin', label: 'Dashboard', icon: <LayoutDashboard />, end: true },
         { to: '/admin/schedules', label: 'Schedules', icon: <CalendarRange /> },
         { to: '/admin/time-off', label: 'Time off', icon: <Plane />, badge: pending },
+        { to: '/admin/shift-requests', label: 'Swaps', icon: <Repeat />, badge: swaps },
         { to: '/admin/hours', label: 'Hours', icon: <Timer /> },
         { to: '/admin/people', label: 'People', icon: <Users /> },
         { to: '/admin/tiers', label: 'Tiers & labels', icon: <Layers /> },

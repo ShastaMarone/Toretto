@@ -6,11 +6,12 @@ import type { TimeFormat } from '@shared/types';
 import { getSettings, timeFormatFor, zoneFor } from './settings';
 
 /** What an admin can choose to be emailed about (see Profile). */
-export type AdminTopic = 'time_off' | 'confirmations';
+export type AdminTopic = 'time_off' | 'confirmations' | 'swaps';
 
 const PREFERENCE: Record<AdminTopic, string> = {
   time_off: 'notify_time_off',
   confirmations: 'notify_confirmations',
+  swaps: 'notify_swaps',
 };
 
 /**
