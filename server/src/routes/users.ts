@@ -35,14 +35,27 @@ async function assertRefs(db: Queryable, tierId?: string | null, teamId?: string
   }
 }
 
+/**
+ * Serialize changes to people (roles, deactivation, deletion) so two admins
+ * demoting each other at once can't both pass the last-admin check.
+ */
+async function lockAdminChanges(db: Queryable) {
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['toretto:people']);
+}
+
 /** Refuse changes that would leave the organization without an active admin. */
 async function assertOtherAdmin(db: Queryable, userId: string) {
   const { rows } = await db.query(
-    `SELECT 1 FROM users WHERE role = 'admin' AND deactivated_at IS NULL AND id <> $1 LIMIT 1`,
+    `SELECT 1 FROM users
+      WHERE role = 'admin' AND deactivated_at IS NULL AND email_verified_at IS NOT NULL AND id <> $1
+      LIMIT 1`,
     [userId],
   );
   if (!rows.length) {
-    throw conflict('There must always be at least one active admin.', 'LAST_ADMIN');
+    throw conflict(
+      'There must always be at least one active admin who has signed in.',
+      'LAST_ADMIN',
+    );
   }
 }
 
@@ -117,6 +130,7 @@ export function userRoutes({ db, config, kick }: AppDeps): Router {
     );
     const admin = req.user!;
     const resendInvite = await withTransaction(db, async (client) => {
+      await lockAdminChanges(client);
       const { rows } = await client.query<{
         name: string;
         email: string;
@@ -126,7 +140,7 @@ export function userRoutes({ db, config, kick }: AppDeps): Router {
       }>(
         `SELECT name, email, role, (email_verified_at IS NOT NULL) AS verified,
                 (deactivated_at IS NULL) AS active
-           FROM users WHERE id = $1 FOR UPDATE`,
+           FROM users WHERE id = $1 FOR NO KEY UPDATE`,
         [id],
       );
       const current = rows[0];
@@ -182,6 +196,15 @@ export function userRoutes({ db, config, kick }: AppDeps): Router {
         ],
       );
       if (deactivating) await destroyUserSessions(client, id);
+      if (emailChanged) {
+        // Links, sessions and any password tied to the old (wrong) address are void.
+        await client.query(
+          'UPDATE auth_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL',
+          [id],
+        );
+        await client.query('UPDATE users SET password_hash = NULL WHERE id = $1', [id]);
+        await destroyUserSessions(client, id);
+      }
 
       const action = deactivating
         ? 'user.deactivated'
@@ -234,8 +257,9 @@ export function userRoutes({ db, config, kick }: AppDeps): Router {
     const { id } = parse(zIdParam, req.params);
     if (id === req.user!.id) throw forbidden("You can't delete your own account.");
     await withTransaction(db, async (client) => {
+      await lockAdminChanges(client);
       const { rows } = await client.query<{ name: string; role: Role; active: boolean }>(
-        'SELECT name, role, (deactivated_at IS NULL) AS active FROM users WHERE id = $1 FOR UPDATE',
+        'SELECT name, role, (deactivated_at IS NULL) AS active FROM users WHERE id = $1 FOR NO KEY UPDATE',
         [id],
       );
       const person = rows[0];

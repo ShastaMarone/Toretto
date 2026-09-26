@@ -3,6 +3,9 @@ import nodemailer from 'nodemailer';
 import type { Config } from '../config';
 import type { Logger } from '../logger';
 
+/** HTTP email APIs must answer within this, or the send is retried later. */
+const SEND_TIMEOUT_MS = 30_000;
+
 export interface OutgoingEmail {
   to: string;
   subject: string;
@@ -48,7 +51,13 @@ export function createMailer(
       };
 
     case 'smtp': {
-      const transporter = nodemailer.createTransport(email.smtpUrl!);
+      // Keep every send well under the worker's 10-minute "stuck" threshold.
+      const transporter = nodemailer.createTransport({
+        url: email.smtpUrl!,
+        connectionTimeout: 30_000,
+        greetingTimeout: 30_000,
+        socketTimeout: 60_000,
+      });
       return {
         async send(message) {
           const info = await transporter.sendMail({ from: email.from, ...message });
@@ -62,6 +71,7 @@ export function createMailer(
         async send(message) {
           const res = await fetchImpl('https://api.postmarkapp.com/email', {
             method: 'POST',
+            signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
             headers: {
               Accept: 'application/json',
               'Content-Type': 'application/json',
@@ -90,6 +100,7 @@ export function createMailer(
         async send(message) {
           const res = await fetchImpl('https://api.sendgrid.com/v3/mail/send', {
             method: 'POST',
+            signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
             headers: {
               Authorization: `Bearer ${email.sendgridKey}`,
               'Content-Type': 'application/json',

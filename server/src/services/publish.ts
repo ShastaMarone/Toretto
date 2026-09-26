@@ -1,8 +1,9 @@
+import { formatShiftWhen } from '@shared/time';
 import type { PublishResult, ShiftStatus } from '@shared/types';
 import type { AuthUser } from '../auth/types';
 import type { Config } from '../config';
 import { withTransaction, type Db, type Queryable } from '../db';
-import { badRequest } from '../errors';
+import { badRequest, conflict } from '../errors';
 import { enqueueEmail, type NotificationKind } from '../email/outbox';
 import { scheduleTemplate, type EmailShift } from '../email/templates';
 import { audit } from './audit';
@@ -131,7 +132,8 @@ async function notifyPeople(
   for (const person of people) {
     const c = changes.get(person.id)!;
     const added = c.added.filter(upcoming);
-    const updated = c.updated.filter((u) => upcoming(u.after));
+    // Moving a future shift into the past still changes someone's upcoming week.
+    const updated = c.updated.filter((u) => upcoming(u.after) || upcoming(u.before));
     const removed = c.removed.filter(upcoming);
     if (!added.length && !updated.length && !removed.length) continue;
     const kind: NotificationKind =
@@ -299,6 +301,17 @@ export async function discardChanges(db: Db, scheduleId: string, actor: AuthUser
         "This schedule hasn't been published yet, so there's no published version to go back to.",
       );
     }
+    // Lock everyone whose published shifts come back, in a stable order, so no
+    // concurrent edit elsewhere can slip an overlapping shift in meanwhile.
+    const { rows: people } = await client.query<{ userId: string }>(
+      `SELECT DISTINCT published_user_id AS "userId" FROM shifts
+        WHERE schedule_id = $1 AND published_at IS NOT NULL
+        ORDER BY 1`,
+      [scheduleId],
+    );
+    for (const { userId } of people) {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${userId}`]);
+    }
     const { rowCount: removed } = await client.query(
       'DELETE FROM shifts WHERE schedule_id = $1 AND published_at IS NULL',
       [scheduleId],
@@ -317,6 +330,29 @@ export async function discardChanges(db: Db, scheduleId: string, actor: AuthUser
                OR notes IS DISTINCT FROM published_notes)`,
       [scheduleId],
     );
+    // A restored shift may now collide with one added elsewhere in the meantime.
+    const { rows: clashes } = await client.query<{
+      name: string;
+      startTime: string;
+      endTime: string;
+    }>(
+      `SELECT u.name, a.start_time AS "startTime", a.end_time AS "endTime"
+         FROM shifts a
+         JOIN shifts b ON b.user_id = a.user_id AND b.id <> a.id AND b.deleted_at IS NULL
+                      AND a.start_time < b.end_time AND a.end_time > b.start_time
+         JOIN users u ON u.id = a.user_id
+        WHERE a.schedule_id = $1 AND a.deleted_at IS NULL
+        ORDER BY a.start_time
+        LIMIT 1`,
+      [scheduleId],
+    );
+    if (clashes[0]) {
+      const { timezone } = await getSettings(client);
+      throw conflict(
+        `Can't discard: ${clashes[0].name} would be double-booked ${formatShiftWhen(clashes[0].startTime, clashes[0].endTime, timezone)}. Move or remove their other shift first.`,
+        'SHIFT_OVERLAP',
+      );
+    }
     await audit(
       client,
       actor.id,

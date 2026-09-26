@@ -29,7 +29,6 @@ describe('first-run setup', () => {
     const res = await agent.post('/api/auth/setup').send({
       name: 'Robin Admin',
       email: 'Robin@Example.com',
-      password: 'correct horse battery',
       orgName: 'Support Org',
       timezone: 'America/Vancouver',
     });
@@ -43,20 +42,31 @@ describe('first-run setup', () => {
     );
     expect(labels.rows.map((l) => l.name)).toEqual(['On-Call', 'Overtime', 'Training']);
 
-    // Can't sign in until the email is confirmed.
-    const early = await agent
-      .post('/api/auth/login')
-      .send({ email: 'robin@example.com', password: 'correct horse battery' });
-    expect(early.status).toBe(403);
-    expect(early.body.error.code).toBe('EMAIL_NOT_VERIFIED');
+    // No password exists until the inbox owner chooses one from the email.
+    const { rows } = await ctx.db.query(
+      `SELECT password_hash, email_verified_at FROM users WHERE email = 'robin@example.com'`,
+    );
+    expect(rows[0]).toEqual({ password_hash: null, email_verified_at: null });
 
     const [verify] = await emails(ctx.db, { to: 'robin@example.com', kind: 'verify_email' });
     expect(verify!.subject).toBe('Confirm your email for Support Org');
-    const token = tokenIn(verify!, '/verify-email');
+    const token = tokenIn(verify!, '/set-password');
+    const info = await ctx.agent().post('/api/auth/token-info').send({ token });
+    expect(info.body).toEqual({
+      purpose: 'verify_email',
+      name: 'Robin Admin',
+      email: 'robin@example.com',
+    });
 
-    const confirmed = await agent.post('/api/auth/verify-email').send({ token });
+    const confirmed = await agent
+      .post('/api/auth/set-password')
+      .send({ token, password: 'correct horse battery' });
     expect(confirmed.status).toBe(200);
-    expect(confirmed.body.user).toMatchObject({ email: 'robin@example.com', role: 'admin' });
+    expect(confirmed.body.user).toMatchObject({
+      email: 'robin@example.com',
+      role: 'admin',
+      hasPassword: true,
+    });
 
     const after = await agent.get('/api/bootstrap');
     expect(after.body.setupRequired).toBe(false);
@@ -66,9 +76,13 @@ describe('first-run setup', () => {
       timezone: 'America/Vancouver',
       weekStartsOn: 1,
     });
+    await login(ctx.agent(), 'robin@example.com', 'correct horse battery');
 
     // Links are single-use.
-    const again = await ctx.agent().post('/api/auth/verify-email').send({ token });
+    const again = await ctx
+      .agent()
+      .post('/api/auth/set-password')
+      .send({ token, password: 'someone else 1' });
     expect(again.status).toBe(400);
     expect(again.body.error.code).toBe('INVALID_TOKEN');
   });
@@ -77,7 +91,6 @@ describe('first-run setup', () => {
     const res = await ctx.agent().post('/api/auth/setup').send({
       name: 'Intruder',
       email: 'intruder@example.com',
-      password: 'password123',
       orgName: 'Mine now',
       timezone: 'UTC',
     });
@@ -91,7 +104,6 @@ describe('first-run setup', () => {
       const res = await pub.agent().post('/api/auth/setup').send({
         name: 'First Visitor',
         email: 'first@example.com',
-        password: 'password123',
         orgName: 'Org',
         timezone: 'UTC',
       });
@@ -105,7 +117,7 @@ describe('first-run setup', () => {
   it('only lets ADMIN_EMAIL complete setup when configured', async () => {
     const locked = await createTestContext({ ADMIN_EMAIL: 'boss@example.com' });
     try {
-      const body = { name: 'X', password: 'password123', orgName: 'Org', timezone: 'UTC' };
+      const body = { name: 'X', orgName: 'Org', timezone: 'UTC' };
       const wrong = await locked
         .agent()
         .post('/api/auth/setup')
@@ -330,12 +342,12 @@ describe('self sign-up', () => {
     const res = await ctx
       .agent()
       .post('/api/auth/signup')
-      .send({ name: 'Walk In', email: 'walk@example.com', password: PASSWORD });
+      .send({ name: 'Walk In', email: 'walk@example.com' });
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('SIGNUP_DISABLED');
   });
 
-  it('can be limited to company domains and requires email confirmation', async () => {
+  it('can be limited to company domains and confirms the address before any password exists', async () => {
     const admin = ctx.agent();
     await login(admin, 'robin@example.com', 'correct horse battery');
     const settings = await admin
@@ -346,36 +358,29 @@ describe('self sign-up', () => {
     const outsider = await ctx
       .agent()
       .post('/api/auth/signup')
-      .send({ name: 'Out', email: 'out@gmail.com', password: PASSWORD });
+      .send({ name: 'Out', email: 'out@gmail.com' });
     expect(outsider.status).toBe(403);
     expect(outsider.body.error.code).toBe('DOMAIN_NOT_ALLOWED');
 
     const res = await ctx
       .agent()
       .post('/api/auth/signup')
-      .send({ name: 'Casey Staff', email: 'casey@company.com', password: PASSWORD });
+      .send({ name: 'Casey Staff', email: 'casey@company.com' });
     expect(res.status).toBe(202);
     const [mail] = await emails(ctx.db, { to: 'casey@company.com', kind: 'verify_email' });
-    expect(
-      (
-        await ctx
-          .agent()
-          .post('/api/auth/login')
-          .send({ email: 'casey@company.com', password: PASSWORD })
-      ).status,
-    ).toBe(403);
     const agent = ctx.agent();
-    const verified = await agent
-      .post('/api/auth/verify-email')
-      .send({ token: tokenIn(mail!, '/verify-email') });
-    expect(verified.body.user).toMatchObject({ role: 'member', tierId: null });
+    const done = await agent
+      .post('/api/auth/set-password')
+      .send({ token: tokenIn(mail!, '/set-password'), password: PASSWORD });
+    expect(done.body.user).toMatchObject({ role: 'member', tierId: null, hasPassword: true });
+    await login(ctx.agent(), 'casey@company.com');
   });
 
   it('emails the owner instead of revealing an existing account', async () => {
     const res = await ctx
       .agent()
       .post('/api/auth/signup')
-      .send({ name: 'Dup', email: 'casey@company.com', password: 'other password' });
+      .send({ name: 'Dup', email: 'casey@company.com' });
     expect(res.status).toBe(202);
     const sent = await emails(ctx.db, { to: 'casey@company.com' });
     expect(sent.map((e) => e.kind)).toEqual(['account_exists']);
@@ -383,5 +388,71 @@ describe('self sign-up', () => {
       "SELECT count(*)::int AS n FROM users WHERE email = 'casey@company.com'",
     );
     expect(rows[0].n).toBe(1);
+  });
+});
+
+describe('account takeover protection', () => {
+  beforeEach(() => clearEmails(ctx.db));
+
+  it("a sign-up for someone else's address never gives the signer a way in", async () => {
+    // Attacker signs up with the victim's address (self sign-up is on from above).
+    await ctx
+      .agent()
+      .post('/api/auth/signup')
+      .send({ name: 'Not Victim', email: 'victim@company.com', password: 'attacker pw 1' })
+      .expect(202);
+    const tryLogin = () =>
+      ctx
+        .agent()
+        .post('/api/auth/login')
+        .send({ email: 'victim@company.com', password: 'attacker pw 1' });
+    expect((await tryLogin()).status).toBe(401);
+
+    // The real owner signs in with an emailed link; the attacker still can't.
+    await ctx.agent().post('/api/auth/magic-link').send({ email: 'victim@company.com' });
+    const [link] = await emails(ctx.db, { to: 'victim@company.com', kind: 'magic_link' });
+    await ctx
+      .agent()
+      .post('/api/auth/magic-link/verify')
+      .send({ token: tokenIn(link!, '/magic-link') })
+      .expect(200);
+    expect((await tryLogin()).status).toBe(401);
+  });
+
+  it('drops a password that was set before the address was confirmed', async () => {
+    // e.g. data created by an older version, or directly in the database
+    const legacy = await createUser(ctx.db, { name: 'Legacy Person', verified: false });
+    await ctx.agent().post('/api/auth/magic-link').send({ email: legacy.email });
+    const [link] = await emails(ctx.db, { to: legacy.email, kind: 'magic_link' });
+    const res = await ctx
+      .agent()
+      .post('/api/auth/magic-link/verify')
+      .send({ token: tokenIn(link!, '/magic-link') });
+    expect(res.body.user.hasPassword).toBe(false);
+    const again = await ctx
+      .agent()
+      .post('/api/auth/login')
+      .send({ email: legacy.email, password: PASSWORD });
+    expect(again.status).toBe(401);
+  });
+
+  it('correcting an unconfirmed email voids everything sent to the old address', async () => {
+    const admin = ctx.agent();
+    await login(admin, 'robin@example.com', 'correct horse battery');
+    const { body: person } = await admin
+      .post('/api/users')
+      .send({ name: 'Typo Tina', email: 'tina@exmaple.com' });
+    // Whoever owns the typo'd address asks for a sign-in link.
+    await ctx.agent().post('/api/auth/magic-link').send({ email: 'tina@exmaple.com' });
+    const [stale] = await emails(ctx.db, { to: 'tina@exmaple.com', kind: 'magic_link' });
+
+    await admin.patch(`/api/users/${person.id}`).send({ email: 'tina@example.com' }).expect(200);
+    const res = await ctx
+      .agent()
+      .post('/api/auth/magic-link/verify')
+      .send({ token: tokenIn(stale!, '/magic-link') });
+    expect(res.status).toBe(400);
+    const [fresh] = await emails(ctx.db, { to: 'tina@example.com', kind: 'invite' });
+    expect(fresh).toBeDefined();
   });
 });

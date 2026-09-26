@@ -42,7 +42,7 @@ export async function sendAccountEmail(
     case 'verify_email':
       email = verifyEmailTemplate(ctx, {
         name: user.name,
-        url: `${config.appUrl}/verify-email?token=${token}`,
+        url: `${config.appUrl}/set-password?token=${token}`,
       });
       break;
     case 'invite':

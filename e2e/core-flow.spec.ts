@@ -54,13 +54,16 @@ test('first admin sets up the workspace and confirms their email', async ({ requ
   await admin.getByLabel('Team or organization name').fill('Support Team');
   await admin.getByLabel('Your name').fill(ADMIN.name);
   await admin.getByLabel('Your email').fill(ADMIN.email);
-  await admin.getByLabel('Password').fill(ADMIN.password);
   await admin.getByRole('button', { name: 'Create admin account' }).click();
   await expect(admin.getByRole('heading', { name: 'Check your email' })).toBeVisible();
 
+  // The password is chosen from the emailed link, which confirms the address.
   const verify = await waitForEmail(request, { to: ADMIN.email, kind: 'verify_email' });
-  await admin.goto(linkIn(verify, '/verify-email'));
-  await admin.getByRole('button', { name: 'Confirm my email' }).click();
+  await admin.goto(linkIn(verify, '/set-password'));
+  await expect(admin.getByRole('heading', { name: 'Welcome, Robin!' })).toBeVisible();
+  await admin.getByLabel('New password').fill(ADMIN.password);
+  await admin.getByLabel('Confirm password').fill(ADMIN.password);
+  await admin.getByRole('button', { name: 'Set password & continue' }).click();
   await expect(admin).toHaveURL(/\/admin$/);
   await expect(
     admin.getByRole('heading', { name: /Good (morning|afternoon|evening), Robin/ }),

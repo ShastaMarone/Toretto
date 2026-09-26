@@ -9,12 +9,7 @@ import CheckEmailPage from './pages/auth/CheckEmailPage';
 import LoginPage from './pages/auth/LoginPage';
 import SetupPage from './pages/auth/SetupPage';
 import SignupPage from './pages/auth/SignupPage';
-import {
-  ForgotPasswordPage,
-  MagicLinkPage,
-  SetPasswordPage,
-  VerifyEmailPage,
-} from './pages/auth/TokenPages';
+import { ForgotPasswordPage, MagicLinkPage, SetPasswordPage } from './pages/auth/TokenPages';
 import { ConfirmScheduleShiftsPage, ConfirmShiftPage } from './pages/ConfirmPages';
 import MySchedulePage from './pages/member/MySchedulePage';
 import ProfilePage from './pages/member/ProfilePage';
@@ -63,7 +58,6 @@ export default function App() {
           </Route>
           <Route path="/setup" element={<SetupPage />} />
           <Route path="/check-email" element={<CheckEmailPage />} />
-          <Route path="/verify-email" element={<VerifyEmailPage />} />
           <Route path="/magic-link" element={<MagicLinkPage />} />
           <Route path="/set-password" element={<SetPasswordPage />} />
           <Route path="/dev/mailbox" element={<DevMailboxPage />} />

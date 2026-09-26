@@ -110,6 +110,58 @@ describe('email outbox', () => {
     expect(sent.map((m) => m.to)).toEqual(['d@example.com']);
   });
 
+  it('never re-sends rows another worker took over while this one looked stuck', async () => {
+    const first = await enqueueEmail(ctx.db, {
+      userId: null,
+      to: 'slow@example.com',
+      kind: 'invite',
+      email,
+    });
+    const second = await enqueueEmail(ctx.db, {
+      userId: null,
+      to: 'next@example.com',
+      kind: 'invite',
+      email,
+    });
+    // The slow one is older, so worker A sends it first.
+    await ctx.db.query(
+      `UPDATE notifications SET created_at = created_at + interval '1 second' WHERE id = $1`,
+      [second],
+    );
+    let release!: () => void;
+    const hung = new Promise<void>((resolve) => (release = resolve));
+    const slowSent: string[] = [];
+    const slow: Mailer = {
+      async send(message) {
+        if (message.to === 'slow@example.com') await hung;
+        slowSent.push(message.to);
+        return { messageId: 'slow' };
+      },
+    };
+    // Worker A claims both and hangs on the first send…
+    const workerA = processOutbox(ctx.db, slow, silent);
+    await new Promise((r) => setTimeout(r, 100));
+    // …long enough that worker B treats the batch as stuck and delivers it.
+    await ctx.db.query(
+      `UPDATE notifications SET locked_at = now() - interval '11 minutes' WHERE id = ANY($1)`,
+      [[first, second]],
+    );
+    const b = fakeMailer();
+    await processOutbox(ctx.db, b.mailer, silent);
+    expect(b.sent.map((m) => m.to).sort()).toEqual(['next@example.com', 'slow@example.com']);
+
+    release();
+    await workerA;
+    // A finishes its in-flight send, but must not touch the second email or B's results.
+    expect(slowSent).toEqual(['slow@example.com']);
+    const { rows } = await ctx.db.query(
+      `SELECT status, provider_message_id FROM notifications WHERE id = ANY($1)`,
+      [[first, second]],
+    );
+    expect(rows.map((r) => r.status)).toEqual(['sent', 'sent']);
+    expect(rows.every((r) => r.provider_message_id !== 'slow')).toBe(true);
+  });
+
   it('runs in the background and wakes up when kicked', async () => {
     const { mailer, sent } = fakeMailer();
     const worker = createWorker({

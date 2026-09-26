@@ -6,7 +6,7 @@ import { badRequest, notFound } from '../errors';
 import { parse, zDate, zId, zIdParam, zText } from '../lib/validation';
 import { audit } from '../services/audit';
 import { getSettings, zoneFor } from '../services/settings';
-import { cancelTimeOff, listTimeOff, requestTimeOff } from '../services/timeOff';
+import { cancelTimeOff, forMember, listTimeOff, requestTimeOff } from '../services/timeOff';
 import { getShiftView, myShifts, teamSchedule } from '../services/views';
 
 const RangeQuery = z.object({ from: zDate, to: zDate });
@@ -84,7 +84,8 @@ export function myRoutes({ db, config, kick }: AppDeps): Router {
   });
 
   r.get('/time-off', async (req, res) => {
-    res.json(await listTimeOff(db, { userId: req.user!.id, status: 'all' }));
+    const requests = await listTimeOff(db, { userId: req.user!.id, status: 'all' });
+    res.json(requests.map(forMember));
   });
 
   r.post('/time-off', async (req, res) => {
@@ -94,14 +95,14 @@ export function myRoutes({ db, config, kick }: AppDeps): Router {
     );
     const request = await requestTimeOff(db, config, req.user!, body);
     kick();
-    res.status(201).json(request);
+    res.status(201).json(forMember(request));
   });
 
   r.post('/time-off/:id/cancel', async (req, res) => {
     const { id } = parse(zIdParam, req.params);
     const request = await cancelTimeOff(db, config, req.user!, id);
     kick();
-    res.json(request);
+    res.json(forMember(request));
   });
 
   return r;

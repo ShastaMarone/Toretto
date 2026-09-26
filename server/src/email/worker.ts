@@ -20,17 +20,20 @@ interface ClaimedEmail {
   html: string;
   text: string;
   attempts: number;
+  created_at: string;
 }
 
 /**
  * Deliver up to `batchSize` queued emails. Safe to run from several processes
- * at once: rows are claimed with SKIP LOCKED. Returns how many were attempted.
+ * at once: rows are claimed with SKIP LOCKED, and each row is re-claimed just
+ * before sending, so a row that another worker took over (because this one
+ * looked stuck) is never sent twice. Returns how many were claimed.
  */
 export async function processOutbox(
   db: Db,
   mailer: Mailer,
   logger: Logger,
-  batchSize = 20,
+  batchSize = 10,
 ): Promise<number> {
   // A worker that died mid-send leaves rows in 'sending'; retry them.
   await db.query(
@@ -46,10 +49,20 @@ export async function processOutbox(
          ORDER BY run_after
          LIMIT $1
          FOR UPDATE SKIP LOCKED)
-      RETURNING id, to_email, subject, html, text, attempts`,
+      RETURNING id, to_email, subject, html, text, attempts, created_at`,
     [batchSize],
   );
+  // RETURNING has no order; deliver oldest first.
+  rows.sort((a, b) => a.created_at.localeCompare(b.created_at));
   for (const email of rows) {
+    // `attempts` changes with every claim, so it identifies our claim. Refresh
+    // the lock (we're alive) and skip the row if someone else took it over.
+    const { rowCount: stillOurs } = await db.query(
+      `UPDATE notifications SET locked_at = now()
+        WHERE id = $1 AND status = 'sending' AND attempts = $2`,
+      [email.id, email.attempts],
+    );
+    if (!stillOurs) continue;
     try {
       const { messageId } = await mailer.send({
         to: email.to_email,
@@ -60,9 +73,9 @@ export async function processOutbox(
       await db.query(
         `UPDATE notifications
             SET status = 'sent', sent_at = now(), locked_at = NULL, last_error = NULL,
-                provider_message_id = $2
-          WHERE id = $1`,
-        [email.id, messageId],
+                provider_message_id = $3
+          WHERE id = $1 AND attempts = $2`,
+        [email.id, email.attempts, messageId],
       );
     } catch (err) {
       const message = (err as Error)?.message ?? String(err);
@@ -73,10 +86,10 @@ export async function processOutbox(
       );
       await db.query(
         `UPDATE notifications
-            SET status = $2, locked_at = NULL, last_error = $3,
-                run_after = now() + make_interval(mins => $4)
-          WHERE id = $1`,
-        [email.id, giveUp ? 'failed' : 'queued', message.slice(0, 1000), delay],
+            SET status = $3, locked_at = NULL, last_error = $4,
+                run_after = now() + make_interval(mins => $5)
+          WHERE id = $1 AND attempts = $2`,
+        [email.id, email.attempts, giveUp ? 'failed' : 'queued', message.slice(0, 1000), delay],
       );
     }
   }

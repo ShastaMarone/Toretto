@@ -9,7 +9,7 @@ import {
   destroyUserSessions,
   setSessionCookie,
 } from '../auth/sessions';
-import { consumeToken, peekToken } from '../auth/tokens';
+import { consumeToken, peekToken, type TokenPurpose } from '../auth/tokens';
 import { AUTH_USER_COLUMNS, type AuthUser } from '../auth/types';
 import { withTransaction, type Queryable } from '../db';
 import type { AppDeps } from '../deps';
@@ -24,6 +24,9 @@ import { seedDefaults } from '../services/defaults';
 import { getSettings } from '../services/settings';
 
 const TokenBody = z.object({ token: z.string().min(10).max(200) });
+
+/** Emailed links that let someone choose a password (and so confirm their address). */
+const PASSWORD_LINKS: TokenPurpose[] = ['invite', 'verify_email', 'reset_password'];
 
 const invalidLink = (message: string) => new HttpError(400, 'INVALID_TOKEN', message);
 
@@ -71,7 +74,6 @@ export function authRoutes({ db, config, kick }: AppDeps): Router {
       z.object({
         name: zName('Your name', 100),
         email: zEmail,
-        password: zPassword,
         orgName: zName('Organization name', 80),
         timezone: zTimezone,
       }),
@@ -89,7 +91,8 @@ export function authRoutes({ db, config, kick }: AppDeps): Router {
         'SETUP_LOCKED',
       );
     }
-    const passwordHash = await hashPassword(body.password);
+    // No password yet: the admin chooses one from the emailed link, which proves
+    // they own the address (a password typed here could belong to anyone).
     const email = await withTransaction(db, async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['toretto:setup']);
       if (await hasAnyUsers(client)) {
@@ -100,9 +103,9 @@ export function authRoutes({ db, config, kick }: AppDeps): Router {
         body.timezone,
       ]);
       const { rows } = await client.query<{ id: string; name: string; email: string }>(
-        `INSERT INTO users (name, email, password_hash, role)
-         VALUES ($1, $2, $3, 'admin') RETURNING id, name, email`,
-        [body.name, body.email, passwordHash],
+        `INSERT INTO users (name, email, role)
+         VALUES ($1, $2, 'admin') RETURNING id, name, email`,
+        [body.name, body.email],
       );
       const admin = rows[0]!;
       await seedDefaults(client);
@@ -115,10 +118,7 @@ export function authRoutes({ db, config, kick }: AppDeps): Router {
   });
 
   r.post('/signup', limiter(config, 10), async (req, res) => {
-    const body = parse(
-      z.object({ name: zName('Name', 100), email: zEmail, password: zPassword }),
-      req.body,
-    );
+    const body = parse(z.object({ name: zName('Name', 100), email: zEmail }), req.body);
     if (!(await hasAnyUsers(db))) {
       throw conflict('This workspace has not been set up yet.', 'SETUP_REQUIRED');
     }
@@ -133,7 +133,6 @@ export function authRoutes({ db, config, kick }: AppDeps): Router {
         'DOMAIN_NOT_ALLOWED',
       );
     }
-    const passwordHash = await hashPassword(body.password);
     await withTransaction(db, async (client) => {
       const { rows: existing } = await client.query<{
         id: string;
@@ -164,9 +163,9 @@ export function authRoutes({ db, config, kick }: AppDeps): Router {
         return;
       }
       const { rows } = await client.query<{ id: string; name: string; email: string }>(
-        `INSERT INTO users (name, email, password_hash, role)
-         VALUES ($1, $2, $3, 'member') RETURNING id, name, email`,
-        [body.name, body.email, passwordHash],
+        `INSERT INTO users (name, email, role)
+         VALUES ($1, $2, 'member') RETURNING id, name, email`,
+        [body.name, body.email],
       );
       const user = rows[0]!;
       await sendAccountEmail(client, config, user, 'verify_email');
@@ -230,33 +229,11 @@ export function authRoutes({ db, config, kick }: AppDeps): Router {
     res.status(204).end();
   });
 
-  r.post('/verify-email', limiter(config, 30), async (req, res) => {
-    const { token } = parse(TokenBody, req.body);
-    const userId = await withTransaction(db, async (client) => {
-      const match = await consumeToken(client, token, ['verify_email']);
-      if (!match) {
-        throw invalidLink(
-          'This confirmation link is invalid or has expired. If you already confirmed your email, just sign in.',
-        );
-      }
-      const { rows } = await client.query<{ id: string }>(
-        `UPDATE users SET email_verified_at = COALESCE(email_verified_at, now())
-          WHERE id = $1 AND deactivated_at IS NULL RETURNING id`,
-        [match.userId],
-      );
-      if (!rows[0]) throw forbidden('This account has been deactivated.', 'ACCOUNT_DEACTIVATED');
-      await audit(client, match.userId, 'user.email_verified', { type: 'user', id: match.userId });
-      return match.userId;
-    });
-    await startSession(req, res, userId);
-  });
-
   r.post('/resend-verification', limiter(config, 10), async (req, res) => {
     const { email } = parse(z.object({ email: zEmail }), req.body);
     const { rows } = await db.query<{ id: string; name: string; email: string }>(
       `SELECT id, name, email FROM users
-        WHERE email = $1 AND email_verified_at IS NULL AND deactivated_at IS NULL
-          AND password_hash IS NOT NULL`,
+        WHERE email = $1 AND email_verified_at IS NULL AND deactivated_at IS NULL`,
       [email],
     );
     if (rows[0]) {
@@ -288,9 +265,12 @@ export function authRoutes({ db, config, kick }: AppDeps): Router {
       const match = await consumeToken(client, token, ['magic_link']);
       if (!match)
         throw invalidLink('This sign-in link is invalid or has expired. Request a new one.');
-      // Clicking a link sent to the address proves the person owns it.
+      // Clicking a link sent to the address proves the person owns it. A
+      // password set before the address was confirmed can't be trusted.
       const { rows } = await client.query<{ id: string }>(
-        `UPDATE users SET email_verified_at = COALESCE(email_verified_at, now())
+        `UPDATE users
+            SET password_hash = CASE WHEN email_verified_at IS NULL THEN NULL ELSE password_hash END,
+                email_verified_at = COALESCE(email_verified_at, now())
           WHERE id = $1 AND deactivated_at IS NULL RETURNING id`,
         [match.userId],
       );
@@ -316,7 +296,7 @@ export function authRoutes({ db, config, kick }: AppDeps): Router {
   // Lets the set-password page greet the person before they submit.
   r.post('/token-info', limiter(config, 60), async (req, res) => {
     const { token } = parse(TokenBody, req.body);
-    const match = await peekToken(db, token, ['invite', 'reset_password']);
+    const match = await peekToken(db, token, PASSWORD_LINKS);
     const { rows } = match
       ? await db.query<{ name: string; email: string }>(
           'SELECT name, email FROM users WHERE id = $1 AND deactivated_at IS NULL',
@@ -328,12 +308,12 @@ export function authRoutes({ db, config, kick }: AppDeps): Router {
     res.json({ purpose: match.purpose, name: rows[0].name, email: rows[0].email });
   });
 
-  // Accept an invite or finish a password reset.
+  // Accept an invite, confirm a new account, or finish a password reset.
   r.post('/set-password', limiter(config, 30), async (req, res) => {
     const { token, password } = parse(TokenBody.extend({ password: zPassword }), req.body);
     const passwordHash = await hashPassword(password);
     const userId = await withTransaction(db, async (client) => {
-      const match = await consumeToken(client, token, ['invite', 'reset_password']);
+      const match = await consumeToken(client, token, PASSWORD_LINKS);
       if (!match) throw invalidLink('This link is invalid or has expired. Ask for a new one.');
       const { rows } = await client.query<{ id: string }>(
         `UPDATE users SET password_hash = $2, email_verified_at = COALESCE(email_verified_at, now())
@@ -343,12 +323,13 @@ export function authRoutes({ db, config, kick }: AppDeps): Router {
       if (!rows[0]) throw invalidLink('This link is invalid or has expired. Ask for a new one.');
       // A new password signs out every other device.
       await destroyUserSessions(client, match.userId);
-      await audit(
-        client,
-        match.userId,
-        match.purpose === 'invite' ? 'user.invite_accepted' : 'user.password_reset',
-        { type: 'user', id: match.userId },
-      );
+      const action = {
+        invite: 'user.invite_accepted',
+        verify_email: 'user.email_verified',
+        reset_password: 'user.password_reset',
+        magic_link: 'user.password_reset',
+      }[match.purpose];
+      await audit(client, match.userId, action, { type: 'user', id: match.userId });
       return match.userId;
     });
     await startSession(req, res, userId);

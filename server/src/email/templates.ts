@@ -223,18 +223,18 @@ export function verifyEmailTemplate(
 ): RenderedEmail {
   const subject = `Confirm your email for ${ctx.orgName}`;
   const body = html`${heading('Confirm your email')}
-  ${para(`Hi ${firstName(input.name)}, please confirm your email address to finish setting up your ${ctx.orgName} scheduling account.`)}
-  ${button(input.url, 'Confirm my email')}
-  ${muted("This link expires in 48 hours. If you didn't create an account, you can ignore this email.")}`;
+${para(`Hi ${firstName(input.name)}, confirm your email address and choose a password to finish setting up your ${ctx.orgName} scheduling account.`)}
+${button(input.url, 'Confirm email & choose password')}
+${muted("This link expires in 48 hours. If you didn't create an account, you can ignore this email — nothing happens until the link is used.")}`;
   const text = `Hi ${firstName(input.name)},
 
-Please confirm your email address to finish setting up your ${ctx.orgName} scheduling account:
+Confirm your email address and choose a password to finish setting up your ${ctx.orgName} scheduling account:
 ${input.url}
 
 This link expires in 48 hours. If you didn't create an account, you can ignore this email.`;
   return finish(
     subject,
-    layout(ctx, { title: subject, preheader: 'Confirm your email address', body }),
+    layout(ctx, { title: subject, preheader: 'Confirm your email and choose a password', body }),
     text,
   );
 }

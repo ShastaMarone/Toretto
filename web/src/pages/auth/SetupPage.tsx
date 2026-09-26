@@ -19,7 +19,6 @@ export default function SetupPage() {
     orgName: '',
     name: '',
     email: '',
-    password: '',
     timezone: browserZone(),
   });
   const setup = useMutation({
@@ -37,7 +36,7 @@ export default function SetupPage() {
   return (
     <AuthLayout
       title="Set up your team's scheduling"
-      subtitle="Create the first admin account. You can invite everyone else afterwards."
+      subtitle="Create the first admin account. We'll email you a link to confirm your address and choose a password."
     >
       <form
         className="space-y-4"
@@ -71,16 +70,6 @@ export default function SetupPage() {
             required
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
-          />
-        </Field>
-        <Field label="Password" error={errors.password} hint="At least 8 characters.">
-          <Input
-            type="password"
-            autoComplete="new-password"
-            minLength={8}
-            required
-            value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
           />
         </Field>
         <Field

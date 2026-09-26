@@ -342,6 +342,11 @@ async function copyShifts(
       ORDER BY s.start_time`,
     [sourceId],
   );
+  // Same per-person locks as single-shift edits (sorted to avoid deadlocks),
+  // so the overlap checks below can't race a concurrent edit.
+  for (const userId of [...new Set(shifts.map((s) => s.userId))].sort()) {
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${userId}`]);
+  }
   let copied = 0;
   let skipped = 0;
   for (const shift of shifts) {

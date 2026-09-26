@@ -43,6 +43,7 @@ request time off (paid holiday, personal day, vacation, …) by clicking a day.
 
 **For team members**
 
+- Join from an emailed link: an admin invites you (or you sign up yourself, if your admin turned that on). The link confirms your email address and lets you choose a password.
 - Sign in with email + password, or **"Email me a sign-in link"** (no password needed).
 - **My Schedule**: a month calendar, shifts waiting for confirmation (confirm one or all), the next two weeks, and your time-off requests.
 - **Request time off** by clicking any day. Pick a type (Paid Holiday, Personal Day, Vacation, Sick Day, Unpaid Leave — admins can edit the list) and a date range. You're warned if you're scheduled during that time.
@@ -69,7 +70,8 @@ Open **http://localhost:5173**.
   `priya@`, `maria@`, `taylor@`, `chris@`, `dana@`, `morgan@` and `riley@example.com`,
   all with the same password.
 - **Without demo data**, you land on the **setup page** to create your
-  organization and first admin.
+  organization and first admin. You then get an email (in the dev mailbox, below)
+  to confirm your address and choose your password.
 
 In development, emails aren't sent. Every email the app would send (invites,
 confirmation links, schedule emails) appears in the **dev mailbox** at
@@ -150,7 +152,8 @@ NODE_ENV=production node dist/server/index.js
 
 Then create the first admin in one of two ways:
 
-1. Open the app and complete the **setup page**. It only accepts the `ADMIN_EMAIL` address.
+1. Open the app and complete the **setup page**. It only accepts the `ADMIN_EMAIL` address,
+   and emails that address a link to choose the admin password.
 2. Or run it from the command line:
    ```bash
    node dist/server/create-admin.js --email you@yourcompany.com --name "Your Name"
@@ -161,8 +164,8 @@ Then create the first admin in one of two ways:
 
 After that, invite your team from **People**. If you'd rather let people join
 themselves, turn on self sign-up under **Settings**, optionally limited to your
-company's email domain. They confirm their email, then an admin assigns their
-tier.
+company's email domain. They get an email to confirm their address and choose
+a password, then an admin assigns their tier.
 
 > Development conveniences (the dev mailbox, and a setup page open to anyone)
 > only switch on when `APP_URL` is a `localhost` address and `NODE_ENV` isn't
@@ -226,7 +229,11 @@ across daylight-saving changes.
 
 ### Security
 
-- Passwords are hashed with scrypt.
+- Passwords are hashed with scrypt, and are only ever chosen from a link
+  emailed to the address (invite, sign-up confirmation or reset). Nobody can
+  pre-register someone else's email with a password they know.
+- Correcting an unconfirmed person's email address cancels every link and
+  session tied to the old address.
 - Sessions use a server-side, httpOnly, SameSite cookie. Changing a password
   signs out other devices.
 - Email links are single-use, expire, and are stored hashed.

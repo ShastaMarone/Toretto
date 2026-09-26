@@ -1,6 +1,6 @@
 import type { SessionUser } from '@shared/types';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { CircleAlert, MailCheck } from 'lucide-react';
+import { CircleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
@@ -31,41 +31,6 @@ function InvalidLink({ message, action }: { message: string; action?: 'reset' | 
           {action === 'reset' ? 'Send me a new link' : 'Request a new sign-in link'}
         </ButtonLink>
       )}
-    </AuthLayout>
-  );
-}
-
-/** /verify-email?token=… — confirm an email address (from sign-up or setup). */
-export function VerifyEmailPage() {
-  const [params] = useSearchParams();
-  const token = params.get('token') ?? '';
-  const navigate = useNavigate();
-  const setSessionUser = useSetSessionUser();
-  const verify = useMutation({
-    mutationFn: () => api.post<{ user: SessionUser }>('/auth/verify-email', { token }),
-    onSuccess: ({ user }) => {
-      setSessionUser(user);
-      toast.success('Email confirmed — welcome aboard!');
-      navigate(homePath(user), { replace: true });
-    },
-  });
-  if (verify.isError) return <InvalidLink message={verify.error.message} />;
-  return (
-    <AuthLayout title="Confirm your email" subtitle="One click and you're in.">
-      <div className="flex flex-col items-center gap-5 text-center">
-        <div className="rounded-full bg-emerald-50 p-4 text-emerald-600">
-          <MailCheck className="size-8" />
-        </div>
-        <Button
-          variant="primary"
-          size="lg"
-          className="w-full"
-          loading={verify.isPending}
-          onClick={() => verify.mutate()}
-        >
-          Confirm my email
-        </Button>
-      </div>
     </AuthLayout>
   );
 }
@@ -101,7 +66,10 @@ export function MagicLinkPage() {
   );
 }
 
-/** /set-password?token=… — accept an invite or finish a password reset. */
+/**
+ * /set-password?token=… — accept an invite, confirm a new account, or finish a
+ * password reset. Choosing the password here is what confirms the address.
+ */
 export function SetPasswordPage() {
   const [params] = useSearchParams();
   const token = params.get('token') ?? '';
@@ -115,10 +83,11 @@ export function SetPasswordPage() {
   const info = useQuery({
     queryKey: ['token-info', token],
     queryFn: () =>
-      api.post<{ purpose: 'invite' | 'reset_password'; name: string; email: string }>(
-        '/auth/token-info',
-        { token },
-      ),
+      api.post<{
+        purpose: 'invite' | 'verify_email' | 'reset_password';
+        name: string;
+        email: string;
+      }>('/auth/token-info', { token }),
     retry: false,
     staleTime: Infinity,
   });
@@ -127,7 +96,7 @@ export function SetPasswordPage() {
     onSuccess: ({ user }) => {
       setSessionUser(user);
       toast.success(
-        info.data?.purpose === 'invite' ? `Welcome to ${org.name}!` : 'Password updated',
+        info.data?.purpose === 'reset_password' ? 'Password updated' : `Welcome to ${org.name}!`,
       );
       navigate(homePath(user), { replace: true });
     },
@@ -143,7 +112,8 @@ export function SetPasswordPage() {
   if (info.isError || !info.data) {
     return <InvalidLink message={info.error?.message ?? 'This link is invalid.'} action="reset" />;
   }
-  const invite = info.data.purpose === 'invite';
+  // Invites and new-account confirmations both welcome the person in.
+  const invite = info.data.purpose !== 'reset_password';
   const errors = fieldErrors(save.error);
 
   return (
@@ -152,8 +122,8 @@ export function SetPasswordPage() {
       subtitle={
         invite ? (
           <>
-            Set a password for <strong className="text-slate-700">{info.data.email}</strong> to join{' '}
-            {org.name}.
+            Choose a password for <strong className="text-slate-700">{info.data.email}</strong> to{' '}
+            {info.data.purpose === 'invite' ? `join ${org.name}` : 'finish creating your account'}.
           </>
         ) : (
           <>

@@ -4,7 +4,7 @@ import { useBootstrap } from '../api/queries';
 import { homePath, safeNext, useBootstrapData, useCurrentUser } from '../lib/session';
 import { FullPageSpinner } from './ui/Misc';
 
-const SETUP_EXEMPT = ['/setup', '/dev/mailbox', '/check-email', '/verify-email'];
+const SETUP_EXEMPT = ['/setup', '/dev/mailbox', '/check-email', '/set-password'];
 
 /** Loads the session once, and sends a brand-new install to the setup page. */
 export function BootstrapGate({ children }: { children: ReactNode }) {

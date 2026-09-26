@@ -27,6 +27,19 @@ const ShiftBody = z.object({
   notes: zText(500),
 });
 
+/**
+ * Edits send only what changed; a missing field means "leave it alone".
+ * (Not ShiftBody.partial(): Zod keeps field defaults inside optional fields,
+ * so a missing labelId would become null and silently drop the label.)
+ */
+const ShiftPatchBody = z.object({
+  userId: zId.optional(),
+  labelId: zId.nullable().optional(),
+  startTime: zDateTime.optional(),
+  endTime: zDateTime.optional(),
+  notes: zText(500).optional(),
+});
+
 /** Admin-only: build, publish and manage tier schedules. */
 export function scheduleRoutes({ db, config, kick }: AppDeps): Router {
   const r = Router();
@@ -80,17 +93,28 @@ export function scheduleRoutes({ db, config, kick }: AppDeps): Router {
       if (diffDays(startDate, endDate) >= 42)
         throw badRequest('A schedule can cover at most 6 weeks');
       if (startDate !== schedule.startDate || endDate !== schedule.endDate) {
+        // Same per-tier lock as creating a schedule, so the overlap check holds.
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+          `schedule:${schedule.tierId}`,
+        ]);
         await assertNoScheduleOverlap(client, schedule.tierId, startDate, endDate, id);
         const { timezone } = await getSettings(client);
+        // Count both the working copy and the published version the team sees
+        // (a published shift pending removal comes back if changes are discarded).
         const { rows } = await client.query<{ count: number }>(
           `SELECT count(*)::int AS count FROM shifts
-            WHERE schedule_id = $1 AND deleted_at IS NULL
-              AND ((start_time AT TIME ZONE $4)::date < $2 OR (start_time AT TIME ZONE $4)::date > $3)`,
+            WHERE schedule_id = $1
+              AND ((deleted_at IS NULL
+                    AND ((start_time AT TIME ZONE $4)::date < $2
+                         OR (start_time AT TIME ZONE $4)::date > $3))
+                OR (published_at IS NOT NULL
+                    AND ((published_start_time AT TIME ZONE $4)::date < $2
+                         OR (published_start_time AT TIME ZONE $4)::date > $3)))`,
           [id, startDate, endDate, timezone],
         );
         if (rows[0]!.count > 0) {
           throw conflict(
-            `${rows[0]!.count} shift(s) fall outside the new dates. Move or delete them first.`,
+            `${rows[0]!.count} shift(s) fall outside the new dates, counting the published version the team sees. Move or delete them and publish first.`,
             'SHIFTS_OUTSIDE_RANGE',
           );
         }
@@ -148,7 +172,7 @@ export function shiftRoutes({ db }: AppDeps): Router {
 
   r.patch('/:id', async (req, res) => {
     const { id } = parse(zIdParam, req.params);
-    const body = parse(ShiftBody.partial().extend({ notes: zText(500).optional() }), req.body);
+    const body = parse(ShiftPatchBody, req.body);
     res.json(await updateShift(db, id, body));
   });
 

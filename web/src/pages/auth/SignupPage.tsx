@@ -11,7 +11,7 @@ import { useBootstrapData } from '../../lib/session';
 export default function SignupPage() {
   const { selfSignup, allowedDomains } = useBootstrapData();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [form, setForm] = useState({ name: '', email: '' });
   const signup = useMutation({
     mutationFn: () => api.post('/auth/signup', form),
     onSuccess: () => navigate(`/check-email?reason=signup&email=${encodeURIComponent(form.email)}`),
@@ -38,7 +38,7 @@ export default function SignupPage() {
   return (
     <AuthLayout
       title="Create your account"
-      subtitle="We'll email you a link to confirm your address."
+      subtitle="We'll email you a link to confirm your address and choose a password."
       footer={
         <>
           Already have an account? <TextLink to="/login">Sign in</TextLink>
@@ -52,7 +52,7 @@ export default function SignupPage() {
           signup.mutate();
         }}
       >
-        <FormError message={formMessage(signup.error, ['name', 'email', 'password'])} />
+        <FormError message={formMessage(signup.error, ['name', 'email'])} />
         <Field label="Full name" error={errors.name}>
           <Input
             autoComplete="name"
@@ -69,16 +69,6 @@ export default function SignupPage() {
             required
             value={form.email}
             onChange={(e) => setForm({ ...form, email: e.target.value })}
-          />
-        </Field>
-        <Field label="Password" error={errors.password} hint="At least 8 characters.">
-          <Input
-            type="password"
-            autoComplete="new-password"
-            minLength={8}
-            required
-            value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
           />
         </Field>
         <Button type="submit" variant="primary" className="w-full" loading={signup.isPending}>

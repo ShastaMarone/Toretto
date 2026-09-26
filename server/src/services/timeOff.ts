@@ -19,16 +19,26 @@ const REQUEST_SQL = `
          r.start_date AS "startDate", r.end_date AS "endDate", r.note, r.status,
          r.reviewed_at AS "reviewedAt", rb.name AS "reviewedByName", r.review_note AS "reviewNote",
          r.created_at AS "createdAt",
+         -- Time-off days are the organization's calendar days, as in the builder.
          (SELECT count(*)::int FROM shifts s
            WHERE s.user_id = r.user_id AND s.deleted_at IS NULL
-             AND s.start_time < ((r.end_date + 1)::timestamp AT TIME ZONE COALESCE(u.timezone, os.timezone))
-             AND s.end_time > (r.start_date::timestamp AT TIME ZONE COALESCE(u.timezone, os.timezone))
+             AND s.start_time < ((r.end_date + 1)::timestamp AT TIME ZONE os.timezone)
+             AND s.end_time > (r.start_date::timestamp AT TIME ZONE os.timezone)
          ) AS conflicts
     FROM time_off_requests r
     JOIN users u ON u.id = r.user_id
     JOIN time_off_types tt ON tt.id = r.type_id
     LEFT JOIN users rb ON rb.id = r.reviewed_by
     CROSS JOIN org_settings os`;
+
+/**
+ * The conflict count includes draft and unpublished shifts, which only admins
+ * may know about; strip it from anything a team member sees.
+ */
+export function forMember(request: TimeOffRequest): TimeOffRequest {
+  const { conflicts: _hidden, ...visible } = request;
+  return visible;
+}
 
 export async function getTimeOffRequest(db: Queryable, id: string): Promise<TimeOffRequest> {
   const { rows } = await db.query<TimeOffRequest>(`${REQUEST_SQL} WHERE r.id = $1`, [id]);
@@ -245,6 +255,10 @@ export async function reviewTimeOff(
     );
     const current = rows[0];
     if (!current) throw notFound('Time-off request');
+    // Same per-person lock as new requests, so re-approving can't race one.
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+      `time-off:${current.userId}`,
+    ]);
     const allowedFrom: TimeOffStatus[] =
       decision === 'approved' ? ['pending', 'denied'] : ['pending', 'approved'];
     if (!allowedFrom.includes(current.status)) {

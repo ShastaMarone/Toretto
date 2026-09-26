@@ -9,8 +9,9 @@ import { useBootstrapData } from '../../lib/session';
 
 const MESSAGES: Record<string, (email: string) => string> = {
   setup: (email) =>
-    `We sent a confirmation link to ${email}. Click it to finish setting up your account.`,
-  signup: (email) => `We sent a confirmation link to ${email}. Click it to activate your account.`,
+    `We sent a link to ${email}. Click it to confirm your address and choose your password.`,
+  signup: (email) =>
+    `We sent a link to ${email}. Click it to confirm your address and choose your password.`,
   magic: (email) =>
     `If ${email} has an account, a sign-in link is on its way. It works once and expires in 20 minutes.`,
   reset: (email) =>

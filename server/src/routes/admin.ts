@@ -230,11 +230,16 @@ export function timeOffAdminRoutes({ db, config, kick }: AppDeps): Router {
   return r;
 }
 
+function isLoopback(address: string | undefined): boolean {
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+}
+
 /** Development only: read every queued/sent email, including sign-in links. */
 export function devRoutes({ db, config }: AppDeps): Router {
   const r = Router();
-  r.get('/mailbox', async (_req, res) => {
-    if (!config.devMailbox) throw notFound('Page');
+  r.get('/mailbox', async (req, res) => {
+    // Sign-in links are in here: answer only the developer's own machine.
+    if (!config.devMailbox || !isLoopback(req.socket.remoteAddress)) throw notFound('Page');
     const { rows } = await db.query<MailboxMessage>(
       `SELECT id, kind, to_email AS "toEmail", subject, html, text, status, created_at AS "createdAt"
          FROM notifications ORDER BY created_at DESC LIMIT 100`,
