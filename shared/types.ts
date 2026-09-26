@@ -45,6 +45,8 @@ export interface Bootstrap {
   selfSignup: boolean;
   allowedDomains: string[];
   devMailbox: boolean;
+  /** An email provider is configured (otherwise emails only go to the server log). */
+  emailConfigured: boolean;
 }
 
 export interface OrgSettings {

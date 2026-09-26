@@ -145,3 +145,6 @@ vite.config.ts.timestamp-*
 # Toretto
 playwright-report/
 test-results/
+
+# Vercel build output
+.vercel/

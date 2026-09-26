@@ -5,7 +5,7 @@
   "description": "Tiered shift scheduling for teams: draft, publish, notify, confirm, and request time off.",
   "type": "module",
   "engines": {
-    "node": ">=22.22.0"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,magenta \"npm:dev:api\" \"npm:dev:web\"",
@@ -14,6 +14,7 @@
     "build": "npm run build:web && npm run build:server",
     "build:web": "vite build",
     "build:server": "node server/build.mjs",
+    "build:vercel": "npm run build:web && node server/build-vercel.mjs",
     "start": "node dist/server/index.js",
     "worker": "node dist/server/worker.js",
     "migrate": "tsx server/scripts/migrate.ts",
@@ -25,10 +26,12 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "npm run build && playwright test"
+    "test:e2e": "npm run build && playwright test",
+    "test:e2e:vercel": "npm run build:vercel && playwright test -c playwright.vercel.config.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.0",
+    "@vercel/functions": "^3.9.9",
     "cookie-parser": "^1.4.7",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",

@@ -182,6 +182,95 @@ export async function cleanupExpired(db: Db): Promise<void> {
   await db.query(`DELETE FROM auth_tokens WHERE expires_at < now() - interval '7 days'`);
 }
 
+export interface JobsReport {
+  /** People who were sent a reminder. */
+  reminders: number;
+  /** Emails that delivery was attempted for. */
+  emails: number;
+}
+
+export interface Jobs {
+  /**
+   * Send every email that is due. Concurrent calls share one run, and a call
+   * made during a run makes it go around once more, so nothing queued in the
+   * meantime is missed. Resolves with the number of emails attempted.
+   */
+  drainOutbox(): Promise<number>;
+  /**
+   * Periodic upkeep: queue due reminders, send due emails (including retries)
+   * and delete expired sessions. Reminders run at most every few minutes and
+   * cleanup hourly, unless `force` is set.
+   */
+  runDue(options?: { force?: boolean }): Promise<JobsReport>;
+}
+
+export function createJobs(deps: {
+  db: Db;
+  mailer: Mailer;
+  logger: Logger;
+  config: Config;
+  /** Checked between batches; stop sending when it returns true. */
+  shouldStop?: () => boolean;
+  /** Don't start a new batch after this long (serverless time limits). */
+  budgetMs?: number;
+}): Jobs {
+  const { db, mailer, logger, config, shouldStop = () => false, budgetMs = Infinity } = deps;
+  const REMINDER_EVERY_MS = 5 * 60_000;
+  const CLEANUP_EVERY_MS = 60 * 60_000;
+  let lastReminders = 0;
+  let lastCleanup = 0;
+  let draining: Promise<number> | null = null;
+  let again = false;
+
+  function drainOutbox(): Promise<number> {
+    if (draining) {
+      again = true;
+      return draining;
+    }
+    const until = Date.now() + budgetMs;
+    const canContinue = () => !shouldStop() && Date.now() < until;
+    if (!canContinue()) return Promise.resolve(0);
+    draining = (async () => {
+      let attempted = 0;
+      try {
+        do {
+          again = false;
+          let claimed: number;
+          do {
+            claimed = await processOutbox(db, mailer, logger);
+            attempted += claimed;
+          } while (claimed > 0 && canContinue());
+          // No await between this check and clearing `draining`, so a call
+          // either makes this run go around again or starts the next one.
+        } while (again && canContinue());
+      } finally {
+        draining = null;
+      }
+      return attempted;
+    })();
+    return draining;
+  }
+
+  return {
+    drainOutbox,
+    async runDue({ force = false } = {}) {
+      const now = Date.now();
+      let reminders = 0;
+      if (force || now - lastReminders >= REMINDER_EVERY_MS) {
+        lastReminders = now;
+        reminders = await queueReminders(db, config);
+        if (reminders) logger.info(`Queued ${reminders} shift reminder email(s)`);
+      }
+      const emails = await drainOutbox();
+      if (force || now - lastCleanup >= CLEANUP_EVERY_MS) {
+        lastCleanup = now;
+        await cleanupExpired(db);
+      }
+      return { reminders, emails };
+    },
+  };
+}
+
 export interface Worker {
   start(): void;
   stop(): Promise<void>;
@@ -189,21 +278,19 @@ export interface Worker {
   kick(): void;
 }
 
+/** Long-running background worker: polls the outbox and runs periodic jobs. */
 export function createWorker(deps: {
   db: Db;
   mailer: Mailer;
   logger: Logger;
   config: Config;
 }): Worker {
-  const { db, mailer, logger, config } = deps;
-  const REMINDER_EVERY_MS = 5 * 60_000;
-  const CLEANUP_EVERY_MS = 60 * 60_000;
+  const { logger, config } = deps;
   let timer: NodeJS.Timeout | null = null;
   let running: Promise<void> | null = null;
   let rerun = false;
   let stopped = true;
-  let lastReminders = 0;
-  let lastCleanup = 0;
+  const jobs = createJobs({ ...deps, shouldStop: () => stopped });
 
   const schedule = (ms: number) => {
     if (stopped) return;
@@ -211,30 +298,15 @@ export function createWorker(deps: {
     timer = setTimeout(() => void tick(), ms);
   };
 
-  async function runOnce(): Promise<void> {
-    const now = Date.now();
-    if (now - lastReminders >= REMINDER_EVERY_MS) {
-      lastReminders = now;
-      const queued = await queueReminders(db, config);
-      if (queued) logger.info(`Queued ${queued} shift reminder email(s)`);
-    }
-    // Drain everything that is due.
-    while (!stopped && (await processOutbox(db, mailer, logger)) > 0) {
-      /* keep going */
-    }
-    if (now - lastCleanup >= CLEANUP_EVERY_MS) {
-      lastCleanup = now;
-      await cleanupExpired(db);
-    }
-  }
-
   async function tick(): Promise<void> {
     timer = null;
     if (running) {
       rerun = true;
       return;
     }
-    running = runOnce()
+    running = jobs
+      .runDue()
+      .then(() => undefined)
       .catch((err) => logger.error('Background worker error', err))
       .finally(() => {
         running = null;

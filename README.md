@@ -53,7 +53,7 @@ request time off (paid holiday, personal day, vacation, …) by clicking a day.
 
 ## Quick start (local)
 
-You need **Node.js 22.22+** and **PostgreSQL 14+** (or Docker).
+You need **Node.js 22** (22.13 or later) and **PostgreSQL 14+** (or Docker).
 
 ```bash
 npm install
@@ -83,20 +83,21 @@ All settings are environment variables (see [`.env.example`](.env.example)).
 Organization name, time zone, week start, reminder timing and sign-up policy are
 changed in the app under **Settings**.
 
-| Variable                                            | Default                                   | Purpose                                                                                                   |
-| --------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `APP_URL`                                           | `http://localhost:5173`                   | Public URL of the app, used for links in emails. **Required in production.**                              |
-| `DATABASE_URL`                                      | local `toretto` DB                        | PostgreSQL connection string (add `?sslmode=require` if your host needs SSL). **Required in production.** |
-| `PORT`                                              | `3001`                                    | HTTP port.                                                                                                |
-| `ADMIN_EMAIL`                                       | —                                         | Only this address may complete the first-run setup page. **Set this before your first production start.** |
-| `EMAIL_TRANSPORT`                                   | `console`                                 | `console` (log + dev mailbox), `smtp`, `postmark` or `sendgrid`.                                          |
-| `EMAIL_FROM`                                        | `Toretto Scheduling <no-reply@localhost>` | Sender, e.g. `Scheduling <scheduling@yourcompany.com>`.                                                   |
-| `SMTP_URL`                                          | —                                         | For `smtp`: `smtp://user:pass@host:587`.                                                                  |
-| `POSTMARK_SERVER_TOKEN` / `POSTMARK_MESSAGE_STREAM` | — / `outbound`                            | For `postmark`.                                                                                           |
-| `SENDGRID_API_KEY`                                  | —                                         | For `sendgrid`.                                                                                           |
-| `RUN_WORKER`                                        | `true`                                    | Send emails from the web process. Set `false` if you run `npm run worker` separately.                     |
-| `TRUST_PROXY`                                       | `0`                                       | Set to `1` behind a load balancer (Render, Railway, Fly, Heroku) so rate limiting sees real client IPs.   |
-| `NODE_ENV`                                          | `development`                             | Use `production` in production (the Docker image already does).                                           |
+| Variable                                            | Default                                   | Purpose                                                                                                                             |
+| --------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_URL`                                           | `http://localhost:5173`                   | Public URL of the app, used for links in emails. **Required in production** (on Vercel it defaults to the production URL).          |
+| `DATABASE_URL`                                      | local `toretto` DB                        | PostgreSQL connection string (add `?sslmode=require` if your host needs SSL). `POSTGRES_URL` works too. **Required in production.** |
+| `PORT`                                              | `3001`                                    | HTTP port.                                                                                                                          |
+| `ADMIN_EMAIL`                                       | —                                         | Only this address may complete the first-run setup page. **Set this before your first production start.**                           |
+| `EMAIL_TRANSPORT`                                   | `console`                                 | `console` (log + dev mailbox), `smtp`, `postmark` or `sendgrid`.                                                                    |
+| `EMAIL_FROM`                                        | `Toretto Scheduling <no-reply@localhost>` | Sender, e.g. `Scheduling <scheduling@yourcompany.com>`.                                                                             |
+| `SMTP_URL`                                          | —                                         | For `smtp`: `smtp://user:pass@host:587`.                                                                                            |
+| `POSTMARK_SERVER_TOKEN` / `POSTMARK_MESSAGE_STREAM` | — / `outbound`                            | For `postmark`.                                                                                                                     |
+| `SENDGRID_API_KEY`                                  | —                                         | For `sendgrid`.                                                                                                                     |
+| `RUN_WORKER`                                        | `true`                                    | Send emails from the web process. Set `false` if you run `npm run worker` separately.                                               |
+| `CRON_SECRET`                                       | —                                         | On Vercel: turns on `GET /api/cron` (reminders, email retries) for Vercel Cron, which sends it as a bearer token. 16+ characters.   |
+| `TRUST_PROXY`                                       | `0` (`1` on Vercel)                       | Set to `1` behind a load balancer (Render, Railway, Fly, Heroku) so rate limiting sees real client IPs.                             |
+| `NODE_ENV`                                          | `development`                             | Use `production` in production (the Docker image already does).                                                                     |
 
 ### Email delivery
 
@@ -122,8 +123,13 @@ you can retry them.
 
 ## Deploying
 
-The app is one Node.js process plus PostgreSQL. It runs database migrations
-automatically on start and serves both the API and the web app.
+You need PostgreSQL, plus either one long-running Node.js process (Docker,
+Render, Railway, Fly.io, any server) or Vercel. Database migrations run
+automatically on start.
+
+### Docker, Render, Railway, Fly.io
+
+The server is one process that serves both the API and the web app.
 
 **Docker (any host):**
 
@@ -150,7 +156,51 @@ npm ci && npm run build
 NODE_ENV=production node dist/server/index.js
 ```
 
-Then create the first admin in one of two ways:
+### Vercel
+
+The repository deploys to Vercel as is. `vercel.json` builds it with
+`npm run build:vercel`, which serves the web app from Vercel's CDN and runs all
+of `/api` as one Node.js function (`server/src/vercel.ts`). It overrides any
+framework preset chosen in the dashboard.
+
+1. Import the repository in Vercel (or redeploy an existing project).
+2. Add a database: **Storage → Create Database → Neon** (or any PostgreSQL
+   host), connected to the project. This adds `DATABASE_URL` (or
+   `POSTGRES_URL`); the pooled connection string is fine. Pick the region
+   closest to your functions (Vercel's default is Washington, D.C., AWS
+   `us-east-1`).
+3. Under **Settings → Environment Variables**, add:
+   - `ADMIN_EMAIL`: the address allowed to create the first admin account.
+   - `EMAIL_TRANSPORT`, your provider's key and `EMAIL_FROM` (see
+     [Email delivery](#email-delivery)).
+   - `CRON_SECRET`: a random string of 16 or more characters, e.g. from
+     `openssl rand -hex 32`. Vercel sends it with its cron calls.
+   - `APP_URL`, only for a custom domain. Otherwise links in emails use the
+     project's production URL.
+4. Redeploy, because settings only apply to new deployments. Then open the
+   production URL and complete the setup page.
+
+Until email is set up, emails are only written to the function logs (the
+project's **Logs** tab), and the app says so. You can copy the setup link from
+there. Or create the admin from your computer instead:
+`DATABASE_URL="…" npm run create-admin -- --email you@yourcompany.com --name "Your Name" --password "…"`.
+
+Without a server process running between requests:
+
+- Emails are sent right after the request that queued them.
+- Reminders and email retries run on later requests, at most once a minute per
+  function instance. They also run once a day at 14:00 UTC, when Vercel Cron
+  calls `/api/cron` (the Hobby plan allows one run a day). On Pro you can run it
+  more often by changing the schedule in `server/build-vercel.mjs`.
+- Rate limits are counted per function instance, so they're looser than on a
+  single server. The [Vercel Firewall](https://vercel.com/docs/vercel-firewall)
+  can add stricter ones.
+- Preview deployments sit behind Vercel's login by default, so teammates can't
+  open links to them. Give the team the production URL.
+
+### The first admin
+
+Create the first admin in one of two ways:
 
 1. Open the app and complete the **setup page**. It only accepts the `ADMIN_EMAIL` address,
    and emails that address a link to choose the admin password.
@@ -268,6 +318,7 @@ npm run dev          # API (tsx watch) + web (Vite) with hot reload
 npm test             # unit + API integration tests (needs Postgres; see below)
 npm run test:e2e     # builds, then drives the whole flow in Chromium (Playwright;
                      # first time: npx playwright install chromium)
+npm run test:e2e:vercel   # the same, against the Vercel build output
 npm run lint         # ESLint
 npm run typecheck    # TypeScript (web + server)
 npm run format       # Prettier

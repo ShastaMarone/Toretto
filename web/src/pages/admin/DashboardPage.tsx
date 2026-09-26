@@ -104,7 +104,7 @@ function ScheduleLine({ schedule, action }: { schedule: ScheduleSummary; action:
 
 export default function DashboardPage() {
   const user = useCurrentUser();
-  const { org } = useBootstrapData();
+  const { org, devMailbox, emailConfigured } = useBootstrapData();
   const tz = user.timezone ?? org.timezone;
   const overview = useOverview();
 
@@ -140,6 +140,18 @@ export default function DashboardPage() {
           </>
         }
       />
+
+      {!emailConfigured && !devMailbox && (
+        <div className="mb-6 flex gap-3 rounded-xl bg-amber-50 p-4 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
+          <MailWarning className="mt-0.5 size-5 shrink-0 text-amber-600" />
+          <p>
+            <strong>Email isn't set up yet.</strong> Invites, schedule notifications and reminders
+            are only written to the server log, so nobody receives them. Set{' '}
+            <code className="font-mono text-xs">EMAIL_TRANSPORT</code> and your email provider's key
+            in the server's environment variables.
+          </p>
+        </div>
+      )}
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat
