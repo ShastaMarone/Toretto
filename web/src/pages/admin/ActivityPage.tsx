@@ -49,6 +49,10 @@ const KIND: Record<string, string> = {
   swap_declined: 'Swap declined',
   swap_cancelled: 'Swap withdrawn',
   swap_reviewed: 'Swap decision',
+  open_shift_posted: 'Open shift posted',
+  open_shift_claimed: 'Open shift picked up',
+  open_shift_reviewed: 'Open shift decision',
+  open_shift_cancelled: 'Open shift cancelled',
 };
 
 export default function ActivityPage() {

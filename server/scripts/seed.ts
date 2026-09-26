@@ -12,6 +12,7 @@ import { seedDefaults } from '../src/services/defaults';
 import { publishSchedule } from '../src/services/publish';
 import { copyShifts, ensureDefaultSchedule } from '../src/services/schedules';
 import { createShift } from '../src/services/shifts';
+import { claimOpenShift, postOpenShift } from '../src/services/openShifts';
 import { requestSwap, respondToSwap } from '../src/services/swaps';
 
 const { values } = parseArgs({
@@ -419,6 +420,24 @@ const morganSwap = await requestSwap(db, config, await authUser('morgan'), {
   note: null,
 });
 await respondToSwap(db, config, await authUser('riley'), morganSwap.id, 'accept');
+
+// ---- Open shifts: one open for Tier 2, one picked up by Sam -------------------
+const saturday = addDays(nextWeek, 5);
+await postOpenShift(db, config, admin, {
+  scheduleId: null,
+  tierId: tiers.t2!,
+  labelId: labelIds.Escalations ?? null,
+  ...shiftTimesFromLocal(saturday, '09:00', '17:00', timezone),
+  notes: 'Weekend escalations coverage',
+});
+const pickedUp = await postOpenShift(db, config, admin, {
+  scheduleId: null,
+  tierId: tiers.t1!,
+  labelId: null,
+  ...shiftTimesFromLocal(saturday, '10:00', '16:00', timezone),
+  notes: 'Backlog clean-up',
+});
+await claimOpenShift(db, config, await authUser('sam'), pickedUp.id);
 
 // Demo emails are already "delivered" so nothing gets sent to example.com.
 await db.query(`UPDATE notifications SET status = 'sent', sent_at = now() WHERE status = 'queued'`);

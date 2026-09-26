@@ -35,6 +35,7 @@ import { useMyShifts, useMySwaps, useMyTimeOff } from '../../api/queries';
 import { CalendarFeedPanel } from '../../components/CalendarFeed';
 import { HolidayBadge } from '../../components/schedule/CalendarBits';
 import { ShiftChip, StatusIcon } from '../../components/schedule/ShiftChip';
+import { OpenShiftsCard } from '../../components/swaps/OpenShiftsCard';
 import { SwapDialog } from '../../components/swaps/SwapDialog';
 import { SwapsCard } from '../../components/swaps/SwapsCard';
 import { TimeOffRequestDialog } from '../../components/TimeOffRequestDialog';
@@ -281,6 +282,7 @@ export default function MySchedulePage() {
 
         <div className="space-y-6">
           <SwapsCard tz={tz} />
+          <OpenShiftsCard tz={tz} />
           <Card>
             <CardHeader title="Next two weeks" />
             {upcoming.isLoading ? (

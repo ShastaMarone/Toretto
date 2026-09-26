@@ -340,6 +340,36 @@ export interface SwapOption {
   shifts: SwapShift[];
 }
 
+export type OpenShiftStatus =
+  | 'open'
+  /** Someone picked it up; waiting for an admin. */
+  | 'claimed'
+  /** Approved: it's someone's shift now. */
+  | 'filled'
+  | 'cancelled'
+  /** It started while still open. */
+  | 'expired';
+
+/** A shift nobody has yet, for anyone in its tier to pick up. */
+export interface OpenShift {
+  id: string;
+  status: OpenShiftStatus;
+  scheduleId: string;
+  scheduleName: string;
+  tier: { id: string; name: string; color: string };
+  label: { id: string; name: string; color: string } | null;
+  startTime: string;
+  endTime: string;
+  notes: string | null;
+  /** Who picked it up (or got it). */
+  claimedBy: { id: string; name: string } | null;
+  claimedAt: string | null;
+  reviewedByName: string | null;
+  createdAt: string;
+  /** For team members: why you can't pick it up now, or null if you can. */
+  busy?: string | null;
+}
+
 export interface AuditEntry {
   id: number;
   actorId: string | null;

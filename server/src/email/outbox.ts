@@ -24,7 +24,11 @@ export type NotificationKind =
   | 'swap_accepted'
   | 'swap_declined'
   | 'swap_cancelled'
-  | 'swap_reviewed';
+  | 'swap_reviewed'
+  | 'open_shift_posted'
+  | 'open_shift_claimed'
+  | 'open_shift_reviewed'
+  | 'open_shift_cancelled';
 
 export interface EnqueueInput {
   userId: string | null;

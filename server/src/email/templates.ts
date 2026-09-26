@@ -778,3 +778,97 @@ export function swapReviewedTemplate(
   ].join('\n');
   return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
 }
+
+// ---------------------------------------------------------------------------
+// Open shifts
+// ---------------------------------------------------------------------------
+
+interface OpenShiftEmail {
+  recipientName: string;
+  shift: EmailShift;
+  tierName: string;
+  tz: string;
+  timeFormat: TimeFormat;
+}
+
+export function openShiftPostedTemplate(ctx: EmailContext, input: OpenShiftEmail): RenderedEmail {
+  const day = shiftDay(input.shift, input.tz);
+  const subject = `Open shift on ${day}: can you take it?`;
+  const summary = `There's an open ${input.tierName} shift anyone in your tier can pick up.`;
+  const after = 'The first person to pick it up gets it once an admin approves.';
+  const url = `${ctx.appUrl}/my-schedule`;
+  const body = html`${heading('Open shift')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
+  ${shiftCard(ctx, input.shift, input.tz, input.timeFormat)} ${para(after)}
+  ${button(url, 'Pick it up')} ${muted(tzNote(input.tz, input.shift.startTime))}`;
+  const text = `Hi ${firstName(input.recipientName)},\n\n${summary}\n\n${shiftText(ctx, input.shift, input.tz, input.timeFormat)}\n\n${after}\n\nPick it up: ${url}`;
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+export function openShiftClaimedTemplate(
+  ctx: EmailContext,
+  input: OpenShiftEmail & { claimerName: string },
+): RenderedEmail {
+  const day = shiftDay(input.shift, input.tz);
+  const subject = `${input.claimerName} picked up the open shift on ${day}`;
+  const summary = `${input.claimerName} wants the open ${input.tierName} shift. It's theirs once you approve it.`;
+  const url = `${ctx.appUrl}/admin/shift-requests?tab=open`;
+  const body = html`${heading('An open shift was picked up')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
+  ${shiftCard(ctx, input.shift, input.tz, input.timeFormat)} ${button(url, 'Review')}
+  ${muted(tzNote(input.tz, input.shift.startTime))}`;
+  const text = `Hi ${firstName(input.recipientName)},\n\n${summary}\n\n${shiftText(ctx, input.shift, input.tz, input.timeFormat)}\n\nReview: ${url}`;
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+export function openShiftReviewedTemplate(
+  ctx: EmailContext,
+  input: OpenShiftEmail & {
+    status: 'approved' | 'denied';
+    reviewerName: string;
+    reviewNote: string | null;
+  },
+): RenderedEmail {
+  const day = shiftDay(input.shift, input.tz);
+  const approved = input.status === 'approved';
+  const subject = approved
+    ? `You've got the shift on ${day}`
+    : `The open shift on ${day} wasn't approved for you`;
+  const summary = approved
+    ? `${input.reviewerName} approved it: it's on your schedule now, already confirmed.`
+    : `${input.reviewerName} didn't approve your pickup, so it's not on your schedule.`;
+  const url = `${ctx.appUrl}/my-schedule`;
+  const body = html`${heading(approved ? "It's your shift" : 'Pickup not approved')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
+  ${input.reviewNote ? quote(input.reviewNote) : ''}
+  ${shiftCard(ctx, input.shift, input.tz, input.timeFormat, { cancelled: !approved })}
+  ${button(url, 'View my schedule')}`;
+  const text = [
+    `Hi ${firstName(input.recipientName)},`,
+    '',
+    summary,
+    input.reviewNote ? `Note: ${input.reviewNote}` : '',
+    '',
+    shiftText(ctx, input.shift, input.tz, input.timeFormat),
+    '',
+    `My schedule: ${url}`,
+  ].join('\n');
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+export function openShiftCancelledTemplate(
+  ctx: EmailContext,
+  input: OpenShiftEmail,
+): RenderedEmail {
+  const day = shiftDay(input.shift, input.tz);
+  const subject = `The open shift on ${day} was cancelled`;
+  const summary =
+    "An admin cancelled the open shift you picked up, so it won't be on your schedule.";
+  const url = `${ctx.appUrl}/my-schedule`;
+  const body = html`${heading('Open shift cancelled')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
+  ${shiftCard(ctx, input.shift, input.tz, input.timeFormat, { cancelled: true })}
+  ${button(url, 'View my schedule')}`;
+  const text = `Hi ${firstName(input.recipientName)},\n\n${summary}\n\n${shiftText(ctx, input.shift, input.tz, input.timeFormat)}\n\n${url}`;
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}

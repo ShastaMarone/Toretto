@@ -5,6 +5,7 @@ import {
   formatDateRange,
   formatDay,
   formatHours,
+  formatShiftWhen,
   formatTimestamp,
   localDate,
   moveShiftToDate,
@@ -24,12 +25,13 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
 import { AlarmClock, CopyPlus, Ellipsis, Plus, Send, Undo2 } from 'lucide-react';
 import { useMemo, useState, type DragEvent, type ReactNode } from 'react';
-import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
 import {
   keys,
   useScheduleRange,
+  useOpenShifts,
   useSchedules,
   useSettings,
   useTeams,
@@ -195,6 +197,7 @@ function Builder({
   const tiers = useTiers();
   const teams = useTeams();
   const rules = overtimeRules(useSettings().data);
+  const openShifts = useOpenShifts();
   const days = useMemo(() => eachDay(data.from, data.to), [data.from, data.to]);
   const compact = days.length > 14;
   const holidays = useHolidays(data.from, data.to);
@@ -261,6 +264,14 @@ function Builder({
     return ids.size;
   }, [data.shifts, data.removedShifts]);
   const elsewhere = Math.max(0, schedule.pendingChanges - data.changes.total);
+  // Open shifts on this schedule in the days shown, not taken yet.
+  const openHere = (openShifts.data ?? []).filter(
+    (o) =>
+      (o.status === 'open' || o.status === 'claimed') &&
+      o.scheduleId === schedule.id &&
+      localDate(o.startTime, tz) >= data.from &&
+      localDate(o.startTime, tz) <= data.to,
+  );
 
   // ---- mutations ------------------------------------------------------------
   const create = useMutation({
@@ -605,6 +616,28 @@ function Builder({
           >
             Show me
           </button>
+        </Banner>
+      )}
+      {openHere.length > 0 && (
+        <Banner tone="slate">
+          <strong>
+            {openHere.length} open shift{openHere.length === 1 ? '' : 's'} this {periodWord}
+          </strong>
+          :{' '}
+          {openHere
+            .slice(0, 3)
+            .map(
+              (o) =>
+                `${formatShiftWhen(o.startTime, o.endTime, tz, timeFormat)} (${o.tier.name}${o.claimedBy ? `, picked up by ${o.claimedBy.name}` : ''})`,
+            )
+            .join('; ')}
+          {openHere.length > 3 && ` and ${openHere.length - 3} more`}.{' '}
+          <Link
+            to="/admin/shift-requests?tab=open"
+            className="font-semibold text-brand-600 hover:underline"
+          >
+            Manage open shifts
+          </Link>
         </Banner>
       )}
 

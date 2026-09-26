@@ -2,21 +2,18 @@ import type { ShiftSwap, SwapOption, SwapShift, SwapStatus } from '@shared/types
 import type { AuthUser } from '../auth/types';
 import type { Config } from '../config';
 import { withTransaction, type Db, type Queryable } from '../db';
-import { enqueueEmail } from '../email/outbox';
 import {
   swapAcceptedTemplate,
   swapCancelledTemplate,
   swapDeclinedTemplate,
   swapRequestedTemplate,
   swapReviewedTemplate,
-  type EmailContext,
   type EmailShift,
 } from '../email/templates';
 import { badRequest, conflict, notFound } from '../errors';
 import { audit } from './audit';
 import { busyBetween, busyReason } from './availability';
-import { notifyAdmins } from './notify';
-import { getSettings, timeFormatFor, zoneFor } from './settings';
+import { notifyAdmins, notifyPerson } from './notify';
 
 /** How far ahead a coworker's shifts are offered for a trade. */
 const TRADE_DAYS = 60;
@@ -294,35 +291,6 @@ const emailShift = (s: {
   needsConfirmation: false,
 });
 
-async function emailPerson(
-  db: Queryable,
-  config: Config,
-  person: Person,
-  kind: 'swap_requested' | 'swap_declined' | 'swap_cancelled' | 'swap_reviewed',
-  shiftIds: string[],
-  render: (
-    ctx: EmailContext,
-    prefs: { tz: string; timeFormat: '12h' | '24h' },
-  ) => {
-    subject: string;
-    html: string;
-    text: string;
-  },
-): Promise<void> {
-  if (!person.active) return;
-  const settings = await getSettings(db);
-  await enqueueEmail(db, {
-    userId: person.id,
-    to: person.email,
-    kind,
-    shiftIds,
-    email: render(
-      { orgName: settings.orgName, appUrl: config.appUrl },
-      { tz: zoneFor(person, settings), timeFormat: timeFormatFor(person, settings) },
-    ),
-  });
-}
-
 /** Coworkers in your tier who could take one of your shifts, and their shifts you could take back. */
 export async function swapOptions(
   db: Queryable,
@@ -412,13 +380,10 @@ export async function requestSwap(
       [shift.id, user.id, recipient.id, returnShift?.id ?? null, input.note],
     );
     const swapId = rows[0]!.id;
-    await emailPerson(
-      client,
-      config,
-      recipient,
-      'swap_requested',
-      [shift.id, ...(returnShift ? [returnShift.id] : [])],
-      (ctx, prefs) =>
+    await notifyPerson(client, config, recipient, {
+      kind: 'swap_requested',
+      shiftIds: [shift.id, ...(returnShift ? [returnShift.id] : [])],
+      render: (ctx, prefs) =>
         swapRequestedTemplate(ctx, {
           recipientName: recipient.name,
           requesterName: requester.name,
@@ -427,7 +392,7 @@ export async function requestSwap(
           note: input.note,
           ...prefs,
         }),
-    );
+    });
     await audit(
       client,
       user.id,
@@ -521,15 +486,18 @@ export async function respondToSwap(
           }),
       });
     } else {
-      await emailPerson(client, config, swap.requester, 'swap_declined', shiftIds, (ctx, prefs) =>
-        swapDeclinedTemplate(ctx, {
-          recipientName: swap.requester.name,
-          takerName: swap.recipient.name,
-          shift: emailShift(shift),
-          returnShift: null,
-          ...prefs,
-        }),
-      );
+      await notifyPerson(client, config, swap.requester, {
+        kind: 'swap_declined',
+        shiftIds: shiftIds,
+        render: (ctx, prefs) =>
+          swapDeclinedTemplate(ctx, {
+            recipientName: swap.requester.name,
+            takerName: swap.recipient.name,
+            shift: emailShift(shift),
+            returnShift: null,
+            ...prefs,
+          }),
+      });
     }
     await audit(
       client,
@@ -556,13 +524,10 @@ export async function cancelSwap(
     assertStatus(swap.status, ['pending', 'accepted']);
     await client.query("UPDATE shift_swaps SET status = 'cancelled' WHERE id = $1", [swapId]);
     const view = await getSwap(client, swapId);
-    await emailPerson(
-      client,
-      config,
-      swap.recipient,
-      'swap_cancelled',
-      [view.shift.id],
-      (ctx, prefs) =>
+    await notifyPerson(client, config, swap.recipient, {
+      kind: 'swap_cancelled',
+      shiftIds: [view.shift.id],
+      render: (ctx, prefs) =>
         swapCancelledTemplate(ctx, {
           recipientName: swap.recipient.name,
           requesterName: swap.requester.name,
@@ -570,7 +535,7 @@ export async function cancelSwap(
           returnShift: null,
           ...prefs,
         }),
-    );
+    });
     await audit(
       client,
       user.id,
@@ -654,13 +619,10 @@ export async function reviewSwap(
       [recipient, 'recipient', requester],
     ] as const) {
       if (person.id === admin.id) continue;
-      await emailPerson(
-        client,
-        config,
-        person,
-        'swap_reviewed',
-        shifts.map((s) => s.id),
-        (ctx, prefs) =>
+      await notifyPerson(client, config, person, {
+        kind: 'swap_reviewed',
+        shiftIds: shifts.map((s) => s.id),
+        render: (ctx, prefs) =>
           swapReviewedTemplate(ctx, {
             recipientName: person.name,
             status: decision,
@@ -672,7 +634,7 @@ export async function reviewSwap(
             returnShift: view.returnShift ? emailShift(view.returnShift) : null,
             ...prefs,
           }),
-      );
+      });
     }
     await audit(
       client,

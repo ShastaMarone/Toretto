@@ -5,6 +5,7 @@ import type {
   CalendarFeed,
   Label,
   NotificationEntry,
+  OpenShift,
   OrgSettings,
   Person,
   ScheduleRange,
@@ -40,6 +41,8 @@ export const keys = {
   calendarFeed: ['calendar-feed'] as const,
   mySwaps: ['my-swaps'] as const,
   swaps: ['swaps'] as const,
+  myOpenShifts: ['my-open-shifts'] as const,
+  openShifts: ['open-shifts'] as const,
 };
 
 export const useBootstrap = () =>
@@ -110,3 +113,7 @@ export const useMySwaps = () =>
   useQuery({ queryKey: keys.mySwaps, queryFn: () => api.get<ShiftSwap[]>('/my/swaps') });
 export const useSwaps = () =>
   useQuery({ queryKey: keys.swaps, queryFn: () => api.get<ShiftSwap[]>('/swaps') });
+export const useMyOpenShifts = () =>
+  useQuery({ queryKey: keys.myOpenShifts, queryFn: () => api.get<OpenShift[]>('/my/open-shifts') });
+export const useOpenShifts = () =>
+  useQuery({ queryKey: keys.openShifts, queryFn: () => api.get<OpenShift[]>('/open-shifts') });

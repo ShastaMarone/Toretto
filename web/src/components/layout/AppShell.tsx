@@ -18,7 +18,7 @@ import { useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
-import { useSwaps, useTimeOffRequests } from '../../api/queries';
+import { useOpenShifts, useSwaps, useTimeOffRequests } from '../../api/queries';
 import { cx } from '../../lib/cx';
 import { useBootstrapData, useCurrentUser, useSetSessionUser } from '../../lib/session';
 import { ThemeToggle } from '../ThemeToggle';
@@ -84,10 +84,14 @@ function usePendingTimeOffCount(): number {
   return data?.length ?? 0;
 }
 
-/** Swaps the coworker agreed to, waiting for an admin. */
+/** Swaps the coworker agreed to, and open shifts someone picked up: waiting for an admin. */
 function useSwapsToApprove(): number {
-  const { data } = useSwaps();
-  return data?.filter((w) => w.status === 'accepted').length ?? 0;
+  const swaps = useSwaps();
+  const openShifts = useOpenShifts();
+  return (
+    (swaps.data?.filter((w) => w.status === 'accepted').length ?? 0) +
+    (openShifts.data?.filter((o) => o.status === 'claimed').length ?? 0)
+  );
 }
 
 function Sidebar({ onNavigate }: { onNavigate: () => void }) {
@@ -172,7 +176,12 @@ function AdminNav({ onNavigate }: { onNavigate: () => void }) {
         { to: '/admin', label: 'Dashboard', icon: <LayoutDashboard />, end: true },
         { to: '/admin/schedules', label: 'Schedules', icon: <CalendarRange /> },
         { to: '/admin/time-off', label: 'Time off', icon: <Plane />, badge: pending },
-        { to: '/admin/shift-requests', label: 'Swaps', icon: <Repeat />, badge: swaps },
+        {
+          to: '/admin/shift-requests',
+          label: 'Swaps & open shifts',
+          icon: <Repeat />,
+          badge: swaps,
+        },
         { to: '/admin/hours', label: 'Hours', icon: <Timer /> },
         { to: '/admin/people', label: 'People', icon: <Users /> },
         { to: '/admin/tiers', label: 'Tiers & labels', icon: <Layers /> },

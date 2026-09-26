@@ -95,6 +95,18 @@ export function describeActivity(
       return `approved ${str(d.requesterName)} and ${str(d.recipientName)}'s swap (${shiftWhen(d, tz, format)})`;
     case 'swap.denied':
       return `declined ${str(d.requesterName)} and ${str(d.recipientName)}'s swap`;
+    case 'open_shift.posted':
+      return `posted an open ${str(d.tierName)} shift, ${shiftWhen(d, tz, format)}`;
+    case 'open_shift.claimed':
+      return `picked up the open shift ${shiftWhen(d, tz, format)}`;
+    case 'open_shift.released':
+      return `let go of the open shift ${shiftWhen(d, tz, format)}`;
+    case 'open_shift.approved':
+      return `gave ${str(d.personName)} the open shift ${shiftWhen(d, tz, format)}`;
+    case 'open_shift.denied':
+      return `declined ${str(d.personName)}'s pickup of the open shift ${shiftWhen(d, tz, format)}`;
+    case 'open_shift.cancelled':
+      return `cancelled the open ${str(d.tierName)} shift ${shiftWhen(d, tz, format)}`;
     case 'user.invited':
       return `invited ${str(d.name)} (${str(d.email)})`;
     case 'user.invite_resent':

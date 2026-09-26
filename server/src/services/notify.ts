@@ -61,3 +61,37 @@ export async function notifyAdmins(
   }
   return admins.length;
 }
+
+/** Someone to email, with their own time zone and 12/24-hour choice. */
+export interface Reader {
+  id: string;
+  email: string;
+  active: boolean;
+  timezone: string | null;
+  timeFormat: TimeFormat | null;
+}
+
+/** Email one person in their own zone and format (nobody, if they're deactivated). */
+export async function notifyPerson(
+  client: Queryable,
+  config: Config,
+  person: Reader,
+  input: {
+    kind: NotificationKind;
+    shiftIds?: string[];
+    render: (ctx: EmailContext, prefs: { tz: string; timeFormat: TimeFormat }) => RenderedEmail;
+  },
+): Promise<void> {
+  if (!person.active) return;
+  const settings = await getSettings(client);
+  await enqueueEmail(client, {
+    userId: person.id,
+    to: person.email,
+    kind: input.kind,
+    shiftIds: input.shiftIds,
+    email: input.render(
+      { orgName: settings.orgName, appUrl: config.appUrl },
+      { tz: zoneFor(person, settings), timeFormat: timeFormatFor(person, settings) },
+    ),
+  });
+}

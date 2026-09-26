@@ -165,8 +165,8 @@ export default function ProfilePage() {
                 checked={user.notifySwaps}
                 disabled={saveNotifications.isPending}
                 onChange={(notifySwaps) => saveNotifications.mutate({ notifySwaps })}
-                label="Shift swaps"
-                description="When coworkers agree to a swap that needs your approval."
+                label="Swaps and open shifts"
+                description="When a swap, or someone picking up an open shift, needs your approval."
               />
             </div>
           </Card>
