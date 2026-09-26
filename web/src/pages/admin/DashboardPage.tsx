@@ -1,11 +1,20 @@
-import { formatDateRange, formatDay, formatTimeRange, localDate } from '@shared/time';
+import { holidaysBetween } from '@shared/holidays';
+import {
+  addDays,
+  formatDateRange,
+  formatDay,
+  formatTimeRange,
+  localDate,
+  todayIn,
+} from '@shared/time';
 import type { ScheduleSummary, UnconfirmedShift } from '@shared/types';
 import { DateTime } from 'luxon';
 import {
   CalendarClock,
-  CalendarPlus,
+  CalendarDays,
   ChevronRight,
   CircleAlert,
+  Leaf,
   MailWarning,
   Plane,
   Sparkles,
@@ -17,7 +26,6 @@ import { Link } from 'react-router';
 import { useOverview } from '../../api/queries';
 import { ActivityLine } from '../../components/ActivityLine';
 import { ConfirmationBar } from '../../components/schedule/ConfirmationBar';
-import { StatusBadge } from '../../components/schedule/StatusBadge';
 import { ButtonLink } from '../../components/ui/Button';
 import {
   Avatar,
@@ -30,7 +38,6 @@ import {
   PageHeader,
 } from '../../components/ui/Misc';
 import { cx } from '../../lib/cx';
-import { scheduleTitle } from '../../lib/schedule';
 import { useBootstrapData, useCurrentUser } from '../../lib/session';
 
 function greeting(tz: string): string {
@@ -49,21 +56,21 @@ function Stat({
   icon: ReactNode;
   value: number;
   label: string;
-  tone: 'indigo' | 'amber' | 'red' | 'slate';
+  tone: 'brand' | 'amber' | 'red' | 'slate';
 }) {
   const tones = {
-    indigo: 'bg-indigo-50 text-indigo-600',
+    brand: 'bg-brand-50 text-brand-600',
     amber: 'bg-amber-50 text-amber-600',
     red: 'bg-rose-50 text-rose-600',
     slate: 'bg-slate-100 text-slate-500',
   };
   const className =
-    'group rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 transition hover:ring-indigo-300';
+    'glass underglow group rounded-2xl p-4 ring-1 ring-slate-200/80 transition hover:-translate-y-0.5 hover:ring-brand-300 dark:hover:ring-brand-400/50';
   const body = (
     <>
       <div className="flex items-center justify-between">
         <span className={cx('rounded-lg p-2 [&>svg]:size-5', tones[tone])}>{icon}</span>
-        <ChevronRight className="size-4 text-slate-300 group-hover:text-indigo-500" />
+        <ChevronRight className="size-4 text-slate-300 group-hover:text-brand-500" />
       </div>
       <p className="mt-3 text-2xl font-bold tabular-nums text-slate-900">{value}</p>
       <p className="text-sm text-slate-500">{label}</p>
@@ -80,23 +87,27 @@ function Stat({
   );
 }
 
-function ScheduleLine({ schedule, action }: { schedule: ScheduleSummary; action: string }) {
+function ScheduleLine({ schedule }: { schedule: ScheduleSummary }) {
+  const range =
+    schedule.firstChangeDate && schedule.lastChangeDate
+      ? formatDateRange(schedule.firstChangeDate, schedule.lastChangeDate)
+      : null;
   return (
     <li>
       <Link
-        to={`/admin/schedules/${schedule.id}`}
+        to={`/admin/schedules/${schedule.id}${schedule.firstChangeDate ? `?date=${schedule.firstChangeDate}` : ''}`}
         className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50"
       >
-        <ColorDot color={schedule.tierColor} />
+        <span className="neon bg-neon size-2.5 shrink-0 rounded-full" aria-hidden />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-slate-900">
-            {schedule.tierName} · {scheduleTitle(schedule)}
+          <p className="truncate text-sm font-medium text-slate-900">{schedule.name}</p>
+          <p className="text-xs text-slate-500">
+            {schedule.pendingChanges} unpublished change
+            {schedule.pendingChanges === 1 ? '' : 's'}
+            {range && ` · ${range}`}
           </p>
-          <div className="mt-0.5">
-            <StatusBadge schedule={schedule} />
-          </div>
         </div>
-        <span className="text-sm font-semibold text-indigo-600">{action}</span>
+        <span className="text-sm font-semibold text-brand-600">Review & publish</span>
       </Link>
     </li>
   );
@@ -112,7 +123,12 @@ export default function DashboardPage() {
   if (overview.isError || !overview.data)
     return <ErrorBlock error={overview.error} onRetry={() => void overview.refetch()} />;
   const o = overview.data;
-  const attention = [...o.drafts, ...o.withChanges];
+  const attention = o.schedules.filter((s) => s.pendingChanges > 0);
+  const today = todayIn(org.timezone);
+  const nextHolidays = [...holidaysBetween(org.holidayRegion, today, addDays(today, 120)).values()]
+    .flat()
+    .filter((h) => !h.observed)
+    .slice(0, 3);
   const grouped = new Map<string, UnconfirmedShift[]>();
   for (const s of o.unconfirmedSoon) grouped.set(s.userId, [...(grouped.get(s.userId) ?? []), s]);
   const unconfirmedByPerson = [...grouped.values()].map((shifts) => ({
@@ -131,11 +147,11 @@ export default function DashboardPage() {
               Invite people
             </ButtonLink>
             <ButtonLink
-              to="/admin/schedules?new=1"
+              to="/admin/schedules"
               variant="primary"
-              icon={<CalendarPlus className="size-4" />}
+              icon={<CalendarDays className="size-4" />}
             >
-              New schedule
+              Open schedule
             </ButtonLink>
           </>
         }
@@ -159,7 +175,7 @@ export default function DashboardPage() {
           icon={<Plane />}
           value={o.pendingTimeOff}
           label="Time-off requests to review"
-          tone={o.pendingTimeOff ? 'indigo' : 'slate'}
+          tone={o.pendingTimeOff ? 'brand' : 'slate'}
         />
         <Stat
           to="#unconfirmed"
@@ -189,21 +205,18 @@ export default function DashboardPage() {
           <Card>
             <CardHeader
               title="Needs your attention"
-              description="Drafts and unpublished changes the team can't see yet."
+              description="Unpublished changes the team can't see yet."
             />
             {attention.length === 0 && o.peopleWithoutTier === 0 ? (
               <EmptyState
                 icon={<Sparkles />}
                 title="You're all caught up"
-                description="Every schedule is published."
+                description="Everything on the schedule is published."
               />
             ) : (
               <ul className="divide-y divide-slate-100">
-                {o.drafts.map((s) => (
-                  <ScheduleLine key={s.id} schedule={s} action="Finish & publish" />
-                ))}
-                {o.withChanges.map((s) => (
-                  <ScheduleLine key={s.id} schedule={s} action="Review changes" />
+                {attention.map((s) => (
+                  <ScheduleLine key={s.id} schedule={s} />
                 ))}
                 {o.peopleWithoutTier > 0 && (
                   <li>
@@ -216,7 +229,7 @@ export default function DashboardPage() {
                         {o.peopleWithoutTier}{' '}
                         {o.peopleWithoutTier === 1 ? 'person has' : 'people have'} no tier yet
                       </p>
-                      <span className="text-sm font-semibold text-indigo-600">Assign</span>
+                      <span className="text-sm font-semibold text-brand-600">Assign</span>
                     </Link>
                   </li>
                 )}
@@ -225,40 +238,60 @@ export default function DashboardPage() {
           </Card>
 
           <Card>
-            <CardHeader
-              title="Published schedules"
-              description="Confirmation progress for current and upcoming schedules."
-            />
-            {o.upcoming.length === 0 ? (
-              <EmptyState
-                title="Nothing published yet"
-                description="Published schedules and their confirmations appear here."
-              />
-            ) : (
-              <ul className="divide-y divide-slate-100">
-                {o.upcoming.map((s) => (
-                  <li key={s.id}>
-                    <Link
-                      to={`/admin/schedules/${s.id}`}
-                      className="flex flex-wrap items-center gap-3 px-5 py-3 hover:bg-slate-50"
-                    >
-                      <ColorDot color={s.tierColor} />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-slate-900">{s.tierName}</p>
+            <CardHeader title="Confirmations" description="Published shifts confirmed, by week." />
+            <ul className="divide-y divide-slate-100">
+              {o.weeks.map((w, i) => (
+                <li key={w.startDate}>
+                  <Link
+                    to={`/admin/schedules/${o.schedules.find((s) => s.isDefault)?.id ?? ''}?date=${w.startDate}`}
+                    className="flex flex-wrap items-center gap-3 px-5 py-3 hover:bg-slate-50"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-900">
+                        {i === 0
+                          ? 'This week'
+                          : i === 1
+                            ? 'Next week'
+                            : formatDateRange(w.startDate, w.endDate)}
+                      </p>
+                      {i < 2 && (
                         <p className="text-xs text-slate-500">
-                          {formatDateRange(s.startDate, s.endDate)}
+                          {formatDateRange(w.startDate, w.endDate)}
                         </p>
-                      </div>
-                      <ConfirmationBar
-                        confirmed={s.confirmedCount}
-                        total={s.confirmedCount + s.pendingCount}
-                      />
-                    </Link>
+                      )}
+                    </div>
+                    {w.total ? (
+                      <ConfirmationBar confirmed={w.confirmed} total={w.total} />
+                    ) : (
+                      <span className="text-xs text-slate-400">Nothing published</span>
+                    )}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Card>
+
+          {nextHolidays.length > 0 && (
+            <Card>
+              <CardHeader
+                title="Upcoming holidays"
+                description="Statutory holidays for your region (Settings)."
+              />
+              <ul className="divide-y divide-slate-100">
+                {nextHolidays.map((h) => (
+                  <li key={h.date + h.name} className="flex items-center gap-3 px-5 py-2.5">
+                    <span className="rounded-lg bg-rose-50 p-1.5 text-rose-600 ring-1 ring-inset ring-rose-200">
+                      <Leaf className="size-4" />
+                    </span>
+                    <p className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">
+                      {h.name}
+                    </p>
+                    <span className="text-xs text-slate-500">{formatDay(h.date)}</span>
                   </li>
                 ))}
               </ul>
-            )}
-          </Card>
+            </Card>
+          )}
         </div>
 
         <div className="space-y-6">
@@ -288,7 +321,11 @@ export default function DashboardPage() {
                         </p>
                       </div>
                       <span className="flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-amber-700">
-                        {[...new Map(shifts.map((s) => [s.tier.id, s.tier])).values()].map((t) => (
+                        {[
+                          ...new Map(
+                            shifts.flatMap((s) => (s.tier ? [[s.tier.id, s.tier] as const] : [])),
+                          ).values(),
+                        ].map((t) => (
                           <ColorDot key={t.id} color={t.color} />
                         ))}
                         {shifts.length} unconfirmed
@@ -311,7 +348,7 @@ export default function DashboardPage() {
               actions={
                 <Link
                   to="/admin/activity"
-                  className="text-sm font-semibold text-indigo-600 hover:text-indigo-500"
+                  className="text-sm font-semibold text-brand-600 hover:text-brand-500"
                 >
                   View all
                 </Link>

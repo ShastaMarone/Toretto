@@ -59,7 +59,7 @@ export function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
       className={cx(
-        'mx-auto mt-auto mb-0 max-h-[92dvh] w-full max-w-none overflow-hidden rounded-t-2xl bg-white p-0 text-slate-900 shadow-2xl sm:my-auto sm:w-[calc(100%-2rem)] sm:rounded-2xl',
+        'mx-auto mt-auto mb-0 max-h-[92dvh] w-full max-w-none overflow-hidden rounded-t-2xl bg-surface/90 p-0 text-slate-900 shadow-2xl ring-1 ring-slate-200/70 backdrop-blur-xl sm:my-auto sm:w-[calc(100%-2rem)] sm:rounded-2xl dark:shadow-[0_30px_80px_-20px_var(--glow)]',
         widths[size],
       )}
     >

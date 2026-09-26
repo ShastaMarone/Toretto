@@ -40,6 +40,8 @@ export function toSessionUser(user: AuthUser): SessionUser {
     teamId: user.teamId,
     timezone: user.timezone,
     hasPassword: user.hasPassword,
+    notifyTimeOff: user.notifyTimeOff,
+    notifyConfirmations: user.notifyConfirmations,
   };
 }
 

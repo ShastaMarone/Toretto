@@ -3,9 +3,10 @@ import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
+import { ThemeToggle } from '../../components/ThemeToggle';
 import { TimezoneSelect } from '../../components/TimezoneSelect';
 import { Button } from '../../components/ui/Button';
-import { Field, FormError, Input } from '../../components/ui/Form';
+import { Field, FormError, Input, Toggle } from '../../components/ui/Form';
 import { Card, CardHeader, PageHeader } from '../../components/ui/Misc';
 import { fieldErrors, formMessage } from '../../lib/forms';
 import { useBootstrapData, useCurrentUser, useSetSessionUser } from '../../lib/session';
@@ -39,6 +40,15 @@ export default function ProfilePage() {
       setNext('');
       toast.success('Password updated. Other devices were signed out.');
     },
+  });
+  const saveNotifications = useMutation({
+    mutationFn: (patch: { notifyTimeOff?: boolean; notifyConfirmations?: boolean }) =>
+      api.patch<{ user: SessionUser }>('/me', patch),
+    onSuccess: ({ user }) => {
+      setSessionUser(user);
+      toast.success('Email preferences saved');
+    },
+    onError: (e) => toast.error(e.message),
   });
   const signOutOthers = useMutation({
     mutationFn: () => api.post('/me/sign-out-others'),
@@ -86,6 +96,41 @@ export default function ProfilePage() {
             </div>
           </form>
         </Card>
+
+        <Card>
+          <CardHeader
+            title="Appearance"
+            description="Light, dark, or follow your device. Saved on this device."
+            actions={<ThemeToggle withLabels />}
+          />
+        </Card>
+
+        {user.role === 'admin' && (
+          <Card>
+            <CardHeader
+              title="Admin emails"
+              description={`Sent to ${user.email}. You're never emailed about your own actions.`}
+            />
+            <div className="space-y-4 p-5">
+              <Toggle
+                checked={user.notifyTimeOff}
+                disabled={saveNotifications.isPending}
+                onChange={(notifyTimeOff) => saveNotifications.mutate({ notifyTimeOff })}
+                label="Time-off requests"
+                description="When someone requests time off, or cancels a request."
+              />
+              <Toggle
+                checked={user.notifyConfirmations}
+                disabled={saveNotifications.isPending}
+                onChange={(notifyConfirmations) =>
+                  saveNotifications.mutate({ notifyConfirmations })
+                }
+                label="Shift confirmations"
+                description="When someone confirms one or more of their shifts."
+              />
+            </div>
+          </Card>
+        )}
 
         <Card>
           <CardHeader

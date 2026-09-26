@@ -1,12 +1,22 @@
 import {
+  addDays,
   eachDay,
-  formatDateRange,
+  endOfMonth,
   localDate,
   localTime,
   shiftHours,
+  startOfMonth,
+  startOfWeek,
   type ISODate,
 } from '@shared/time';
-import type { BuilderShift, ScheduleSummary, TimeOffEntry } from '@shared/types';
+import type {
+  BuilderShift,
+  PersonRow,
+  ShiftView,
+  Tier,
+  TimeOffEntry,
+  WeekStart,
+} from '@shared/types';
 import type { ShiftDraft } from '../components/schedule/ShiftDialog';
 
 /** Group items by user id, then by local day of their start time. */
@@ -58,13 +68,57 @@ export function timeOffByUserDay(
   return out;
 }
 
+/** A published shift's accent color: its label's, else its person's tier's. */
+export function shiftColor(s: Pick<ShiftView, 'label' | 'tier'>): string {
+  return s.label?.color ?? s.tier?.color ?? '#a855f7';
+}
+
 export function totalHours(shifts: { startTime: string; endTime: string }[]): number {
   return shifts.reduce((sum, s) => sum + shiftHours(s.startTime, s.endTime), 0);
 }
 
-/** A schedule's display name: its custom name, else its date range. */
-export function scheduleTitle(s: Pick<ScheduleSummary, 'name' | 'startDate' | 'endDate'>): string {
-  return s.name || formatDateRange(s.startDate, s.endDate);
+export type CalendarView = 'week' | '2weeks' | 'month';
+
+/** The days a calendar view shows around `date`. */
+export function viewRange(
+  view: CalendarView,
+  date: ISODate,
+  weekStartsOn: WeekStart,
+): { from: ISODate; to: ISODate } {
+  if (view === 'month') return { from: startOfMonth(date), to: endOfMonth(date) };
+  const from = startOfWeek(date, weekStartsOn);
+  return { from, to: addDays(from, view === 'week' ? 6 : 13) };
+}
+
+/** Move a view one step back or forward. */
+export function stepView(view: CalendarView, date: ISODate, direction: 1 | -1): ISODate {
+  if (view === 'month') return startOfMonth(addDays(startOfMonth(date), direction === 1 ? 32 : -1));
+  return addDays(date, direction * (view === 'week' ? 7 : 14));
+}
+
+export interface PeopleGroup {
+  key: string;
+  tier: Pick<Tier, 'id' | 'name' | 'color'> | null;
+  people: PersonRow[];
+}
+
+/** People grouped by tier (in tier order), people without a tier last. */
+export function groupByTier(
+  people: PersonRow[],
+  tiers: Pick<Tier, 'id' | 'name' | 'color'>[],
+  firstId?: string,
+): PeopleGroup[] {
+  const groups: PeopleGroup[] = tiers.map((t) => ({ key: t.id, tier: t, people: [] }));
+  const other: PeopleGroup = { key: 'none', tier: null, people: [] };
+  for (const person of people) {
+    (groups.find((g) => g.key === person.tierId) ?? other).people.push(person);
+  }
+  for (const g of [...groups, other]) {
+    g.people.sort((a, b) =>
+      a.id === firstId ? -1 : b.id === firstId ? 1 : a.name.localeCompare(b.name),
+    );
+  }
+  return [...groups, other].filter((g) => g.people.length > 0);
 }
 
 /** Dialog values for editing an existing shift. */

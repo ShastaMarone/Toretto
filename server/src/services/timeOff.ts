@@ -11,6 +11,7 @@ import {
   timeOffReviewedTemplate,
 } from '../email/templates';
 import { audit } from './audit';
+import { notifyAdmins } from './notify';
 import { getSettings, zoneFor } from './settings';
 
 const REQUEST_SQL = `
@@ -135,11 +136,11 @@ export async function requestTimeOff(
     );
     const requestId = rows[0]!.id;
     const request = await getTimeOffRequest(client, requestId);
-    await notifyAdmins(
-      client,
-      config,
-      user.id,
-      (ctx, admin) =>
+    await notifyAdmins(client, config, {
+      topic: 'time_off',
+      exceptUserId: user.id,
+      kind: 'time_off_requested',
+      render: (ctx, admin) =>
         timeOffRequestedTemplate(ctx, {
           recipientName: admin.name,
           requesterName: user.name,
@@ -149,8 +150,7 @@ export async function requestTimeOff(
           note: request.note,
           conflicts: request.conflicts ?? 0,
         }),
-      'time_off_requested',
-    );
+    });
     await audit(
       client,
       user.id,
@@ -343,11 +343,11 @@ export async function cancelTimeOff(
     ]);
     const request = await getTimeOffRequest(client, requestId);
     if (current.status === 'approved') {
-      await notifyAdmins(
-        client,
-        config,
-        user.id,
-        (ctx, admin) =>
+      await notifyAdmins(client, config, {
+        topic: 'time_off',
+        exceptUserId: user.id,
+        kind: 'time_off_cancelled',
+        render: (ctx, admin) =>
           timeOffCancelledTemplate(ctx, {
             recipientName: admin.name,
             requesterName: user.name,
@@ -355,8 +355,7 @@ export async function cancelTimeOff(
             startDate: request.startDate,
             endDate: request.endDate,
           }),
-        'time_off_cancelled',
-      );
+      });
     }
     await audit(
       client,
@@ -372,31 +371,4 @@ export async function cancelTimeOff(
     );
   });
   return getTimeOffRequest(db, requestId);
-}
-
-async function notifyAdmins(
-  client: Queryable,
-  config: Config,
-  exceptUserId: string,
-  render: (
-    ctx: { orgName: string; appUrl: string },
-    admin: { name: string },
-  ) => { subject: string; html: string; text: string },
-  kind: 'time_off_requested' | 'time_off_cancelled',
-): Promise<void> {
-  const settings = await getSettings(client);
-  const ctx = { orgName: settings.orgName, appUrl: config.appUrl };
-  const { rows: admins } = await client.query<{ id: string; name: string; email: string }>(
-    `SELECT id, name, email FROM users
-      WHERE role = 'admin' AND deactivated_at IS NULL AND email_verified_at IS NOT NULL AND id <> $1`,
-    [exceptUserId],
-  );
-  for (const admin of admins) {
-    await enqueueEmail(client, {
-      userId: admin.id,
-      to: admin.email,
-      kind,
-      email: render(ctx, admin),
-    });
-  }
 }

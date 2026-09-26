@@ -1,12 +1,15 @@
+import { HOLIDAY_REGIONS } from '@shared/holidays';
 import type {
   AdminOverview,
   AuditEntry,
+  HolidayRegion,
   MailboxMessage,
   NotificationEntry,
   OrgSettings,
   UnconfirmedShift,
+  WeekConfirmations,
 } from '@shared/types';
-import { todayIn } from '@shared/time';
+import { addDays, dayRangeToUtc, startOfWeek, todayIn } from '@shared/time';
 import { Router } from 'express';
 import { z } from 'zod';
 import type { Queryable } from '../db';
@@ -54,7 +57,31 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
               (SELECT count(*)::int FROM notifications
                 WHERE status = 'failed' AND created_at > now() - interval '7 days') AS "failedEmails"`,
     );
-    const schedules = await listSchedules(db, { endingAfter: today });
+    const schedules = await listSchedules(db);
+    // Confirmations for this week and the next three (published shifts).
+    const weekStarts = [0, 7, 14, 21].map((d) =>
+      addDays(startOfWeek(today, settings.weekStartsOn), d),
+    );
+    const bounds = weekStarts.map((start) =>
+      dayRangeToUtc(start, addDays(start, 6), settings.timezone),
+    );
+    const { rows: weekCounts } = await db.query<{ total: number; confirmed: number }>(
+      `SELECT count(s.id)::int AS total,
+              count(s.id) FILTER (WHERE s.status = 'confirmed')::int AS confirmed
+         FROM unnest($1::timestamptz[], $2::timestamptz[]) WITH ORDINALITY AS w(start_at, end_at, i)
+         LEFT JOIN shifts s ON s.published_at IS NOT NULL
+                           AND s.published_start_time >= w.start_at
+                           AND s.published_start_time < w.end_at
+        GROUP BY w.i
+        ORDER BY w.i`,
+      [bounds.map((b) => b.from), bounds.map((b) => b.to)],
+    );
+    const weeks: WeekConfirmations[] = weekStarts.map((startDate, i) => ({
+      startDate,
+      endDate: addDays(startDate, 6),
+      total: weekCounts[i]?.total ?? 0,
+      confirmed: weekCounts[i]?.confirmed ?? 0,
+    }));
     const { rows: unconfirmedSoon } = await db.query<UnconfirmedShift>(
       `SELECT v.*, u.name AS "userName" FROM (
          ${SHIFT_VIEW_SQL}
@@ -67,11 +94,8 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
     );
     const overview: AdminOverview = {
       ...counts[0]!,
-      drafts: schedules.filter((s) => s.status === 'draft').reverse(),
-      withChanges: schedules
-        .filter((s) => s.status === 'published' && s.pendingChanges > 0)
-        .reverse(),
-      upcoming: schedules.filter((s) => s.status === 'published').reverse(),
+      schedules,
+      weeks,
       unconfirmedSoon,
       recentActivity: await listActivity(db, 8),
     };
@@ -157,6 +181,9 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
           )
           .max(20)
           .optional(),
+        holidayRegion: z
+          .enum(HOLIDAY_REGIONS.map((r) => r.value) as [HolidayRegion, ...HolidayRegion[]])
+          .optional(),
       }),
       req.body,
     );
@@ -168,7 +195,8 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
       `UPDATE org_settings
           SET org_name = COALESCE($1, org_name), timezone = COALESCE($2, timezone),
               week_starts_on = COALESCE($3, week_starts_on), reminder_hours = COALESCE($4, reminder_hours),
-              self_signup = COALESCE($5, self_signup), allowed_domains = COALESCE($6, allowed_domains)`,
+              self_signup = COALESCE($5, self_signup), allowed_domains = COALESCE($6, allowed_domains),
+              holiday_region = COALESCE($7, holiday_region)`,
       [
         body.orgName ?? null,
         body.timezone ?? null,
@@ -176,6 +204,7 @@ export function adminRoutes({ db, kick }: AppDeps): Router {
         body.reminderHours ?? null,
         body.selfSignup ?? null,
         domains ? [...new Set(domains)] : null,
+        body.holidayRegion ?? null,
       ],
     );
     await audit(db, req.user!.id, 'settings.updated', { type: 'org' }, body);

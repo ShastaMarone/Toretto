@@ -24,15 +24,14 @@ export interface EmailShift {
   startTime: string;
   endTime: string;
   labelName: string | null;
-  labelColor: string | null;
-  tierName: string;
-  tierColor: string;
+  /** Accent color: the label's, else the person's tier's. */
+  color: string | null;
   notes: string | null;
   /** Include a "Confirm this shift" link. */
   needsConfirmation: boolean;
 }
 
-const BRAND = '#4f46e5';
+const BRAND = '#9333ea';
 const FONT = '-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif';
 
 // ---------------------------------------------------------------------------
@@ -145,7 +144,7 @@ const link = (href: string, label: string) =>
   >`;
 
 function shiftMeta(shift: EmailShift): string {
-  return [shift.labelName, shift.tierName].filter(Boolean).join(' · ');
+  return shift.labelName ?? '';
 }
 
 function shiftCard(
@@ -154,7 +153,7 @@ function shiftCard(
   tz: string,
   opts: { cancelled?: boolean; before?: EmailShift } = {},
 ): SafeHtml {
-  const accent = opts.cancelled ? '#cbd5e1' : safeColor(shift.labelColor ?? shift.tierColor);
+  const accent = opts.cancelled ? '#cbd5e1' : safeColor(shift.color ?? BRAND);
   const titleStyle = opts.cancelled
     ? 'font-size:15px;font-weight:600;color:#94a3b8;text-decoration:line-through;'
     : 'font-size:15px;font-weight:600;color:#0f172a;';
@@ -171,7 +170,7 @@ function shiftCard(
       <td style="padding:12px 14px;font-family:${FONT};">
         ${before ? html`<div style="font-size:13px;color:#94a3b8;text-decoration:line-through;">Was: ${formatShiftWhen(before.startTime, before.endTime, tz)}${before.labelName !== shift.labelName && before.labelName ? ` · ${before.labelName}` : ''}</div>` : ''}
         <div style="${titleStyle}">${formatShiftWhen(shift.startTime, shift.endTime, tz)}</div>
-        <div style="font-size:13px;color:#475569;">${shiftMeta(shift)}</div>
+        ${shiftMeta(shift) ? html`<div style="font-size:13px;color:#475569;">${shiftMeta(shift)}</div>` : ''}
         ${shift.notes ? html`<div style="font-size:13px;color:#64748b;margin-top:4px;">Note: ${shift.notes}</div>` : ''}
         ${shift.needsConfirmation && !opts.cancelled ? html`<div style="margin-top:8px;font-size:14px;">${link(`${ctx.appUrl}/confirm-shift/${shift.id}`, 'Confirm this shift →')}</div>` : ''}
       </td>
@@ -329,57 +328,74 @@ Forgot your password? ${input.resetUrl}`;
 export interface ScheduleEmailInput {
   recipientName: string;
   tz: string;
-  tierName: string;
+  /** Named only when the organization has more than one schedule. */
+  scheduleName: string | null;
+  /** First and last day of this person's changes. */
   startDate: string;
   endDate: string;
-  scheduleId: string;
-  /** First time this schedule is published (vs. an update). */
-  firstPublish: boolean;
   added: EmailShift[];
   updated: { before: EmailShift; after: EmailShift }[];
   removed: EmailShift[];
 }
 
+/** Link that confirms the given shifts (after signing in, with a button press). */
+export function confirmShiftsUrl(ctx: EmailContext, shiftIds: string[]): string {
+  return `${ctx.appUrl}/confirm-shifts?ids=${shiftIds.join(',')}`;
+}
+
 export function scheduleTemplate(ctx: EmailContext, input: ScheduleEmailInput): RenderedEmail {
   const { tz, added, updated, removed } = input;
-  const range = formatDateRange(input.startDate, input.endDate);
+  const range =
+    input.startDate === input.endDate
+      ? formatDay(input.startDate)
+      : formatDateRange(input.startDate, input.endDate);
+  const on = input.scheduleName ? ` on the ${input.scheduleName}` : '';
   const toConfirm = [...added, ...updated.map((u) => u.after)].filter((s) => s.needsConfirmation);
   const onlyRemoved = added.length === 0 && updated.length === 0;
+  const onlyAdded = updated.length === 0 && removed.length === 0;
   const firstAt = added[0]?.startTime ?? updated[0]?.after.startTime ?? removed[0]?.startTime;
+  const hi = `Hi ${firstName(input.recipientName)},`;
 
   let subject: string;
   let intro: string;
+  let title: string;
   if (onlyRemoved) {
-    subject = `${removed.length === 1 ? 'Shift' : 'Shifts'} cancelled: ${input.tierName}, ${range}`;
-    intro = `Hi ${firstName(input.recipientName)}, ${removed.length === 1 ? 'one of your shifts has' : `${removed.length} of your shifts have`} been cancelled on the ${input.tierName} schedule for ${range}.`;
-  } else if (input.firstPublish) {
-    subject = `Your ${input.tierName} schedule for ${range} is ready`;
-    intro = `Hi ${firstName(input.recipientName)}, the ${input.tierName} schedule for ${range} has been published. You have ${plural(added.length, 'shift')}${toConfirm.length ? ' — please confirm them' : ''}.`;
+    subject = `${removed.length === 1 ? 'Shift' : 'Shifts'} cancelled: ${range}`;
+    title = removed.length === 1 ? 'Shift cancelled' : 'Shifts cancelled';
+    intro = `${hi} ${removed.length === 1 ? 'one of your shifts has' : `${removed.length} of your shifts have`} been cancelled${on} (${range}).`;
+  } else if (onlyAdded) {
+    subject = `Your schedule for ${range}`;
+    title = 'Your schedule is ready';
+    intro = `${hi} you have ${plural(added.length, 'new shift')}${on} for ${range}${toConfirm.length ? ' — please confirm them' : ''}.`;
   } else {
-    subject = `Schedule updated: ${input.tierName}, ${range}`;
-    intro = `Hi ${firstName(input.recipientName)}, your shifts on the ${input.tierName} schedule for ${range} have changed.`;
+    subject = `Schedule updated: ${range}`;
+    title = 'Your schedule changed';
+    intro = `${hi} your shifts${on} for ${range} have changed.`;
   }
 
-  const showTitles = !input.firstPublish || updated.length > 0 || removed.length > 0;
+  const confirmUrl = confirmShiftsUrl(
+    ctx,
+    toConfirm.map((s) => s.id),
+  );
   const cta = toConfirm.length
     ? button(
-        `${ctx.appUrl}/confirm-shifts/${input.scheduleId}`,
+        confirmUrl,
         toConfirm.length === 1 ? 'Confirm my shift' : `Confirm all ${toConfirm.length} shifts`,
       )
     : button(`${ctx.appUrl}/my-schedule`, 'View my schedule');
 
-  const body = html`${heading(onlyRemoved ? 'Shift cancelled' : input.firstPublish ? 'Your schedule is ready' : 'Your schedule changed')}
+  const body = html`${heading(title)}
   ${para(intro)}
-  ${added.length ? html`${showTitles ? sectionTitle(input.firstPublish ? 'Your shifts' : 'New shifts') : ''}${added.map((s) => shiftCard(ctx, s, tz))}` : ''}
+  ${added.length ? html`${onlyAdded ? '' : sectionTitle('New shifts')}${added.map((s) => shiftCard(ctx, s, tz))}` : ''}
   ${updated.length ? html`${sectionTitle('Changed shifts')}${updated.map((u) => shiftCard(ctx, u.after, tz, { before: u.before }))}` : ''}
-  ${removed.length ? html`${sectionTitle('Cancelled shifts')}${removed.map((s) => shiftCard(ctx, s, tz, { cancelled: true }))}` : ''}
+  ${removed.length ? html`${onlyRemoved ? '' : sectionTitle('Cancelled shifts')}${removed.map((s) => shiftCard(ctx, s, tz, { cancelled: true }))}` : ''}
   ${cta}
   ${toConfirm.length ? muted(html`Or ${link(`${ctx.appUrl}/my-schedule`, 'open your schedule')} to review everything first.`) : ''}
   ${muted(tzNote(tz, firstAt))}`;
 
   const textParts = [intro, ''];
   if (added.length) {
-    if (showTitles) textParts.push(input.firstPublish ? 'YOUR SHIFTS' : 'NEW SHIFTS');
+    if (!onlyAdded) textParts.push('NEW SHIFTS');
     textParts.push(...added.map((s) => shiftText(ctx, s, tz)), '');
   }
   if (updated.length) {
@@ -391,14 +407,13 @@ export function scheduleTemplate(ctx: EmailContext, input: ScheduleEmailInput): 
     textParts.push('');
   }
   if (removed.length) {
+    if (!onlyRemoved) textParts.push('CANCELLED SHIFTS');
     textParts.push(
-      'CANCELLED SHIFTS',
       ...removed.map((s) => shiftText(ctx, { ...s, needsConfirmation: false }, tz)),
       '',
     );
   }
-  if (toConfirm.length)
-    textParts.push(`Confirm all: ${ctx.appUrl}/confirm-shifts/${input.scheduleId}`);
+  if (toConfirm.length > 1) textParts.push(`Confirm all: ${confirmUrl}`);
   textParts.push(`My schedule: ${ctx.appUrl}/my-schedule`, '', tzNote(tz, firstAt));
 
   return finish(
@@ -407,10 +422,42 @@ export function scheduleTemplate(ctx: EmailContext, input: ScheduleEmailInput): 
       title: subject,
       preheader: intro,
       body,
-      footer: `You're receiving this because you're on the ${input.tierName} schedule at ${ctx.orgName}.`,
+      footer: `You're receiving this because you're on the ${ctx.orgName} schedule.`,
     }),
     textParts.join('\n'),
   );
+}
+
+/** Tells an admin that someone confirmed their shifts. */
+export function shiftsConfirmedTemplate(
+  ctx: EmailContext,
+  input: { recipientName: string; personName: string; tz: string; shifts: EmailShift[] },
+): RenderedEmail {
+  const { shifts, tz } = input;
+  const first = shifts[0]!;
+  const subject =
+    shifts.length === 1
+      ? `${input.personName} confirmed their shift on ${formatDay(localDate(first.startTime, tz))}`
+      : `${input.personName} confirmed ${shifts.length} shifts`;
+  const summary = `${input.personName} confirmed ${shifts.length === 1 ? 'this shift' : `these ${shifts.length} shifts`}:`;
+  const url = `${ctx.appUrl}/admin`;
+  const listed = shifts.map((s) => ({ ...s, needsConfirmation: false }));
+  const body = html`${heading(shifts.length === 1 ? 'Shift confirmed' : 'Shifts confirmed')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
+  ${listed.map((s) => shiftCard(ctx, s, tz))} ${button(url, 'Open dashboard')}
+  ${muted(html`${tzNote(tz, first.startTime)} You can turn these emails off in ${link(`${ctx.appUrl}/profile`, 'your profile')}.`)}`;
+  const text = [
+    `Hi ${firstName(input.recipientName)},`,
+    '',
+    summary,
+    ...listed.map((s) => shiftText(ctx, s, tz)),
+    '',
+    `Dashboard: ${url}`,
+    '',
+    tzNote(tz, first.startTime),
+    `Turn these emails off: ${ctx.appUrl}/profile`,
+  ].join('\n');
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
 }
 
 export function reminderTemplate(

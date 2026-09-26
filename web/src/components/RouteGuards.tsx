@@ -16,7 +16,7 @@ export function BootstrapGate({ children }: { children: ReactNode }) {
       <div className="flex min-h-dvh flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-lg font-semibold">Can't reach the scheduling server</p>
         <p className="text-sm text-slate-600">{error?.message}</p>
-        <button className="text-sm font-semibold text-indigo-600" onClick={() => void refetch()}>
+        <button className="text-sm font-semibold text-brand-600" onClick={() => void refetch()}>
           Try again
         </button>
       </div>

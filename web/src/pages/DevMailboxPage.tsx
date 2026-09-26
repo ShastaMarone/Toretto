@@ -22,15 +22,15 @@ export default function DevMailboxPage() {
 
   return (
     <div className="flex h-dvh flex-col bg-slate-100">
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+      <header className="flex items-center justify-between border-b border-slate-200 bg-surface px-4 py-3">
         <div className="flex items-center gap-2">
-          <Inbox className="size-5 text-indigo-600" />
+          <Inbox className="size-5 text-brand-600" />
           <h1 className="font-semibold">Dev mailbox</h1>
           <span className="hidden text-sm text-slate-500 sm:inline">
             — emails aren't really sent in development
           </span>
         </div>
-        <Link to="/" className="text-sm font-semibold text-indigo-600">
+        <Link to="/" className="text-sm font-semibold text-brand-600">
           Back to app
         </Link>
       </header>
@@ -52,7 +52,7 @@ export default function DevMailboxPage() {
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          <ul className="max-h-64 shrink-0 overflow-y-auto border-b border-slate-200 bg-white md:max-h-none md:w-96 md:border-r md:border-b-0">
+          <ul className="max-h-64 shrink-0 overflow-y-auto border-b border-slate-200 bg-surface md:max-h-none md:w-96 md:border-r md:border-b-0">
             {messages.map((m) => (
               <li key={m.id}>
                 <button
@@ -60,7 +60,7 @@ export default function DevMailboxPage() {
                   onClick={() => setSelectedId(m.id)}
                   className={cx(
                     'w-full border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50',
-                    selected?.id === m.id && 'bg-indigo-50 hover:bg-indigo-50',
+                    selected?.id === m.id && 'bg-brand-50 hover:bg-brand-50',
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">

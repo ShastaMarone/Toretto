@@ -114,7 +114,7 @@ export default function PeoplePage() {
     <>
       <PageHeader
         title="People"
-        description="Invite your team, and put each person in a tier so they show up on its schedule."
+        description="Invite your team, and put each person in a tier so they show up on the schedule."
         actions={
           <Button
             variant="primary"
@@ -187,7 +187,7 @@ export default function PeoplePage() {
                     <div className="min-w-0">
                       <p className="flex items-center gap-2 truncate text-sm font-semibold text-slate-900">
                         <span className="truncate">{p.name}</span>
-                        {p.role === 'admin' && <Badge tone="indigo">Admin</Badge>}
+                        {p.role === 'admin' && <Badge tone="brand">Admin</Badge>}
                         {p.id === me.id && <Badge>You</Badge>}
                       </p>
                       <p className="truncate text-xs text-slate-500">{p.email}</p>
@@ -325,7 +325,7 @@ function TierTeamFields({
 }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
-      <Field label="Tier" hint="Which schedule they work on.">
+      <Field label="Tier" hint="Groups them on the schedule.">
         <Select value={tierId} onChange={(e) => onChange({ tierId: e.target.value })}>
           <option value="">No tier yet</option>
           {tiers.map((t) => (
@@ -362,12 +362,12 @@ function RoleField({ value, onChange }: { value: Role; onChange: (role: Role) =>
         ).map(([role, title, desc]) => (
           <label
             key={role}
-            className="flex cursor-pointer gap-2.5 rounded-lg border border-slate-200 p-3 has-[:checked]:border-indigo-500 has-[:checked]:bg-indigo-50/50"
+            className="flex cursor-pointer gap-2.5 rounded-lg border border-slate-200 p-3 has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50/50"
           >
             <input
               type="radio"
               name="role"
-              className="mt-0.5 accent-indigo-600"
+              className="mt-0.5 accent-brand-600"
               checked={value === role}
               onChange={() => onChange(role)}
             />

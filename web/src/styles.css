@@ -1,30 +1,183 @@
 @import 'tailwindcss';
 
+/* `dark:` utilities follow the .dark class on <html> (see public/theme.js). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+  /* Brand: electric violet, paired with magenta and cyan for glows. */
+  --color-brand-50: #faf5ff;
+  --color-brand-100: #f3e8ff;
+  --color-brand-200: #e9d5ff;
+  --color-brand-300: #d8b4fe;
+  --color-brand-400: #c084fc;
+  --color-brand-500: #a855f7;
+  --color-brand-600: #9333ea;
+  --color-brand-700: #7e22ce;
+  --color-brand-800: #6b21a8;
+  --color-brand-900: #581c87;
+  --color-brand-950: #3b0764;
+
+  /* Cards, inputs and menus sit on the canvas. */
+  --color-surface: #ffffff;
+  --color-canvas: #f6f5fb;
 }
 
+/*
+ * Dark theme ("Sweet"-style neon on deep navy). The neutral scale is
+ * inverted and the accent tints become dark, so every existing utility
+ * (bg-slate-50, text-slate-900, bg-amber-50 ...) adapts without dark:
+ * variants. Mid-tones stay vivid for buttons, dots and glows.
+ */
 @layer base {
+  :root {
+    --glow: rgb(168 85 247 / 0.45);
+    --glow-soft: rgb(168 85 247 / 0.18);
+    --glass-edge: rgb(255 255 255 / 0.7);
+    --blob-1: rgb(168 85 247 / 0.14);
+    --blob-2: rgb(6 182 212 / 0.1);
+    --blob-3: rgb(236 72 153 / 0.08);
+  }
+
+  .dark {
+    color-scheme: dark;
+    --color-surface: #1a1c2b;
+    --color-canvas: #10111a;
+
+    --color-slate-50: #1d1f31;
+    --color-slate-100: #24273d;
+    --color-slate-200: #2e324d;
+    --color-slate-300: #3e4366;
+    --color-slate-400: #6d7399;
+    --color-slate-500: #9096bc;
+    --color-slate-600: #abb0d4;
+    --color-slate-700: #c6cae6;
+    --color-slate-800: #dde0f4;
+    --color-slate-900: #eceefb;
+    --color-slate-950: #f7f8ff;
+
+    --color-brand-50: #211535;
+    --color-brand-100: #2b1846;
+    --color-brand-200: #3f2066;
+    --color-brand-300: #5e2e98;
+    --color-brand-400: #b46cff;
+    --color-brand-500: #c77dff;
+    --color-brand-600: #a855f7;
+    --color-brand-700: #d4a6ff;
+    --color-brand-800: #e7ccff;
+    --color-brand-900: #f4e9ff;
+    --color-brand-950: #fbf6ff;
+
+    --color-amber-50: #2a2212;
+    --color-amber-100: #3a2e14;
+    --color-amber-200: #5a4517;
+    --color-amber-300: #8c6a16;
+    --color-amber-600: #fbbf24;
+    --color-amber-700: #fcd34d;
+    --color-amber-800: #fde68a;
+    --color-amber-900: #fef3c7;
+
+    --color-emerald-50: #0f271e;
+    --color-emerald-100: #113428;
+    --color-emerald-200: #164b37;
+    --color-emerald-300: #1f7a56;
+    --color-emerald-600: #5ef2a0;
+    --color-emerald-700: #86f7b8;
+    --color-emerald-800: #bdfbd6;
+
+    --color-rose-50: #2c1420;
+    --color-rose-100: #3b1729;
+    --color-rose-200: #5a1d36;
+    --color-rose-300: #8e2a4d;
+    --color-rose-600: #ff6b8e;
+    --color-rose-700: #ff9bb3;
+    --color-rose-800: #ffc9d6;
+
+    --color-sky-50: #0f2233;
+    --color-sky-100: #112c42;
+    --color-sky-600: #4cc9ff;
+    --color-sky-700: #8bdcff;
+
+    --color-violet-50: #1f1636;
+    --color-violet-100: #29194a;
+    --color-violet-600: #b59cff;
+    --color-violet-700: #cfc0ff;
+
+    --glow: rgb(224 64 251 / 0.55);
+    --glow-soft: rgb(224 64 251 / 0.22);
+    --glass-edge: rgb(255 255 255 / 0.07);
+    --blob-1: rgb(197 14 210 / 0.22);
+    --blob-2: rgb(0 193 228 / 0.14);
+    --blob-3: rgb(124 58 237 / 0.2);
+  }
+
   html {
     -webkit-tap-highlight-color: transparent;
   }
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply bg-canvas text-slate-900 antialiased;
+  }
+  /* Soft color fields behind the translucent panels. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(60rem 38rem at 8% -12%, var(--blob-1), transparent 62%),
+      radial-gradient(48rem 34rem at 100% 0%, var(--blob-2), transparent 60%),
+      radial-gradient(64rem 40rem at 55% 115%, var(--blob-3), transparent 62%);
   }
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-indigo-500;
+    @apply outline-2 outline-offset-2 outline-brand-500;
   }
   dialog::backdrop {
-    background: rgb(15 23 42 / 0.45);
-    backdrop-filter: blur(2px);
+    background: rgb(10 8 24 / 0.5);
+    backdrop-filter: blur(6px);
   }
+  ::selection {
+    background: color-mix(in oklab, var(--color-brand-500) 35%, transparent);
+  }
+}
+
+/* Frosted-glass panel: translucent surface that blurs what's behind it. */
+@utility glass {
+  background-color: color-mix(in oklab, var(--color-surface) 78%, transparent);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+}
+
+/* Soft colored underglow for cards and highlighted elements. */
+@utility underglow {
+  box-shadow:
+    0 1px 0 0 var(--glass-edge) inset,
+    0 18px 40px -24px var(--glow);
+}
+
+/* Brighter glow for primary actions and "today". */
+@utility neon {
+  box-shadow: 0 6px 22px -6px var(--glow);
+}
+
+/* Signature gradient: magenta → violet → cyan. */
+@utility bg-neon {
+  background-image: linear-gradient(120deg, #e040fb 0%, #9d4dff 55%, #22b8f0 115%);
+}
+
+@utility text-neon {
+  background-image: linear-gradient(100deg, #d946ef, #8b5cf6 60%, #06b6d4);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
 }
 
 @utility stripes {
   background-image: repeating-linear-gradient(
     135deg,
-    rgb(148 163 184 / 0.18) 0 6px,
+    color-mix(in oklab, var(--color-slate-400) 22%, transparent) 0 6px,
     transparent 6px 12px
   );
 }

@@ -6,6 +6,7 @@ import {
   createTestContext,
   createTier,
   createUser,
+  defaultScheduleId,
   emails,
   login,
   nextMonday,
@@ -40,14 +41,12 @@ beforeAll(async () => {
   types = Object.fromEntries(list.map((t) => [t.name, t]));
 
   // Priya has a published shift on Wednesday.
-  const schedule = await admin
-    .post('/api/schedules')
-    .send({ tierId: tier, startDate: monday, endDate: day(6) });
+  const main = await defaultScheduleId(ctx.db);
   await admin
-    .post(`/api/schedules/${schedule.body.schedule.id}/shifts`)
+    .post(`/api/schedules/${main}/shifts`)
     .send({ userId: people.priya!.id, ...shiftOn(day(2)) })
     .expect(201);
-  await admin.post(`/api/schedules/${schedule.body.schedule.id}/publish`).expect(200);
+  await admin.post(`/api/schedules/${main}/publish`).send({}).expect(200);
 });
 afterAll(async () => {
   await ctx.close();
@@ -165,7 +164,7 @@ describe('requesting time off', () => {
 
   it('shows time off in the schedule builder', async () => {
     const { body: schedules } = await admin.get('/api/schedules');
-    const detail = await admin.get(`/api/schedules/${schedules[0].id}`);
+    const detail = await admin.get(`/api/schedules/${schedules[0].id}?from=${monday}&to=${day(6)}`);
     expect(detail.body.timeOff).toHaveLength(1);
     expect(detail.body.timeOff[0]).toMatchObject({
       typeName: 'Vacation',
@@ -180,6 +179,22 @@ describe('requesting time off', () => {
     expect(sent).toHaveLength(2);
     expect((await sam.post(`/api/my/time-off/${vacation.id}/cancel`)).status).toBe(404);
     expect((await priya.post(`/api/my/time-off/${vacation.id}/cancel`)).status).toBe(409);
+  });
+
+  it("doesn't email admins who turned time-off emails off", async () => {
+    const second = ctx.agent();
+    await login(second, people.second!.email);
+    await second.patch('/api/me').send({ notifyTimeOff: false }).expect(200);
+    const noa = ctx.agent();
+    await login(noa, (await createUser(ctx.db, { name: 'Noa New' })).email);
+    await clearEmails(ctx.db);
+    await noa
+      .post('/api/my/time-off')
+      .send({ typeId: types['Personal Day']!.id, startDate: day(10), endDate: day(10) })
+      .expect(201);
+    const sent = await emails(ctx.db, { kind: 'time_off_requested' });
+    expect(sent.map((e) => e.toEmail)).toEqual([people.admin!.email]);
+    await second.patch('/api/me').send({ notifyTimeOff: true }).expect(200);
   });
 
   it('lets admins decline requests and change their mind', async () => {

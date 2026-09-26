@@ -3,10 +3,10 @@ import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@ta
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
-import { Toaster } from 'sonner';
 import { ApiError } from './api/client';
 import { keys } from './api/queries';
 import App from './App';
+import { ThemedToaster } from './components/ThemedToaster';
 import './styles.css';
 
 // If the session expires mid-use, drop back to the sign-in screen.
@@ -37,7 +37,7 @@ createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <App />
       </BrowserRouter>
-      <Toaster position="top-center" richColors closeButton />
+      <ThemedToaster />
     </QueryClientProvider>
   </StrictMode>,
 );

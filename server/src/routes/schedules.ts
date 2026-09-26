@@ -1,23 +1,19 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppDeps } from '../deps';
-import { parse, zDate, zDateTime, zId, zIdParam, zText } from '../lib/validation';
+import { badRequest } from '../errors';
+import { parse, zDate, zDateTime, zId, zIdParam, zName, zText } from '../lib/validation';
 import { deleteSchedule, discardChanges, publishSchedule } from '../services/publish';
 import {
-  assertNoScheduleOverlap,
+  copyShifts,
   createSchedule,
-  getScheduleDetail,
+  getScheduleRange,
   getScheduleSummary,
   listSchedules,
-  lockSchedule,
-  scheduleTitle,
+  renameSchedule,
+  type DateRange,
 } from '../services/schedules';
 import { createShift, deleteShift, restoreShift, updateShift } from '../services/shifts';
-import { withTransaction } from '../db';
-import { badRequest, conflict } from '../errors';
-import { audit } from '../services/audit';
-import { getSettings } from '../services/settings';
-import { diffDays } from '@shared/time';
 
 const ShiftBody = z.object({
   userId: zId,
@@ -40,101 +36,42 @@ const ShiftPatchBody = z.object({
   notes: zText(500).optional(),
 });
 
-/** Admin-only: build, publish and manage tier schedules. */
+const Range = z.object({ from: zDate, to: zDate });
+
+/** An optional date range: both ends, or neither (meaning every date). */
+function optionalRange(body: unknown): DateRange | null {
+  const { from, to } = parse(
+    z.object({ from: zDate.optional(), to: zDate.optional() }),
+    body ?? {},
+  );
+  if (!from && !to) return null;
+  if (!from || !to) throw badRequest('Send both `from` and `to`, or neither');
+  return { from, to };
+}
+
+/** Admin-only: build, publish and manage schedules. */
 export function scheduleRoutes({ db, config, kick }: AppDeps): Router {
   const r = Router();
 
-  r.get('/', async (req, res) => {
-    const filters = parse(
-      z.object({
-        tierId: zId.optional(),
-        status: z.enum(['draft', 'published']).optional(),
-        endingAfter: zDate.optional(),
-      }),
-      req.query,
-    );
-    res.json(await listSchedules(db, filters));
+  r.get('/', async (_req, res) => {
+    res.json(await listSchedules(db));
   });
 
   r.post('/', async (req, res) => {
-    const body = parse(
-      z.object({
-        tierId: zId,
-        startDate: zDate,
-        endDate: zDate,
-        name: zText(80),
-        copyFromScheduleId: zId.nullable().default(null),
-      }),
-      req.body,
-    );
+    const body = parse(z.object({ name: zName('Name', 80) }), req.body);
     res.status(201).json(await createSchedule(db, req.user!, body));
   });
 
+  // The builder: shifts, people, labels and time off for a range of days.
   r.get('/:id', async (req, res) => {
     const { id } = parse(zIdParam, req.params);
-    res.json(await getScheduleDetail(db, id));
+    res.json(await getScheduleRange(db, id, parse(Range, req.query)));
   });
 
   r.patch('/:id', async (req, res) => {
     const { id } = parse(zIdParam, req.params);
-    const body = parse(
-      z.object({
-        name: zText(80).optional(),
-        startDate: zDate.optional(),
-        endDate: zDate.optional(),
-      }),
-      req.body,
-    );
-    await withTransaction(db, async (client) => {
-      const schedule = await lockSchedule(client, id);
-      const startDate = body.startDate ?? schedule.startDate;
-      const endDate = body.endDate ?? schedule.endDate;
-      if (endDate < startDate) throw badRequest('End date must be on or after the start date');
-      if (diffDays(startDate, endDate) >= 42)
-        throw badRequest('A schedule can cover at most 6 weeks');
-      if (startDate !== schedule.startDate || endDate !== schedule.endDate) {
-        // Same per-tier lock as creating a schedule, so the overlap check holds.
-        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-          `schedule:${schedule.tierId}`,
-        ]);
-        await assertNoScheduleOverlap(client, schedule.tierId, startDate, endDate, id);
-        const { timezone } = await getSettings(client);
-        // Count both the working copy and the published version the team sees
-        // (a published shift pending removal comes back if changes are discarded).
-        const { rows } = await client.query<{ count: number }>(
-          `SELECT count(*)::int AS count FROM shifts
-            WHERE schedule_id = $1
-              AND ((deleted_at IS NULL
-                    AND ((start_time AT TIME ZONE $4)::date < $2
-                         OR (start_time AT TIME ZONE $4)::date > $3))
-                OR (published_at IS NOT NULL
-                    AND ((published_start_time AT TIME ZONE $4)::date < $2
-                         OR (published_start_time AT TIME ZONE $4)::date > $3)))`,
-          [id, startDate, endDate, timezone],
-        );
-        if (rows[0]!.count > 0) {
-          throw conflict(
-            `${rows[0]!.count} shift(s) fall outside the new dates, counting the published version the team sees. Move or delete them and publish first.`,
-            'SHIFTS_OUTSIDE_RANGE',
-          );
-        }
-      }
-      await client.query(
-        `UPDATE schedules SET name = CASE WHEN $2 THEN $3 ELSE name END, start_date = $4, end_date = $5
-          WHERE id = $1`,
-        [id, body.name !== undefined, body.name ?? null, startDate, endDate],
-      );
-      await audit(
-        client,
-        req.user!.id,
-        'schedule.updated',
-        { type: 'schedule', id },
-        {
-          title: scheduleTitle({ tierName: schedule.tierName, startDate, endDate }),
-        },
-      );
-    });
-    res.json(await getScheduleSummary(db, id));
+    const { name } = parse(z.object({ name: zName('Name', 80) }), req.body);
+    res.json(await renameSchedule(db, req.user!, id, name));
   });
 
   r.delete('/:id', async (req, res) => {
@@ -146,15 +83,22 @@ export function scheduleRoutes({ db, config, kick }: AppDeps): Router {
 
   r.post('/:id/publish', async (req, res) => {
     const { id } = parse(zIdParam, req.params);
-    const result = await publishSchedule(db, config, id, req.user!);
+    const result = await publishSchedule(db, config, id, req.user!, optionalRange(req.body));
     kick();
     res.json(result);
   });
 
   r.post('/:id/discard-changes', async (req, res) => {
     const { id } = parse(zIdParam, req.params);
-    await discardChanges(db, id, req.user!);
-    res.json(await getScheduleDetail(db, id));
+    const result = await discardChanges(db, id, req.user!, optionalRange(req.body));
+    res.json({ ...result, schedule: await getScheduleSummary(db, id) });
+  });
+
+  // Copy one stretch of days (e.g. last week) into another.
+  r.post('/:id/copy', async (req, res) => {
+    const { id } = parse(zIdParam, req.params);
+    const body = parse(Range.extend({ targetStart: zDate }), req.body);
+    res.json(await copyShifts(db, req.user!, id, body));
   });
 
   r.post('/:id/shifts', async (req, res) => {

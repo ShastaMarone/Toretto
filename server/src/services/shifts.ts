@@ -1,9 +1,9 @@
 import type { BuilderShift } from '@shared/types';
-import { formatDay, formatShiftWhen, localDate } from '@shared/time';
+import { formatShiftWhen } from '@shared/time';
 import type { AuthUser } from '../auth/types';
 import { withTransaction, type Db, type Queryable } from '../db';
 import { badRequest, conflict, notFound } from '../errors';
-import { getBuilderShift, lockSchedule, type LockedSchedule } from './schedules';
+import { getBuilderShift, lockSchedule } from './schedules';
 import { getSettings } from './settings';
 
 const MAX_SHIFT_HOURS = 7 * 24;
@@ -18,9 +18,8 @@ export interface ShiftInput {
 
 async function validateShift(
   db: Queryable,
-  schedule: LockedSchedule,
   input: ShiftInput,
-  opts: { excludeShiftId?: string; checkUser: boolean; checkLabel: boolean },
+  opts: { scheduleId?: string; excludeShiftId?: string; checkUser: boolean; checkLabel: boolean },
 ): Promise<void> {
   // Serialize edits per person so two concurrent saves can't both pass the overlap check.
   await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${input.userId}`]);
@@ -36,16 +35,12 @@ async function validateShift(
   }
 
   const { timezone } = await getSettings(db);
-  const day = localDate(input.startTime, timezone);
-  if (day < schedule.startDate || day > schedule.endDate) {
-    throw badRequest(
-      `Shifts in this schedule must start between ${formatDay(schedule.startDate)} and ${formatDay(schedule.endDate)}`,
-      { startTime: 'Outside the schedule dates' },
-    );
-  }
-
-  const { rows: users } = await db.query<{ name: string; active: boolean }>(
-    'SELECT name, (deactivated_at IS NULL) AS active FROM users WHERE id = $1',
+  const { rows: users } = await db.query<{
+    name: string;
+    active: boolean;
+    tierId: string | null;
+  }>(
+    'SELECT name, (deactivated_at IS NULL) AS active, tier_id AS "tierId" FROM users WHERE id = $1',
     [input.userId],
   );
   const user = users[0];
@@ -57,13 +52,25 @@ async function validateShift(
   }
 
   if (input.labelId && opts.checkLabel) {
-    const { rows: labels } = await db.query<{ tierId: string | null }>(
-      'SELECT tier_id AS "tierId" FROM labels WHERE id = $1',
+    const { rows: labels } = await db.query<{
+      name: string;
+      tierId: string | null;
+      tierName: string | null;
+    }>(
+      `SELECT l.name, l.tier_id AS "tierId", t.name AS "tierName"
+         FROM labels l LEFT JOIN tiers t ON t.id = l.tier_id WHERE l.id = $1`,
       [input.labelId],
     );
-    if (!labels[0]) throw notFound('Label');
-    if (labels[0].tierId && labels[0].tierId !== schedule.tierId) {
-      throw badRequest('That label belongs to a different tier', { labelId: 'Wrong tier' });
+    const label = labels[0];
+    if (!label) throw notFound('Label');
+    // Tier-specific labels are only for people in that tier.
+    if (label.tierId && label.tierId !== user.tierId) {
+      throw badRequest(
+        `${label.name} is a ${label.tierName} label, and ${user.name} isn't in ${label.tierName}`,
+        {
+          labelId: 'Wrong tier',
+        },
+      );
     }
   }
 
@@ -71,22 +78,30 @@ async function validateShift(
     id: string;
     startTime: string;
     endTime: string;
-    tierName: string;
+    scheduleName: string;
+    otherSchedule: boolean;
   }>(
-    `SELECT s.id, s.start_time AS "startTime", s.end_time AS "endTime", t.name AS "tierName"
+    `SELECT s.id, s.start_time AS "startTime", s.end_time AS "endTime",
+            sc.name AS "scheduleName", (sc.id IS DISTINCT FROM $5) AS "otherSchedule"
        FROM shifts s
        JOIN schedules sc ON sc.id = s.schedule_id
-       JOIN tiers t ON t.id = sc.tier_id
       WHERE s.user_id = $1 AND s.deleted_at IS NULL AND s.id IS DISTINCT FROM $4
         AND s.start_time < $3 AND s.end_time > $2
       ORDER BY s.start_time
       LIMIT 1`,
-    [input.userId, input.startTime, input.endTime, opts.excludeShiftId ?? null],
+    [
+      input.userId,
+      input.startTime,
+      input.endTime,
+      opts.excludeShiftId ?? null,
+      opts.scheduleId ?? null,
+    ],
   );
   const overlap = overlaps[0];
   if (overlap) {
+    const where = overlap.otherSchedule ? ` on ${overlap.scheduleName}` : '';
     throw conflict(
-      `${user.name} already has a ${overlap.tierName} shift ${formatShiftWhen(overlap.startTime, overlap.endTime, timezone)} that overlaps this one`,
+      `${user.name} already has a shift${where} ${formatShiftWhen(overlap.startTime, overlap.endTime, timezone)} that overlaps this one`,
       'SHIFT_OVERLAP',
       { shiftId: overlap.id },
     );
@@ -100,8 +115,8 @@ export async function createShift(
   input: ShiftInput,
 ): Promise<BuilderShift> {
   const id = await withTransaction(db, async (client) => {
-    const schedule = await lockSchedule(client, scheduleId);
-    await validateShift(client, schedule, input, { checkUser: true, checkLabel: true });
+    await lockSchedule(client, scheduleId);
+    await validateShift(client, input, { scheduleId, checkUser: true, checkLabel: true });
     const { rows } = await client.query<{ id: string }>(
       `INSERT INTO shifts (schedule_id, user_id, label_id, start_time, end_time, notes, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
@@ -145,7 +160,7 @@ export async function updateShift(
     );
     if (!rows[0]) throw notFound('Shift');
     // Lock order: schedule, then shift (same as publish) to avoid deadlocks.
-    const schedule = await lockSchedule(client, rows[0].scheduleId);
+    await lockSchedule(client, rows[0].scheduleId);
     const current = await lockShift(client, shiftId);
     if (current.deletedAt)
       throw conflict('This shift was deleted. Restore it before editing.', 'SHIFT_DELETED');
@@ -156,10 +171,12 @@ export async function updateShift(
       endTime: patch.endTime ?? current.endTime,
       notes: patch.notes !== undefined ? patch.notes : current.notes,
     };
-    await validateShift(client, schedule, next, {
+    await validateShift(client, next, {
+      scheduleId: current.scheduleId,
       excludeShiftId: shiftId,
       checkUser: next.userId !== current.userId,
-      checkLabel: next.labelId !== current.labelId,
+      // A tier label has to fit whoever the shift now belongs to.
+      checkLabel: next.labelId !== current.labelId || next.userId !== current.userId,
     });
     await client.query(
       `UPDATE shifts SET user_id = $2, label_id = $3, start_time = $4, end_time = $5, notes = $6
@@ -203,10 +220,11 @@ export async function restoreShift(db: Db, shiftId: string): Promise<BuilderShif
       [shiftId],
     );
     if (!rows[0]) throw notFound('Shift');
-    const schedule = await lockSchedule(client, rows[0].scheduleId);
+    await lockSchedule(client, rows[0].scheduleId);
     const current = await lockShift(client, shiftId);
     if (!current.deletedAt) return;
-    await validateShift(client, schedule, current, {
+    await validateShift(client, current, {
+      scheduleId: current.scheduleId,
       excludeShiftId: shiftId,
       checkUser: false,
       checkLabel: false,

@@ -1,9 +1,11 @@
 // API contract shared by the server and the web app.
 // Timestamps are ISO-8601 strings in UTC; calendar days are 'YYYY-MM-DD'.
+import type { HolidayRegion } from './holidays';
+
+export type { HolidayRegion } from './holidays';
 
 export type Role = 'admin' | 'member';
 export type UserStatus = 'invited' | 'active' | 'deactivated';
-export type ScheduleStatus = 'draft' | 'published';
 export type ShiftStatus = 'pending' | 'confirmed';
 /** How a shift's working copy differs from what the team currently sees. */
 export type ChangeState = 'new' | 'updated' | 'unchanged' | 'removed';
@@ -30,12 +32,18 @@ export interface SessionUser {
   /** Personal time zone; null means the organization's. */
   timezone: string | null;
   hasPassword: boolean;
+  /** Admins: email me when someone requests time off. */
+  notifyTimeOff: boolean;
+  /** Admins: email me when someone confirms shifts. */
+  notifyConfirmations: boolean;
 }
 
 export interface OrgInfo {
   name: string;
   timezone: string;
   weekStartsOn: WeekStart;
+  /** Statutory holidays shown on calendars. */
+  holidayRegion: HolidayRegion;
 }
 
 export interface Bootstrap {
@@ -56,6 +64,7 @@ export interface OrgSettings {
   reminderHours: number;
   selfSignup: boolean;
   allowedDomains: string[];
+  holidayRegion: HolidayRegion;
 }
 
 export interface Tier {
@@ -113,23 +122,23 @@ export interface PersonRow {
   active: boolean;
 }
 
+/**
+ * A schedule is an open-ended calendar covering every tier. There's always a
+ * default one; admins can add more for separate rosters.
+ */
 export interface ScheduleSummary {
   id: string;
-  tierId: string;
-  tierName: string;
-  tierColor: string;
-  name: string | null;
-  startDate: string;
-  endDate: string;
-  status: ScheduleStatus;
+  name: string;
+  isDefault: boolean;
+  /** When changes were last published. */
   publishedAt: string | null;
   publishedByName: string | null;
-  shiftCount: number;
-  confirmedCount: number;
-  pendingCount: number;
-  /** Shifts added, changed or removed since the last publish. */
+  /** Shifts added, changed or removed since they were last published (any date). */
   pendingChanges: number;
-  updatedAt: string;
+  /** First and last day (organization calendar) with unpublished changes. */
+  firstChangeDate: string | null;
+  lastChangeDate: string | null;
+  createdAt: string;
 }
 
 export interface ShiftSnapshot {
@@ -168,14 +177,22 @@ export interface ChangeCounts {
   total: number;
 }
 
-export interface ScheduleDetail {
+/** Everything the schedule builder shows for a date range. */
+export interface ScheduleRange {
   schedule: ScheduleSummary;
+  from: string;
+  to: string;
+  /** Working copies that start in the range. */
   shifts: BuilderShift[];
-  /** Published shifts deleted in the working copy; removed on next publish. */
+  /**
+   * Published shifts in the range that the team still sees but that are going
+   * away on the next publish: deleted, or moved outside the range.
+   */
   removedShifts: BuilderShift[];
-  members: PersonRow[];
+  people: PersonRow[];
   labels: Label[];
   timeOff: TimeOffEntry[];
+  /** Unpublished changes in the range. */
   changes: ChangeCounts;
 }
 
@@ -187,8 +204,7 @@ export interface PublishResult {
   emailsQueued: number;
 }
 
-export interface CreateScheduleResult {
-  schedule: ScheduleSummary;
+export interface CopyResult {
   copied: number;
   skipped: number;
 }
@@ -204,13 +220,16 @@ export interface ShiftView {
   status: ShiftStatus;
   confirmedAt: string | null;
   label: { id: string; name: string; color: string } | null;
-  tier: { id: string; name: string; color: string };
+  /** The person's tier (null if they don't have one). */
+  tier: { id: string; name: string; color: string } | null;
+  scheduleName: string;
 }
 
 export interface TeamSchedule {
   people: PersonRow[];
   shifts: ShiftView[];
   timeOff: TimeOffEntry[];
+  schedules: { id: string; name: string }[];
 }
 
 export interface TimeOffRequest {
@@ -259,13 +278,21 @@ export interface UnconfirmedShift extends ShiftView {
   userName: string;
 }
 
+export interface WeekConfirmations {
+  startDate: string;
+  endDate: string;
+  /** Published shifts that week. */
+  total: number;
+  confirmed: number;
+}
+
 export interface AdminOverview {
   pendingTimeOff: number;
   peopleWithoutTier: number;
   invitedPeople: number;
-  drafts: ScheduleSummary[];
-  withChanges: ScheduleSummary[];
-  upcoming: ScheduleSummary[];
+  schedules: ScheduleSummary[];
+  /** This week and the next three. */
+  weeks: WeekConfirmations[];
   unconfirmedSoon: UnconfirmedShift[];
   recentActivity: AuditEntry[];
   failedEmails: number;

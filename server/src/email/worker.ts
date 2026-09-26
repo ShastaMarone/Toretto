@@ -106,9 +106,7 @@ interface ReminderRow {
   endTime: string;
   notes: string | null;
   labelName: string | null;
-  labelColor: string | null;
-  tierName: string;
-  tierColor: string;
+  color: string | null;
 }
 
 /**
@@ -133,17 +131,15 @@ export async function queueReminders(db: Db, config: Config, now = new Date()): 
                AND s2.published_start_time > $1
                AND u2.deactivated_at IS NULL
              FOR UPDATE OF s2 SKIP LOCKED)
-          RETURNING s.id, s.schedule_id, s.published_user_id, s.published_label_id,
+          RETURNING s.id, s.published_user_id, s.published_label_id,
                     s.published_start_time, s.published_end_time, s.published_notes)
        SELECT due.id, u.id AS "userId", u.name AS "userName", u.email AS "userEmail",
               u.timezone AS "userTimezone", due.published_start_time AS "startTime",
               due.published_end_time AS "endTime", due.published_notes AS notes,
-              l.name AS "labelName", l.color AS "labelColor",
-              t.name AS "tierName", t.color AS "tierColor"
+              l.name AS "labelName", COALESCE(l.color, t.color) AS color
          FROM due
          JOIN users u ON u.id = due.published_user_id
-         JOIN schedules sc ON sc.id = due.schedule_id
-         JOIN tiers t ON t.id = sc.tier_id
+         LEFT JOIN tiers t ON t.id = u.tier_id
          LEFT JOIN labels l ON l.id = due.published_label_id
         ORDER BY due.published_start_time`,
       [now, settings.reminderHours],
@@ -159,9 +155,7 @@ export async function queueReminders(db: Db, config: Config, now = new Date()): 
         startTime: s.startTime,
         endTime: s.endTime,
         labelName: s.labelName,
-        labelColor: s.labelColor,
-        tierName: s.tierName,
-        tierColor: s.tierColor,
+        color: s.color,
         notes: s.notes,
         needsConfirmation: true,
       }));

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { html, raw } from '../src/email/html';
-import { firstName, scheduleTemplate, timeOffRequestedTemplate } from '../src/email/templates';
+import {
+  firstName,
+  scheduleTemplate,
+  shiftsConfirmedTemplate,
+  timeOffRequestedTemplate,
+} from '../src/email/templates';
 import { parseAddress } from '../src/email/transport';
 import { shiftOn } from './helpers';
 
@@ -18,20 +23,16 @@ describe('email html', () => {
       id: 'shift-1',
       ...shiftOn('2026-10-06'),
       labelName: '<script>x</script>',
-      labelColor: 'red;background:url(evil)',
-      tierName: 'Tier "1"',
-      tierColor: '#4f46e5',
+      color: 'red;background:url(evil)',
       notes: 'Use the <back> door',
       needsConfirmation: true,
     };
     const email = scheduleTemplate(ctx, {
       recipientName: 'Jo <b>Bold</b>',
       tz: 'America/Toronto',
-      tierName: 'Tier "1"',
+      scheduleName: 'Weekend "A"',
       startDate: '2026-10-05',
       endDate: '2026-10-11',
-      scheduleId: 'sched-1',
-      firstPublish: true,
       added: [shift],
       updated: [],
       removed: [],
@@ -39,13 +40,38 @@ describe('email html', () => {
     expect(email.html).not.toContain('<script>');
     expect(email.html).toContain('&lt;script&gt;');
     expect(email.html).toContain('Use the &lt;back&gt; door');
+    expect(email.html).toContain('on the Weekend &quot;A&quot;');
     expect(email.html).not.toContain('url(evil)'); // invalid colors fall back
     expect(email.html).toContain('Acme &lt;Support&gt;');
     expect(email.html).toContain('https://schedule.example.com/confirm-shift/shift-1');
+    expect(email.html).toContain('https://schedule.example.com/confirm-shifts?ids=shift-1');
     expect(email.text).toContain('Hi Jo,');
     expect(email.text).toContain('Tue, Oct 6 · 9:00 AM – 5:00 PM');
     expect(email.text).toContain('Times are shown in EDT (America/Toronto).');
-    expect(email.subject).toBe('Your Tier "1" schedule for Oct 5 – 11, 2026 is ready');
+    expect(email.subject).toBe('Your schedule for Oct 5 – 11, 2026');
+  });
+
+  it('tells admins who confirmed which shifts', () => {
+    const email = shiftsConfirmedTemplate(ctx, {
+      recipientName: 'Robin Admin',
+      personName: 'Priya <P>',
+      tz: 'America/Toronto',
+      shifts: [
+        {
+          id: 's1',
+          ...shiftOn('2026-10-06'),
+          labelName: 'Chat Queue',
+          color: '#2563eb',
+          notes: null,
+          needsConfirmation: false,
+        },
+      ],
+    });
+    expect(email.subject).toBe('Priya <P> confirmed their shift on Tue, Oct 6');
+    expect(email.html).toContain('Priya &lt;P&gt; confirmed this shift');
+    expect(email.html).not.toContain('confirm-shift/s1');
+    expect(email.text).toContain('Tue, Oct 6 · 9:00 AM – 5:00 PM (Chat Queue)');
+    expect(email.text).toContain('https://schedule.example.com/profile');
   });
 
   it('keeps subjects on one line', () => {

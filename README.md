@@ -1,21 +1,28 @@
 # Toretto — team shift scheduling
 
-A "When I Work"–style scheduling app for tiered teams. Admins build each tier's
-schedule as a **draft**, **publish** it when it's ready, and everyone with a
-shift gets an **email with a Confirm button**. Team members sign in with their
-email to see **My Schedule** and the **Team Schedule**, confirm shifts, and
+A "When I Work"–style scheduling app for tiered teams. Every tier works from
+one calendar that's always there: admins add shifts as **drafts**, **publish**
+when they're ready, and everyone affected gets an **email with a Confirm
+button**. Team members sign in with their email to see **My Schedule** and the
+**Team Schedule** (every tier, so they know who's working), confirm shifts, and
 request time off (paid holiday, personal day, vacation, …) by clicking a day.
+Canadian statutory holidays show on every calendar, and there's a light and a
+neon dark theme.
 
-![Schedule builder](docs/screenshots/schedule-builder.png)
+![Schedule builder, dark theme](docs/screenshots/schedule-builder.png)
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/my-schedule.png" alt="My schedule" /></td>
+    <td><img src="docs/screenshots/schedule-builder-light.png" alt="Schedule builder, light theme" /></td>
     <td><img src="docs/screenshots/team-schedule.png" alt="Team schedule" /></td>
   </tr>
   <tr>
+    <td><img src="docs/screenshots/my-schedule.png" alt="My schedule" /></td>
     <td><img src="docs/screenshots/request-time-off.png" alt="Requesting time off" /></td>
+  </tr>
+  <tr>
     <td><img src="docs/screenshots/dashboard.png" alt="Admin dashboard" /></td>
+    <td><img src="docs/screenshots/time-off-review.png" alt="Reviewing time-off requests" /></td>
   </tr>
   <tr>
     <td><img src="docs/screenshots/email-schedule-published.png" alt="Schedule email with confirm links" /></td>
@@ -27,17 +34,21 @@ request time off (paid holiday, personal day, vacation, …) by clicking a day.
 
 **For admins**
 
-- **Tiers** (Tier 1, 2, 3 — rename or add more), each with its own schedules.
-- **Custom labels** such as On-Call, Training and Overtime, either for one tier or for every tier.
-- **Schedule builder**: a people × days grid. Click **+** to add a shift, drag a shift to move it, and hold <kbd>Alt</kbd>/<kbd>Ctrl</kbd> while dragging to copy it. The builder:
-  - suggests shift times already used in the schedule
-  - rejects overlapping shifts
+- **Tiers** (Tier 1, 2, 3 — rename or add more). Everyone is scheduled on the same calendar, grouped by tier. Tier chips filter it down to one or more tiers.
+- **Custom labels** such as On-Call, Training and Overtime, either for one tier's people or for everyone.
+- **Schedule builder**: an open-ended calendar, with no dates to set up first. It shows a week, 2 weeks or a month as a people × days grid. Click **+** to add a shift, drag a shift to move it, and hold <kbd>Alt</kbd>/<kbd>Ctrl</kbd> while dragging to copy it. The builder:
+  - suggests shift times already used on the schedule
+  - rejects overlapping shifts, including across schedules
   - flags anyone on time off that day
-  - can start a new schedule by copying a previous one
-- **Draft → Publish**. Drafts are invisible to the team. Publishing emails every affected person **once**, with all their shifts and a Confirm link for each one.
-- **Edit after publishing**. The team keeps seeing the published version until you **Publish changes**. Then only the people affected get an email ("new", "changed" with the old time struck through, "cancelled"). Changed shifts need to be confirmed again. You can **Discard changes** to go back to the published version.
-- **Confirmation tracking**: every shift shows ◷ pending or ✓ confirmed. The dashboard shows who hasn't confirmed, and an automatic reminder email goes out after 24 hours (configurable).
+  - shows statutory holidays
+  - can copy last week (or the 2 weeks before) forward as drafts
+- **More schedules if you need them**. The **Main schedule** is always there. Add others (holiday coverage, a project, a second site) from the schedule's name menu. Each one covers every tier, and the team sees all of them together.
+- **Draft → Publish**. Drafts are invisible to the team. **Publish** the days you're looking at, or every change at once. Publishing emails every affected person **once**, with all their shifts and a Confirm link for each one.
+- **Edit after publishing**. The team keeps seeing the published version until you publish again. Then only the people affected get an email ("new", "changed" with the old time struck through, "cancelled"). Changed shifts need to be confirmed again. You can **Discard** unpublished changes to go back to the published version.
+- **Confirmation tracking**: every shift shows ◷ pending or ✓ confirmed. The dashboard shows confirmations week by week and who hasn't confirmed, and an automatic reminder email goes out after 24 hours (configurable).
+- **Admin emails** when someone requests (or cancels) time off and when someone confirms shifts. Each admin can turn either off in their profile.
 - **Time-off approvals**: approve or decline, with a warning when the request overlaps scheduled shifts. You can also record time off for someone directly.
+- **Canadian statutory holidays** on every calendar, including the weekday a weekend holiday is observed. The default is the federal list (Canada Labour Code); pick a province or territory, or turn holidays off, in **Settings**.
 - **People**: invite by email, one at a time or in bulk. Set each person's role, tier and team, deactivate, or re-send invites.
 - **Activity**: an audit trail (who published, confirmed, approved and when) plus a log of every email with its delivery status, a preview, and retry for failures.
 
@@ -47,7 +58,8 @@ request time off (paid holiday, personal day, vacation, …) by clicking a day.
 - Sign in with email + password, or **"Email me a sign-in link"** (no password needed).
 - **My Schedule**: a month calendar, shifts waiting for confirmation (confirm one or all), the next two weeks, and your time-off requests.
 - **Request time off** by clicking any day. Pick a type (Paid Holiday, Personal Day, Vacation, Sick Day, Unpaid Leave — admins can edit the list) and a date range. You're warned if you're scheduled during that time.
-- **Team Schedule**: everyone's published shifts for the week, filterable by tier and team. Coworkers see that someone is off, not why.
+- **Team Schedule**: everyone's published shifts across every tier (week, 2 weeks or month), filterable by tier, team and schedule. Coworkers see that someone is off, not why.
+- **Light, dark or system theme**, with frosted-glass panels and neon glows in the dark theme. Saved per device.
 - Works on phones. The calendars switch to a compact dot view and a day-by-day agenda.
 - Times are shown in each person's own time zone, in the app and in emails.
 
@@ -80,8 +92,8 @@ confirmation links, schedule emails) appears in the **dev mailbox** at
 ## Configuration
 
 All settings are environment variables (see [`.env.example`](.env.example)).
-Organization name, time zone, week start, reminder timing and sign-up policy are
-changed in the app under **Settings**.
+Organization name, time zone, week start, statutory holiday region, reminder
+timing and sign-up policy are changed in the app under **Settings**.
 
 | Variable                                            | Default                                   | Purpose                                                                                                                             |
 | --------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
@@ -228,18 +240,18 @@ a password, then an admin assigns their tier.
 
 The tables follow the playbook, with a few additions (✚) the features need:
 
-| Table                                     | Purpose                                                                                                                    |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `users`                                   | name, email, role (`admin`/`member`), `tier_id`, `team_id`, personal time zone ✚, email-confirmed/deactivated timestamps ✚ |
-| `tiers`, `teams`                          | Tier 1/2/3 (renameable, colored) and optional teams                                                                        |
-| `labels`                                  | admin-defined shift labels; `tier_id` = one tier, `NULL` = all tiers                                                       |
-| `schedules`                               | one tier's roster for a date range (≤ 6 weeks), `status` draft/published                                                   |
-| `shifts`                                  | person, label, start/end, notes, `status` pending/confirmed — plus a **published snapshot** ✚ (see below)                  |
-| `time_off_types` ✚, `time_off_requests` ✚ | Paid Holiday, Personal Day, …; requests with pending/approved/declined/cancelled                                           |
-| `notifications`                           | the email outbox and notification log (recipient, kind, status, attempts, sent time, related shifts)                       |
-| `audit_log` ✚                             | who did what, when                                                                                                         |
-| `sessions` ✚, `auth_tokens` ✚             | sign-in sessions and single-use email links, stored as SHA-256 hashes                                                      |
-| `org_settings` ✚                          | organization name, time zone, week start, reminder delay, sign-up policy                                                   |
+| Table                                     | Purpose                                                                                                                                               |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users`                                   | name, email, role (`admin`/`member`), `tier_id`, `team_id`, personal time zone ✚, admin email preferences ✚, email-confirmed/deactivated timestamps ✚ |
+| `tiers`, `teams`                          | Tier 1/2/3 (renameable, colored) and optional teams                                                                                                   |
+| `labels`                                  | admin-defined shift labels; `tier_id` = only for that tier's people, `NULL` = everyone                                                                |
+| `schedules`                               | a named, open-ended calendar for every tier; the **main schedule** (`is_default`) always exists                                                       |
+| `shifts`                                  | person, label, start/end, notes, `status` pending/confirmed — plus a **published snapshot** ✚ (see below)                                             |
+| `time_off_types` ✚, `time_off_requests` ✚ | Paid Holiday, Personal Day, …; requests with pending/approved/declined/cancelled                                                                      |
+| `notifications`                           | the email outbox and notification log (recipient, kind, status, attempts, sent time, related shifts)                                                  |
+| `audit_log` ✚                             | who did what, when                                                                                                                                    |
+| `sessions` ✚, `auth_tokens` ✚             | sign-in sessions and single-use email links, stored as SHA-256 hashes                                                                                 |
+| `org_settings` ✚                          | organization name, time zone, week start, holiday region, reminder delay, sign-up policy                                                              |
 
 ### Publish → notify → confirm
 
@@ -248,7 +260,9 @@ Each shift row holds two copies of its data:
 - the **working copy**, which admins edit in the builder;
 - the **published snapshot**, which is what the team sees.
 
-Publishing compares the two for every shift in the schedule:
+Publishing compares the two for every shift in the chosen dates (the days on
+screen) or, with **Publish all changes**, on the whole schedule. A shift counts
+as in the dates if either its working copy or its published version is:
 
 | Working copy vs. published    | What happens                         | Email                                 |
 | ----------------------------- | ------------------------------------ | ------------------------------------- |
@@ -268,7 +282,13 @@ the Publish button never waits on the email provider.
 Clicking **Confirm** in the email opens `/confirm-shift/:id`. If the person
 isn't signed in, they sign in first and are brought straight back. The shift is
 marked confirmed, and they land on **My Schedule**. **Confirm all** in the email
-confirms every shift of theirs in that schedule.
+confirms every shift listed in it. Admins who want to know get one email per
+confirmation (or per "confirm all"), never for their own shifts.
+
+A shift's tier is its person's tier, so moving someone to another tier moves
+their shifts with them. Holidays are computed in the app (`shared/holidays.ts`)
+rather than stored, and are for information only: you can still schedule people
+on a holiday.
 
 ### Time zones
 
@@ -299,10 +319,12 @@ across daylight-saving changes.
 
 | Question                          | Decision                                                                                                               |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Labels global or per tier?        | **Both.** Each label belongs to one tier or to all tiers.                                                              |
+| Labels global or per tier?        | **Both.** Each label belongs to one tier (only for its people) or to everyone.                                         |
 | Reminders for unconfirmed shifts? | **Yes.** One reminder per shift after 24 h (Settings: off / 12 h / 24 h / 2 days / 3 days).                            |
 | Shift swaps/trades?               | **Out of scope for v1.** People contact their admin, who edits and re-publishes. Only the affected people are emailed. |
 | Multiple time zones?              | **Supported.** Schedules are built in the organization's zone; each person sees their own.                             |
+| One schedule per tier?            | **No.** One calendar for every tier, with extra schedules only when you want a separate roster.                        |
+| Statutory holidays?               | **Canadian**, federal by default or any province/territory. Shown on calendars; they don't block scheduling.           |
 
 Other choices worth knowing:
 
@@ -348,7 +370,7 @@ server/
     auth/          password hashing, sessions, email-link tokens, middleware
   scripts/         seed, create-admin, migrate
   test/            API integration tests
-shared/            types and time helpers shared by server and web
+shared/            types, time and holiday helpers shared by server and web
 web/src/
   pages/           admin/, member/, auth/ screens
   components/      schedule grid pieces, dialogs, UI kit

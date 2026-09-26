@@ -17,6 +17,7 @@ import {
   createTestContext,
   createTier,
   createUser,
+  defaultScheduleId,
   emails,
   login,
   nextMonday,
@@ -200,10 +201,7 @@ describe('confirmation reminders', () => {
     const admin = ctx.agent();
     await login(admin, adminUser.email);
     const monday = nextMonday();
-    const { body } = await admin
-      .post('/api/schedules')
-      .send({ tierId: tier, startDate: monday, endDate: addDays(monday, 6) });
-    const id = body.schedule.id;
+    const id = await defaultScheduleId(ctx.db);
     for (const [user, d] of [
       [pat, 0],
       [pat, 1],
@@ -214,10 +212,10 @@ describe('confirmation reminders', () => {
         .send({ userId: user.id, ...shiftOn(addDays(monday, d)) })
         .expect(201);
     }
-    await admin.post(`/api/schedules/${id}/publish`).expect(200);
+    await admin.post(`/api/schedules/${id}/publish`).send({}).expect(200);
     const coraAgent = ctx.agent();
     await login(coraAgent, cora.email);
-    await coraAgent.post('/api/my/shifts/confirm').send({ scheduleId: id }).expect(200);
+    await coraAgent.post('/api/my/shifts/confirm').send({}).expect(200);
     await clearEmails(ctx.db);
 
     // Too soon: nothing yet.
@@ -292,18 +290,16 @@ describe('scheduled jobs (serverless)', () => {
     const admin = ctx.agent();
     await login(admin, adminUser.email);
     const monday = nextMonday();
-    const { body } = await admin
-      .post('/api/schedules')
-      .send({ tierId: tier, startDate: monday, endDate: addDays(monday, 6) });
+    const main = await defaultScheduleId(ctx.db);
     await admin
-      .post(`/api/schedules/${body.schedule.id}/shifts`)
+      .post(`/api/schedules/${main}/shifts`)
       .send({ userId: quinn.id, ...shiftOn(monday) })
       .expect(201);
-    await admin.post(`/api/schedules/${body.schedule.id}/publish`).expect(200);
+    await admin.post(`/api/schedules/${main}/publish`).send({}).expect(200);
     // Published two days ago and still unconfirmed.
     await ctx.db.query(
-      `UPDATE shifts SET published_at = now() - interval '48 hours' WHERE schedule_id = $1`,
-      [body.schedule.id],
+      `UPDATE shifts SET published_at = now() - interval '48 hours' WHERE published_user_id = $1`,
+      [quinn.id],
     );
     await clearEmails(ctx.db);
     await enqueueEmail(ctx.db, { userId: null, to: 'retry@example.com', kind: 'invite', email });

@@ -12,15 +12,29 @@ export function meRoutes({ db }: AppDeps): Router {
 
   r.patch('/', async (req, res) => {
     const body = parse(
-      z.object({ name: zName('Name', 100).optional(), timezone: zTimezone.nullable().optional() }),
+      z.object({
+        name: zName('Name', 100).optional(),
+        timezone: zTimezone.nullable().optional(),
+        notifyTimeOff: z.boolean().optional(),
+        notifyConfirmations: z.boolean().optional(),
+      }),
       req.body,
     );
     const user = req.user!;
     await db.query(
       `UPDATE users SET name = COALESCE($2, name),
-                        timezone = CASE WHEN $3 THEN $4 ELSE timezone END
+                        timezone = CASE WHEN $3 THEN $4 ELSE timezone END,
+                        notify_time_off = COALESCE($5, notify_time_off),
+                        notify_confirmations = COALESCE($6, notify_confirmations)
         WHERE id = $1`,
-      [user.id, body.name ?? null, body.timezone !== undefined, body.timezone ?? null],
+      [
+        user.id,
+        body.name ?? null,
+        body.timezone !== undefined,
+        body.timezone ?? null,
+        body.notifyTimeOff ?? null,
+        body.notifyConfirmations ?? null,
+      ],
     );
     res.json({ user: toSessionUser(await loadAuthUser(db, user.id)) });
   });

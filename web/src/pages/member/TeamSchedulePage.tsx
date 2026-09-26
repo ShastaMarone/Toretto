@@ -1,114 +1,230 @@
 import {
-  addDays,
   eachDay,
+  formatDateRange,
   formatDay,
   formatHours,
   formatTimeRange,
   isWeekend,
-  startOfWeek,
   todayIn,
+  type ISODate,
 } from '@shared/time';
-import type { PersonRow, ShiftView, Tier } from '@shared/types';
+import type { PersonRow, ShiftView, Tier, TimeOffEntry } from '@shared/types';
+import type { Holiday } from '@shared/holidays';
 import { DateTime } from 'luxon';
 import { Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useTeamSchedule, useTeams, useTiers } from '../../api/queries';
+import {
+  CalendarNav,
+  DayHeader,
+  GroupRows,
+  HolidayBadge,
+  TierFilter,
+} from '../../components/schedule/CalendarBits';
 import { ScheduleLegend, ShiftChip, TimeOffChip } from '../../components/schedule/ShiftChip';
-import { WeekNav } from '../../components/schedule/WeekNav';
 import { Select } from '../../components/ui/Form';
 import {
   Avatar,
   Badge,
   Card,
-  ColorDot,
   EmptyState,
   ErrorBlock,
   LoadingBlock,
   PageHeader,
   Spinner,
+  Tabs,
 } from '../../components/ui/Misc';
 import { cx } from '../../lib/cx';
-import { groupByDay, groupByUserDay, timeOffByUserDay, totalHours } from '../../lib/schedule';
+import { useHolidays } from '../../lib/holidays';
+import {
+  groupByDay,
+  groupByTier,
+  groupByUserDay,
+  shiftColor,
+  stepView,
+  timeOffByUserDay,
+  totalHours,
+  viewRange,
+  type CalendarView,
+} from '../../lib/schedule';
 import { useBootstrapData, useCurrentUser, useViewerZone } from '../../lib/session';
 import { zoneLabel } from '../../lib/timezones';
+import { useScrollToToday } from '../../lib/useScrollToToday';
 
-interface Group {
-  key: string;
-  tier: Pick<Tier, 'name' | 'color'> | null;
-  people: PersonRow[];
-}
+const VIEW_KEY = 'toretto:team-view';
+const NO_TIERS: Tier[] = [];
+const VIEWS: { value: CalendarView; label: string }[] = [
+  { value: 'week', label: 'Week' },
+  { value: '2weeks', label: '2 weeks' },
+  { value: 'month', label: 'Month' },
+];
 
-function groupPeople(people: PersonRow[], tiers: Tier[], meId: string): Group[] {
-  const groups: Group[] = tiers.map((t) => ({ key: t.id, tier: t, people: [] }));
-  const other: Group = { key: 'other', tier: null, people: [] };
-  for (const person of people) {
-    (groups.find((g) => g.key === person.tierId) ?? other).people.push(person);
+function savedView(): CalendarView {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === '2weeks' || v === 'month' ? v : 'week';
+  } catch {
+    return 'week';
   }
-  for (const g of [...groups, other]) {
-    g.people.sort((a, b) =>
-      a.id === meId ? -1 : b.id === meId ? 1 : a.name.localeCompare(b.name),
-    );
-  }
-  return [...groups, other].filter((g) => g.people.length > 0);
 }
 
 export default function TeamSchedulePage() {
-  const me = useCurrentUser();
   const { org } = useBootstrapData();
   const tz = useViewerZone();
   const today = todayIn(tz);
-  const thisWeek = startOfWeek(today, org.weekStartsOn);
-  const [weekStart, setWeekStart] = useState(thisWeek);
-  const [tierId, setTierId] = useState(me.tierId ?? '');
-  const [teamId, setTeamId] = useState('');
-  const weekEnd = addDays(weekStart, 6);
-  const days = useMemo(() => eachDay(weekStart, weekEnd), [weekStart, weekEnd]);
+  const [params, setParams] = useSearchParams();
+  const view = (params.get('view') as CalendarView | null) ?? savedView();
+  const date = params.get('date') ?? today;
+  const tiersParam = params.get('tiers') ?? '';
+  const tierFilter = useMemo(() => tiersParam.split(',').filter(Boolean), [tiersParam]);
+  const teamFilter = params.get('team') ?? '';
+  const scheduleFilter = params.get('schedule') ?? '';
+  const { from, to } = viewRange(view, date, org.weekStartsOn);
 
+  const update = (patch: Record<string, string | null>) =>
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p);
+        for (const [k, v] of Object.entries(patch)) {
+          if (v) next.set(k, v);
+          else next.delete(k);
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  const setView = (v: CalendarView) => {
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // Just not remembered.
+    }
+    update({ view: v });
+  };
+  const setDate = (d: ISODate) => update({ date: d === today ? null : d });
+
+  return (
+    <TeamCalendar
+      from={from}
+      to={to}
+      view={view}
+      date={date}
+      today={today}
+      tz={tz}
+      tierFilter={tierFilter}
+      teamFilter={teamFilter}
+      scheduleFilter={scheduleFilter}
+      onView={setView}
+      onDate={setDate}
+      onFilter={update}
+    />
+  );
+}
+
+function TeamCalendar({
+  from,
+  to,
+  view,
+  date,
+  today,
+  tz,
+  tierFilter,
+  teamFilter,
+  scheduleFilter,
+  onView,
+  onDate,
+  onFilter,
+}: {
+  from: ISODate;
+  to: ISODate;
+  view: CalendarView;
+  date: ISODate;
+  today: ISODate;
+  tz: string;
+  tierFilter: string[];
+  teamFilter: string;
+  scheduleFilter: string;
+  onView: (view: CalendarView) => void;
+  onDate: (date: ISODate) => void;
+  onFilter: (patch: Record<string, string | null>) => void;
+}) {
+  const me = useCurrentUser();
+  const { org } = useBootstrapData();
+  const days = useMemo(() => eachDay(from, to), [from, to]);
+  const compact = days.length > 14;
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const tiers = useTiers();
   const teams = useTeams();
-  const schedule = useTeamSchedule(weekStart, weekEnd, tierId, teamId);
-
+  const schedule = useTeamSchedule(from, to);
+  // The grid appears once the first load finishes.
+  const scroller = useScrollToToday<HTMLDivElement>(`${from}:${to}:${schedule.isSuccess}`);
+  const holidays = useHolidays(from, to);
   const data = schedule.data;
-  const byUserDay = useMemo(() => groupByUserDay(data?.shifts ?? [], tz), [data, tz]);
-  const offByUserDay = useMemo(() => timeOffByUserDay(data?.timeOff ?? [], days), [data, days]);
-  const groups = useMemo(
-    () => groupPeople(data?.people ?? [], tiers.data ?? [], me.id),
-    [data, tiers.data, me.id],
+  const tierList = tiers.data ?? NO_TIERS;
+
+  // Everyone is on the calendar; the filters only narrow what's shown.
+  const people = useMemo(
+    () =>
+      (data?.people ?? []).filter(
+        (p) =>
+          (tierFilter.length === 0 || (p.tierId !== null && tierFilter.includes(p.tierId))) &&
+          (!teamFilter || p.teamId === teamFilter),
+      ),
+    [data, tierFilter, teamFilter],
   );
-  const shiftsByDay = useMemo(() => groupByDay(data?.shifts ?? [], tz), [data, tz]);
-  const peopleById = new Map((data?.people ?? []).map((p) => [p.id, p]));
+  const shifts = useMemo(() => {
+    const ids = new Set(people.map((p) => p.id));
+    return (data?.shifts ?? []).filter(
+      (s) => ids.has(s.userId) && (!scheduleFilter || s.scheduleId === scheduleFilter),
+    );
+  }, [data, people, scheduleFilter]);
+  const groups = useMemo(() => groupByTier(people, tierList, me.id), [people, tierList, me.id]);
+  const byUserDay = useMemo(() => groupByUserDay(shifts, tz), [shifts, tz]);
+  const byDay = useMemo(() => groupByDay(shifts, tz), [shifts, tz]);
+  const offByUserDay = useMemo(() => timeOffByUserDay(data?.timeOff ?? [], days), [data, days]);
+  const peopleById = new Map(people.map((p) => [p.id, p]));
+  const manySchedules = (data?.schedules.length ?? 0) > 1;
+
+  const rangeLabel =
+    view === 'month' ? DateTime.fromISO(from).toFormat('LLLL yyyy') : formatDateRange(from, to);
+  const current = viewRange(view, today, org.weekStartsOn).from === from;
+  const periodWord = view === 'week' ? 'week' : view === '2weeks' ? '2 weeks' : 'month';
 
   return (
     <>
       <PageHeader
         title="Team schedule"
-        description={`Published shifts for everyone · times in ${zoneLabel(tz)}`}
-        actions={
-          <WeekNav
-            start={weekStart}
-            end={weekEnd}
-            onPrev={() => setWeekStart(addDays(weekStart, -7))}
-            onNext={() => setWeekStart(addDays(weekStart, 7))}
-            onToday={() => setWeekStart(thisWeek)}
-            isCurrent={weekStart === thisWeek}
-          />
-        }
+        description={`Who's working across every tier · times in ${zoneLabel(tz)}`}
       />
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <CalendarNav
+          label={rangeLabel}
+          onPrev={() => onDate(stepView(view, from, -1))}
+          onNext={() => onDate(stepView(view, from, 1))}
+          onToday={() => onDate(today)}
+          isCurrent={current}
+          value={date}
+          onPick={onDate}
+        />
+        <Tabs value={view} onChange={onView} options={VIEWS} />
+        {schedule.isFetching && !schedule.isLoading && <Spinner className="size-4" />}
+      </div>
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <div className="w-44">
-          <Select aria-label="Tier" value={tierId} onChange={(e) => setTierId(e.target.value)}>
-            <option value="">All tiers</option>
-            {tiers.data?.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-                {t.id === me.tierId ? ' (my tier)' : ''}
-              </option>
-            ))}
-          </Select>
-        </div>
+        {tierList.length > 1 && (
+          <TierFilter
+            tiers={tierList}
+            selected={tierFilter}
+            onChange={(ids) => onFilter({ tiers: ids.join(',') || null })}
+          />
+        )}
         {!!teams.data?.length && (
-          <div className="w-44">
-            <Select aria-label="Team" value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+          <div className="w-40">
+            <Select
+              aria-label="Team"
+              value={teamFilter}
+              onChange={(e) => onFilter({ team: e.target.value || null })}
+            >
               <option value="">All teams</option>
               {teams.data.map((t) => (
                 <option key={t.id} value={t.id}>
@@ -118,7 +234,22 @@ export default function TeamSchedulePage() {
             </Select>
           </div>
         )}
-        {schedule.isFetching && !schedule.isLoading && <Spinner className="size-4" />}
+        {manySchedules && data && (
+          <div className="w-48">
+            <Select
+              aria-label="Schedule"
+              value={scheduleFilter}
+              onChange={(e) => onFilter({ schedule: e.target.value || null })}
+            >
+              <option value="">All schedules</option>
+              {data.schedules.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
       </div>
 
       {schedule.isLoading ? (
@@ -130,15 +261,18 @@ export default function TeamSchedulePage() {
           <EmptyState
             icon={<Users />}
             title="No one to show"
-            description="Try a different tier or team."
+            description="No one matches these filters. Try All tiers."
           />
         </Card>
       ) : (
         <>
           {/* Desktop / tablet: people × days grid */}
           <Card className="hidden overflow-hidden md:block">
-            <div className="overflow-x-auto scrollbar-thin">
-              <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
+            <div ref={scroller} className="overflow-x-auto scrollbar-thin">
+              <table
+                className="w-full table-fixed border-collapse text-sm"
+                style={{ minWidth: compact ? 200 + days.length * 78 : 200 + days.length * 110 }}
+              >
                 <colgroup>
                   <col className="w-52" />
                   {days.map((d) => (
@@ -146,50 +280,72 @@ export default function TeamSchedulePage() {
                   ))}
                 </colgroup>
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/80">
+                  <tr className="border-b border-slate-200 bg-slate-50/70">
                     <th
                       scope="col"
-                      className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left text-xs font-semibold text-slate-500"
+                      className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left align-top text-xs font-semibold text-slate-500"
                     >
-                      Person
+                      {people.length} {people.length === 1 ? 'person' : 'people'}
                     </th>
-                    {days.map((d) => (
-                      <th
-                        key={d}
-                        scope="col"
-                        className={cx(
-                          'px-1.5 py-2 text-center text-xs font-semibold',
-                          d === today ? 'text-indigo-700' : 'text-slate-500',
-                        )}
-                      >
-                        <span className="block uppercase">
-                          {DateTime.fromISO(d).toFormat('ccc')}
-                        </span>
-                        <span
-                          className={cx(
-                            'mt-0.5 inline-flex size-7 items-center justify-center rounded-full text-sm',
-                            d === today ? 'bg-indigo-600 text-white' : 'text-slate-800',
-                          )}
-                        >
-                          {DateTime.fromISO(d).day}
-                        </span>
-                      </th>
-                    ))}
+                    {days.map((d) => {
+                      const working = new Set((byDay.get(d) ?? []).map((s) => s.userId)).size;
+                      return (
+                        <DayHeader
+                          key={d}
+                          day={d}
+                          today={today}
+                          holidays={holidays.get(d)}
+                          compact={compact}
+                          summary={
+                            working ? (compact ? String(working) : `${working} working`) : '—'
+                          }
+                        />
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>
-                  {groups.map((group) => (
-                    <GroupRows
-                      key={group.key}
-                      group={group}
-                      days={days}
-                      today={today}
-                      tz={tz}
-                      meId={me.id}
-                      byUserDay={byUserDay}
-                      offByUserDay={offByUserDay}
-                    />
-                  ))}
+                  {groups.map((group) => {
+                    const isCollapsed = collapsed.has(group.key);
+                    const ids = new Set(group.people.map((p) => p.id));
+                    return (
+                      <GroupRows
+                        key={group.key}
+                        label={group.tier?.name ?? 'No tier'}
+                        color={group.tier?.color ?? 'var(--color-slate-400)'}
+                        count={group.people.length}
+                        hours={formatHours(totalHours(shifts.filter((s) => ids.has(s.userId))))}
+                        colSpan={days.length + 1}
+                        collapsed={isCollapsed}
+                        onToggle={() =>
+                          setCollapsed((c) => {
+                            const next = new Set(c);
+                            if (next.has(group.key)) next.delete(group.key);
+                            else next.add(group.key);
+                            return next;
+                          })
+                        }
+                      >
+                        {!isCollapsed &&
+                          group.people.map((person) => (
+                            <TeamRow
+                              key={person.id}
+                              person={person}
+                              isMe={person.id === me.id}
+                              days={days}
+                              today={today}
+                              tz={tz}
+                              compact={compact}
+                              periodWord={periodWord}
+                              holidays={holidays}
+                              showSchedule={manySchedules && !scheduleFilter}
+                              byDay={byUserDay.get(person.id)}
+                              offByDay={offByUserDay.get(person.id)}
+                            />
+                          ))}
+                      </GroupRows>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -197,18 +353,29 @@ export default function TeamSchedulePage() {
 
           {/* Phones: agenda by day */}
           <div className="space-y-4 md:hidden">
-            {days.map((day) => (
-              <DayAgenda
-                key={day}
-                day={day}
-                today={today}
-                tz={tz}
-                meId={me.id}
-                shifts={shiftsByDay.get(day) ?? []}
-                peopleById={peopleById}
-                offPeople={(data?.people ?? []).filter((p) => offByUserDay.get(p.id)?.get(day))}
-              />
-            ))}
+            {days
+              .filter(
+                (day) =>
+                  view === 'week' ||
+                  day === today ||
+                  holidays.has(day) ||
+                  byDay.has(day) ||
+                  people.some((p) => offByUserDay.get(p.id)?.has(day)),
+              )
+              .map((day) => (
+                <DayAgenda
+                  key={day}
+                  day={day}
+                  today={today}
+                  tz={tz}
+                  meId={me.id}
+                  holidays={holidays.get(day)}
+                  shifts={byDay.get(day) ?? []}
+                  peopleById={peopleById}
+                  offPeople={people.filter((p) => offByUserDay.get(p.id)?.get(day))}
+                  showSchedule={manySchedules && !scheduleFilter}
+                />
+              ))}
           </div>
           <div className="mt-4">
             <ScheduleLegend />
@@ -219,102 +386,86 @@ export default function TeamSchedulePage() {
   );
 }
 
-function GroupRows({
-  group,
+function TeamRow({
+  person,
+  isMe,
   days,
   today,
   tz,
-  meId,
-  byUserDay,
-  offByUserDay,
+  compact,
+  periodWord,
+  holidays,
+  showSchedule,
+  byDay,
+  offByDay,
 }: {
-  group: Group;
-  days: string[];
-  today: string;
+  person: PersonRow;
+  isMe: boolean;
+  days: ISODate[];
+  today: ISODate;
   tz: string;
-  meId: string;
-  byUserDay: Map<string, Map<string, ShiftView[]>>;
-  offByUserDay: ReturnType<typeof timeOffByUserDay>;
+  compact: boolean;
+  periodWord: string;
+  holidays: Map<ISODate, Holiday[]>;
+  showSchedule: boolean;
+  byDay: Map<ISODate, ShiftView[]> | undefined;
+  offByDay: Map<ISODate, TimeOffEntry> | undefined;
 }) {
+  const all = [...(byDay?.values() ?? [])].flat();
   return (
-    <>
-      <tr className="border-b border-slate-100 bg-white">
-        <th
-          colSpan={days.length + 1}
-          scope="colgroup"
-          className="sticky left-0 px-4 pt-3 pb-1.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
-        >
-          <span className="flex items-center gap-2">
-            <ColorDot color={group.tier?.color ?? '#94a3b8'} />
-            {group.tier?.name ?? 'Other'}
-            <span className="font-normal normal-case text-slate-400">· {group.people.length}</span>
-          </span>
-        </th>
-      </tr>
-      {group.people.map((person) => {
-        const shiftsByDay = byUserDay.get(person.id);
-        const weekShifts = [...(shiftsByDay?.values() ?? [])].flat();
-        const isMe = person.id === meId;
+    <tr className={cx('border-b border-slate-100', isMe && 'bg-brand-50/40')}>
+      <th
+        scope="row"
+        className={cx(
+          'sticky left-0 z-10 px-4 py-2 text-left font-normal',
+          isMe ? 'bg-brand-50' : 'bg-surface',
+        )}
+      >
+        <div className="flex items-center gap-2.5">
+          <Avatar name={person.name} size="sm" />
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-sm font-medium text-slate-900">
+              <span className="truncate">{person.name}</span>
+              {isMe && <Badge tone="brand">You</Badge>}
+            </p>
+            <p className="text-xs text-slate-500">
+              {all.length ? formatHours(totalHours(all)) : `Off this ${periodWord}`}
+            </p>
+          </div>
+        </div>
+      </th>
+      {days.map((day) => {
+        const off = offByDay?.get(day);
         return (
-          <tr
-            key={person.id}
-            className={cx('border-b border-slate-100 last:border-0', isMe && 'bg-indigo-50/40')}
+          <td
+            key={day}
+            className={cx(
+              'h-16 border-l border-slate-100 p-1 align-top',
+              isWeekend(day) && 'bg-slate-50/40',
+              holidays.has(day) && 'bg-rose-50/30',
+              day === today && 'bg-brand-50/40',
+            )}
           >
-            <th
-              scope="row"
-              className={cx(
-                'sticky left-0 z-10 px-4 py-2 text-left font-normal',
-                isMe ? 'bg-indigo-50' : 'bg-white',
-              )}
-            >
-              <div className="flex items-center gap-2.5">
-                <Avatar name={person.name} size="sm" />
-                <div className="min-w-0">
-                  <p className="flex items-center gap-1.5 truncate text-sm font-medium text-slate-900">
-                    <span className="truncate">{person.name}</span>
-                    {isMe && <Badge tone="indigo">You</Badge>}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    {weekShifts.length ? formatHours(totalHours(weekShifts)) : 'Off this week'}
-                  </p>
-                </div>
-              </div>
-            </th>
-            {days.map((day) => {
-              const shifts = shiftsByDay?.get(day) ?? [];
-              const off = offByUserDay.get(person.id)?.get(day);
-              return (
-                <td
-                  key={day}
-                  className={cx(
-                    'h-16 border-l border-slate-100 p-1 align-top',
-                    day === today && 'bg-indigo-50/30',
-                    isWeekend(day) && day !== today && 'bg-slate-50/50',
-                  )}
-                >
-                  <div className="space-y-1">
-                    {off && <TimeOffChip entry={off} compact />}
-                    {shifts.map((s) => (
-                      <ShiftChip
-                        key={s.id}
-                        shift={s}
-                        tz={tz}
-                        color={s.label?.color ?? s.tier.color}
-                        labelName={
-                          s.label?.name ?? (s.tier.name !== group.tier?.name ? s.tier.name : null)
-                        }
-                        status={s.status}
-                        mine={isMe}
-                      />
-                    ))}
-                  </div>
-                </td>
-              );
-            })}
-          </tr>
+            <div className="flex flex-col gap-1">
+              {off && <TimeOffChip entry={off} compact={compact} />}
+              {(byDay?.get(day) ?? []).map((s) => (
+                <ShiftChip
+                  key={s.id}
+                  shift={s}
+                  tz={tz}
+                  compact={compact}
+                  color={shiftColor(s)}
+                  labelName={compact ? null : s.label?.name}
+                  caption={showSchedule && !compact ? s.scheduleName : undefined}
+                  status={s.status}
+                  mine={isMe}
+                />
+              ))}
+            </div>
+          </td>
         );
       })}
-    </>
+    </tr>
   );
 }
 
@@ -323,35 +474,43 @@ function DayAgenda({
   today,
   tz,
   meId,
+  holidays,
   shifts,
   peopleById,
   offPeople,
+  showSchedule,
 }: {
-  day: string;
-  today: string;
+  day: ISODate;
+  today: ISODate;
   tz: string;
   meId: string;
+  holidays: Holiday[] | undefined;
   shifts: ShiftView[];
   peopleById: Map<string, PersonRow>;
   offPeople: PersonRow[];
+  showSchedule: boolean;
 }) {
+  const isToday = day === today;
   return (
     <Card>
       <div
         className={cx(
-          'flex items-center justify-between border-b border-slate-100 px-4 py-2.5',
-          day === today && 'bg-indigo-50',
+          'flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-2.5',
+          isToday && 'bg-brand-50',
         )}
       >
         <p
           className={cx(
-            'text-sm font-semibold',
-            day === today ? 'text-indigo-700' : 'text-slate-800',
+            'flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold',
+            isToday ? 'text-brand-700' : 'text-slate-800',
           )}
         >
-          {formatDay(day)} {day === today && <span className="font-normal">· Today</span>}
+          <span>
+            {formatDay(day)} {isToday && <span className="font-normal">· Today</span>}
+          </span>
+          {holidays?.length ? <HolidayBadge holidays={holidays} /> : null}
         </p>
-        <span className="text-xs text-slate-500">
+        <span className="shrink-0 text-xs text-slate-500">
           {shifts.length} shift{shifts.length === 1 ? '' : 's'}
         </span>
       </div>
@@ -366,21 +525,27 @@ function DayAgenda({
                 key={s.id}
                 className={cx(
                   'flex items-center gap-3 px-4 py-2.5',
-                  s.userId === meId && 'bg-indigo-50/50',
+                  s.userId === meId && 'bg-brand-50/50',
                 )}
               >
                 <span
                   className="h-8 w-1 shrink-0 rounded-full"
-                  style={{ backgroundColor: s.label?.color ?? s.tier.color }}
+                  style={{ backgroundColor: shiftColor(s), boxShadow: `0 0 10px ${shiftColor(s)}` }}
                 />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-slate-900">
                     {person?.name ?? 'Someone'}{' '}
-                    {s.userId === meId && <Badge tone="indigo">You</Badge>}
+                    {s.userId === meId && <Badge tone="brand">You</Badge>}
                   </p>
                   <p className="truncate text-xs text-slate-500">
-                    {formatTimeRange(s.startTime, s.endTime, tz)} ·{' '}
-                    {[s.label?.name, s.tier.name].filter(Boolean).join(' · ')}
+                    {[
+                      formatTimeRange(s.startTime, s.endTime, tz),
+                      s.tier?.name,
+                      s.label?.name,
+                      showSchedule && s.scheduleName,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </p>
                 </div>
                 <Badge tone={s.status === 'confirmed' ? 'green' : 'amber'}>

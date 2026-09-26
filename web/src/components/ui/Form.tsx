@@ -61,7 +61,7 @@ export function Field({
 }
 
 const control =
-  'block w-full rounded-lg border-0 bg-white text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-600 disabled:bg-slate-50 disabled:text-slate-500';
+  'block w-full rounded-lg border-0 bg-surface text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 transition placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-600 focus:shadow-[0_0_0_4px_var(--glow-soft)] disabled:bg-slate-50 disabled:text-slate-500';
 
 function useField(id?: string) {
   const field = use(FieldContext);
@@ -144,7 +144,7 @@ export function Toggle({
         onClick={() => onChange(!checked)}
         className={cx(
           'relative mt-0.5 inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors disabled:opacity-50',
-          checked ? 'bg-indigo-600' : 'bg-slate-200',
+          checked ? 'neon bg-brand-600' : 'bg-slate-200',
         )}
       >
         <span

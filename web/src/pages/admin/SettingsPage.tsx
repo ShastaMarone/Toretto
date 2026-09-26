@@ -1,7 +1,9 @@
-import type { OrgSettings, Team, TimeOffType } from '@shared/types';
+import { HOLIDAY_REGIONS, holidaysBetween } from '@shared/holidays';
+import { addDays, formatDay, todayIn } from '@shared/time';
+import type { HolidayRegion, OrgSettings, Team, TimeOffType } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Archive, ArchiveRestore, Pencil, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
 import { keys, useSettings, useTeams, useTimeOffTypes } from '../../api/queries';
@@ -51,6 +53,7 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
         reminderHours: form.reminderHours,
         selfSignup: form.selfSignup,
         allowedDomains: form.domains.split(/[\s,]+/).filter(Boolean),
+        holidayRegion: form.holidayRegion,
       }),
     onSuccess: (s) => {
       queryClient.setQueryData(keys.settings, s);
@@ -60,6 +63,14 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
     },
   });
   const errors = fieldErrors(save.error);
+  const upcoming = useMemo(() => {
+    const today = todayIn(form.timezone);
+    return [...holidaysBetween(form.holidayRegion, today, addDays(today, 365)).entries()]
+      .flatMap(([date, list]) =>
+        list.filter((h) => !h.observed).map((h) => ({ date, name: h.name })),
+      )
+      .slice(0, 3);
+  }, [form.holidayRegion, form.timezone]);
   return (
     <Card>
       <CardHeader title="Organization" />
@@ -98,6 +109,25 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
             value={form.timezone}
             onChange={(timezone) => setForm({ ...form, timezone })}
           />
+        </Field>
+        <Field
+          label="Statutory holidays"
+          hint={
+            upcoming.length
+              ? `Shown on every calendar. Next: ${upcoming.map((h) => `${h.name} (${formatDay(h.date)})`).join(', ')}.`
+              : 'Holidays are hidden from the calendars.'
+          }
+        >
+          <Select
+            value={form.holidayRegion}
+            onChange={(e) => setForm({ ...form, holidayRegion: e.target.value as HolidayRegion })}
+          >
+            {HOLIDAY_REGIONS.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </Select>
         </Field>
         <Field
           label="Confirmation reminders"

@@ -2,7 +2,7 @@ import type { ShiftView } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { CalendarX2 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
-import { Navigate, useParams } from 'react-router';
+import { Navigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '../api/client';
 import { ButtonLink } from '../components/ui/Button';
@@ -60,17 +60,22 @@ export function ConfirmShiftPage() {
   return <LoadingBlock label="Confirming your shift…" />;
 }
 
-/** /confirm-shifts/:scheduleId — the "Confirm all" button in schedule emails. */
-export function ConfirmScheduleShiftsPage() {
-  const { scheduleId = '' } = useParams();
+/** /confirm-shifts?ids=… — the "Confirm all" button in schedule emails. */
+export function ConfirmShiftsPage() {
+  const [params] = useSearchParams();
+  const shiftIds = (params.get('ids') ?? '').split(',').filter(Boolean);
   const queryClient = useQueryClient();
   const confirm = useMutation({
-    mutationFn: () => api.post<{ confirmed: number }>('/my/shifts/confirm', { scheduleId }),
+    mutationFn: () =>
+      api.post<{ confirmed: number }>(
+        '/my/shifts/confirm',
+        shiftIds.length ? { shiftIds: shiftIds.slice(0, 200) } : {},
+      ),
     onSuccess: ({ confirmed }) => {
       toast.success(
         confirmed
           ? `Confirmed ${confirmed} shift${confirmed === 1 ? '' : 's'} — thanks!`
-          : 'All your shifts were already confirmed.',
+          : 'Those shifts were already confirmed.',
       );
       void queryClient.invalidateQueries({ queryKey: ['my-shifts'] });
     },

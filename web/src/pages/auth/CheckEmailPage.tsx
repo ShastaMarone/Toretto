@@ -33,7 +33,7 @@ export default function CheckEmailPage() {
   return (
     <AuthLayout title="Check your email" footer={<TextLink to="/login">Back to sign in</TextLink>}>
       <div className="flex gap-4">
-        <div className="shrink-0 rounded-full bg-indigo-50 p-3 text-indigo-600">
+        <div className="shrink-0 rounded-full bg-brand-50 p-3 text-brand-600">
           <Inbox className="size-6" />
         </div>
         <p className="text-sm text-slate-600">{(MESSAGES[reason] ?? MESSAGES.signup!)(email)}</p>

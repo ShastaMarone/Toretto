@@ -15,15 +15,15 @@ export function AuthLayout({
 }) {
   const { org, setupRequired } = useBootstrapData();
   return (
-    <div className="flex min-h-dvh flex-col items-center bg-gradient-to-b from-indigo-50 via-slate-50 to-slate-50 px-4 py-10 sm:justify-center">
+    <div className="flex min-h-dvh flex-col items-center px-4 py-10 sm:justify-center">
       <div className="mb-6 flex items-center gap-3">
-        <img src="/favicon.svg" alt="" className="size-10" />
+        <img src="/favicon.svg" alt="" className="size-10 drop-shadow-[0_4px_14px_var(--glow)]" />
         <div className="leading-tight">
           <p className="font-bold text-slate-900">{setupRequired ? 'Toretto' : org.name}</p>
           <p className="text-xs text-slate-500">Team scheduling</p>
         </div>
       </div>
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 sm:p-8">
+      <div className="glass underglow w-full max-w-md rounded-2xl p-6 ring-1 ring-slate-200/80 sm:p-8">
         <h1 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h1>
         {subtitle && <div className="mt-1.5 text-sm text-slate-500">{subtitle}</div>}
         <div className="mt-6">{children}</div>
@@ -35,7 +35,7 @@ export function AuthLayout({
 
 export function TextLink({ to, children }: { to: string; children: ReactNode }) {
   return (
-    <Link to={to} className="font-semibold text-indigo-600 hover:text-indigo-500">
+    <Link to={to} className="font-semibold text-brand-600 hover:text-brand-500">
       {children}
     </Link>
   );

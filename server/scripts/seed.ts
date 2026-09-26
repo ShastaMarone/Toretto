@@ -1,7 +1,7 @@
 // Load demo data: `npm run seed` (add `-- --reset` to wipe existing data first).
 // Everyone's password is "password123". Never run this against production.
 import { parseArgs } from 'node:util';
-import { addDays, startOfWeek, todayIn, shiftTimesFromLocal } from '@shared/time';
+import { addDays, dayRangeToUtc, startOfWeek, todayIn, shiftTimesFromLocal } from '@shared/time';
 import { hashPassword } from '../src/auth/crypto';
 import { AUTH_USER_COLUMNS, type AuthUser } from '../src/auth/types';
 import { loadConfig, loadDotEnv } from '../src/config';
@@ -10,7 +10,7 @@ import { createLogger } from '../src/logger';
 import { migrate } from '../src/migrate';
 import { seedDefaults } from '../src/services/defaults';
 import { publishSchedule } from '../src/services/publish';
-import { createSchedule } from '../src/services/schedules';
+import { copyShifts, ensureDefaultSchedule } from '../src/services/schedules';
 import { createShift } from '../src/services/shifts';
 
 const { values } = parseArgs({
@@ -48,6 +48,7 @@ await withTransaction(db, async (client) => {
   if (values.reset) {
     await client.query(`TRUNCATE users, tiers, teams, labels, schedules, shifts, sessions, auth_tokens,
                         time_off_requests, notifications, audit_log RESTART IDENTITY CASCADE`);
+    await ensureDefaultSchedule(client);
   }
   await client.query(
     `UPDATE org_settings SET org_name = 'Northwind Support', timezone = $1, week_starts_on = 1,
@@ -199,7 +200,10 @@ const admin = adminRows[0]!;
 
 const thisWeek = startOfWeek(todayIn(timezone), 1);
 const nextWeek = addDays(thisWeek, 7);
+const weekAfter = addDays(nextWeek, 7);
 const weekdays = (start: string) => [0, 1, 2, 3, 4].map((d) => addDays(start, d));
+const week = (start: string) => ({ from: start, to: addDays(start, 6) });
+const scheduleId = await ensureDefaultSchedule(db);
 
 type Plan = {
   person: string;
@@ -210,17 +214,11 @@ type Plan = {
   notes?: string;
 };
 
-async function buildSchedule(tier: string, start: string, plans: Plan[]) {
-  const { schedule } = await createSchedule(db, admin, {
-    tierId: tier,
-    startDate: start,
-    endDate: addDays(start, 6),
-    name: null,
-    copyFromScheduleId: null,
-  });
+// Every tier shares the main schedule.
+async function addShifts(plans: Plan[]) {
   for (const plan of plans) {
     for (const day of plan.days) {
-      await createShift(db, admin, schedule.id, {
+      await createShift(db, admin, scheduleId, {
         userId: ids[plan.person]!,
         labelId: plan.label ? labelIds[plan.label]! : null,
         ...shiftTimesFromLocal(day, plan.start, plan.end, timezone),
@@ -228,12 +226,11 @@ async function buildSchedule(tier: string, start: string, plans: Plan[]) {
       });
     }
   }
-  return schedule.id;
 }
 
-// ---- This week: every tier published --------------------------------------
+// ---- This week: published, mostly confirmed ---------------------------------
 const w = weekdays(thisWeek);
-const tier1Now = await buildSchedule(tiers.t1, thisWeek, [
+await addShifts([
   { person: 'jordan', days: w, start: '08:00', end: '16:00' },
   { person: 'priya', days: w, start: '08:00', end: '16:00', label: 'Chat Queue' },
   { person: 'sam', days: w, start: '12:00', end: '20:00' },
@@ -253,13 +250,9 @@ const tier1Now = await buildSchedule(tiers.t1, thisWeek, [
     end: '17:00',
     label: 'Overtime',
   },
-]);
-const tier2Now = await buildSchedule(tiers.t2, thisWeek, [
   { person: 'taylor', days: [w[0]!, w[1]!, w[2]!, w[4]!], start: '09:00', end: '17:00' },
   { person: 'chris', days: w, start: '09:00', end: '17:00', label: 'Escalations' },
   { person: 'dana', days: w, start: '10:00', end: '18:00' },
-]);
-const tier3Now = await buildSchedule(tiers.t3, thisWeek, [
   { person: 'morgan', days: [w[0]!, w[2]!], start: '09:00', end: '17:00', label: 'Incident Lead' },
   { person: 'morgan', days: [w[1]!, w[3]!, w[4]!], start: '09:00', end: '17:00' },
   { person: 'riley', days: w.slice(0, 4), start: '11:00', end: '19:00' },
@@ -271,27 +264,24 @@ const tier3Now = await buildSchedule(tiers.t3, thisWeek, [
     label: 'On-Call',
   },
 ]);
-for (const id of [tier1Now, tier2Now, tier3Now]) await publishSchedule(db, config, id, admin);
-
-// Most of this week's shifts are confirmed; a few are still pending.
+await publishSchedule(db, config, scheduleId, admin, week(thisWeek));
+// A few of this week's shifts are still waiting for confirmation.
 await db.query(
   `UPDATE shifts SET status = 'confirmed', confirmed_at = published_at + interval '3 hours'
-    WHERE published_at IS NOT NULL AND schedule_id = ANY($1)
-      AND NOT (published_user_id = ANY($2))`,
-  [
-    [tier1Now, tier2Now, tier3Now],
-    [ids.sam, ids.dana],
-  ],
+    WHERE published_at IS NOT NULL AND NOT (published_user_id = ANY($1))`,
+  [[ids.sam, ids.dana]],
 );
 
-// ---- Next week: every tier published; Tier 1 has a few unpublished edits --------
+// ---- Next week: published, then a few edits the team can't see yet ----------
 const n = weekdays(nextWeek);
-const tier2Next = await buildSchedule(tiers.t2, nextWeek, [
+await addShifts([
+  { person: 'jordan', days: n, start: '08:00', end: '16:00' },
+  { person: 'priya', days: n.slice(0, 2), start: '08:00', end: '16:00', label: 'Chat Queue' },
+  { person: 'sam', days: n.slice(1), start: '12:00', end: '20:00' },
+  { person: 'maria', days: n, start: '12:00', end: '20:00' },
   { person: 'taylor', days: n, start: '09:00', end: '17:00' },
   { person: 'chris', days: n, start: '09:00', end: '17:00', label: 'Escalations' },
   { person: 'dana', days: n.slice(1), start: '10:00', end: '18:00' },
-]);
-const tier3Next = await buildSchedule(tiers.t3, nextWeek, [
   { person: 'morgan', days: n, start: '09:00', end: '17:00', label: 'Incident Lead' },
   { person: 'riley', days: n.slice(0, 3), start: '11:00', end: '19:00' },
   {
@@ -302,48 +292,32 @@ const tier3Next = await buildSchedule(tiers.t3, nextWeek, [
     label: 'On-Call',
   },
 ]);
-const tier1Next = await buildSchedule(tiers.t1, nextWeek, [
-  { person: 'jordan', days: n, start: '08:00', end: '16:00' },
-  { person: 'priya', days: n.slice(0, 2), start: '08:00', end: '16:00', label: 'Chat Queue' },
-  { person: 'sam', days: n.slice(1), start: '12:00', end: '20:00' },
-  { person: 'maria', days: n, start: '12:00', end: '20:00' },
-]);
-for (const id of [tier1Next, tier2Next, tier3Next]) await publishSchedule(db, config, id, admin);
+await publishSchedule(db, config, scheduleId, admin, week(nextWeek));
+const nextWeekBounds = dayRangeToUtc(nextWeek, addDays(nextWeek, 6), timezone);
 await db.query(
   `UPDATE shifts SET status = 'confirmed', confirmed_at = now()
-    WHERE schedule_id = ANY($1) AND published_user_id = ANY($2)`,
-  [
-    [tier1Next, tier2Next, tier3Next],
-    [ids.jordan, ids.chris, ids.morgan],
-  ],
+    WHERE published_user_id = ANY($1) AND published_start_time >= $2 AND published_start_time < $3`,
+  [[ids.jordan, ids.chris, ids.morgan], nextWeekBounds.from, nextWeekBounds.to],
 );
-
-// Edits made after publishing (shown as "Edit"/"New" in the builder until re-published).
 const {
   rows: [samTuesday],
 } = await db.query<{ id: string }>(
-  `SELECT id FROM shifts WHERE schedule_id = $1 AND user_id = $2 ORDER BY start_time LIMIT 1`,
-  [tier1Next, ids.sam],
+  `SELECT id FROM shifts WHERE user_id = $1 AND start_time >= $2 ORDER BY start_time LIMIT 1`,
+  [ids.sam, nextWeekBounds.from],
 );
 await db.query(
   "UPDATE shifts SET start_time = start_time + interval '1 hour', end_time = end_time + interval '1 hour' WHERE id = $1",
   [samTuesday!.id],
 );
-await createShift(db, admin, tier1Next, {
+await createShift(db, admin, scheduleId, {
   userId: ids.jordan!,
   labelId: labelIds.Overtime!,
   ...shiftTimesFromLocal(addDays(nextWeek, 5), '09:00', '15:00', timezone),
   notes: 'Weekend backlog cleanup',
 });
 
-// ---- The week after: Tier 1 draft, copied from next week ------------------
-await createSchedule(db, admin, {
-  tierId: tiers.t1,
-  startDate: addDays(nextWeek, 7),
-  endDate: addDays(nextWeek, 13),
-  name: null,
-  copyFromScheduleId: tier1Next,
-});
+// ---- The week after: drafted by copying next week, not published yet ---------
+await copyShifts(db, admin, scheduleId, { ...week(nextWeek), targetStart: weekAfter });
 
 // ---- Time off -------------------------------------------------------------
 const typeId = async (name: string) =>

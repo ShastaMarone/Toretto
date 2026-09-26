@@ -6,7 +6,7 @@ import {
   shiftTimesFromLocal,
   type ISODate,
 } from '@shared/time';
-import type { BuilderShift, Label, Person, PersonRow, TimeOffEntry } from '@shared/types';
+import type { BuilderShift, Label, PersonRow, Tier, TimeOffEntry } from '@shared/types';
 import { CalendarClock, Copy, Eye, Trash2 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { alpha } from '../../lib/colors';
@@ -67,9 +67,8 @@ export function ShiftDialog({
   initial,
   shift,
   tz,
-  days,
-  members,
   people,
+  tiers,
   labels,
   timeOff,
   allShifts,
@@ -85,9 +84,9 @@ export function ShiftDialog({
   initial: ShiftDraft;
   shift?: BuilderShift;
   tz: string;
-  days: ISODate[];
-  members: PersonRow[];
-  people: Person[];
+  /** Everyone who can be scheduled, grouped by tier in the picker. */
+  people: PersonRow[];
+  tiers: Pick<Tier, 'id' | 'name'>[];
   labels: Label[];
   timeOff: TimeOffEntry[];
   allShifts: BuilderShift[];
@@ -101,14 +100,22 @@ export function ShiftDialog({
 }) {
   const [draft, setDraft] = useState<ShiftDraft>(initial);
   const presets = useMemo(() => presetsFrom(allShifts, tz), [allShifts, tz]);
-  const memberIds = new Set(members.map((m) => m.id));
-  const others = people.filter((p) => !memberIds.has(p.id) && p.status !== 'deactivated');
+  const byId = new Map(people.map((p) => [p.id, p]));
+  const person = byId.get(draft.userId);
+  // Tier labels are only for people in that tier (a shift keeps the label it has).
+  const usable = labels.filter(
+    (l) => l.tierId === null || l.tierId === person?.tierId || l.id === draft.labelId,
+  );
+  const tierName = new Map(tiers.map((t) => [t.id, t.name]));
+  const groups = [
+    ...tiers.map((t) => ({ label: t.name, people: people.filter((p) => p.tierId === t.id) })),
+    { label: 'No tier', people: people.filter((p) => !p.tierId || !tierName.has(p.tierId)) },
+  ].filter((g) => g.people.length);
   const overnight = draft.end <= draft.start;
   const offThatDay = timeOff.find(
     (t) => t.userId === draft.userId && t.startDate <= draft.date && t.endDate >= draft.date,
   );
-  const personName = (id: string) =>
-    members.find((m) => m.id === id)?.name ?? people.find((p) => p.id === id)?.name ?? 'Someone';
+  const personName = (id: string) => byId.get(id)?.name ?? 'Someone';
   const errors = fieldErrors(error);
   const published = shift?.published;
   const set = (patch: Partial<ShiftDraft>) => setDraft((d) => ({ ...d, ...patch }));
@@ -182,35 +189,37 @@ export function ShiftDialog({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Person" error={errors.userId}>
-            <Select value={draft.userId} onChange={(e) => set({ userId: e.target.value })} required>
-              <optgroup label="This tier">
-                {members
-                  .filter((m) => m.active || m.id === draft.userId)
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-              </optgroup>
-              {others.length > 0 && (
-                <optgroup label="Everyone else">
-                  {others.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
+            <Select
+              value={draft.userId}
+              required
+              onChange={(e) => {
+                const next = byId.get(e.target.value);
+                const label = labels.find((l) => l.id === draft.labelId);
+                // Drop a tier label that doesn't apply to the new person.
+                const keep = !label?.tierId || label.tierId === next?.tierId;
+                set({ userId: e.target.value, labelId: keep ? draft.labelId : null });
+              }}
+            >
+              {groups.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.people
+                    .filter((p) => p.active || p.id === draft.userId)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
                 </optgroup>
-              )}
-            </Select>
-          </Field>
-          <Field label="Day" error={errors.startTime}>
-            <Select value={draft.date} onChange={(e) => set({ date: e.target.value })}>
-              {days.map((d) => (
-                <option key={d} value={d}>
-                  {formatDay(d)}
-                </option>
               ))}
             </Select>
+          </Field>
+          <Field label="Day" error={errors.startTime} hint={formatDay(draft.date)}>
+            <Input
+              type="date"
+              required
+              value={draft.date}
+              onChange={(e) => e.target.value && set({ date: e.target.value })}
+            />
           </Field>
         </div>
 
@@ -248,7 +257,7 @@ export function ShiftDialog({
                 className={cx(
                   'rounded-full px-2.5 py-1 text-xs font-medium',
                   draft.start === start && draft.end === end
-                    ? 'bg-indigo-600 text-white'
+                    ? 'neon bg-neon text-white'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200',
                 )}
               >
@@ -268,7 +277,7 @@ export function ShiftDialog({
             >
               No label
             </LabelOption>
-            {labels.map((l) => (
+            {usable.map((l) => (
               <LabelOption
                 key={l.id}
                 selected={draft.labelId === l.id}
@@ -276,7 +285,9 @@ export function ShiftDialog({
                 onClick={() => set({ labelId: l.id })}
               >
                 {l.name}
-                {l.tierId === null && <span className="text-[10px] opacity-60"> · all tiers</span>}
+                {l.tierId !== null && (
+                  <span className="text-[10px] opacity-60"> · {tierName.get(l.tierId)}</span>
+                )}
               </LabelOption>
             ))}
           </div>

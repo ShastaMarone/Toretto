@@ -178,7 +178,8 @@ export function TimeOffRequestDialog({
               {shifts.data.map((s) => (
                 <li key={s.id}>
                   {formatDay(localDate(s.startTime, tz))} ·{' '}
-                  {formatTimeRange(s.startTime, s.endTime, tz)} ({s.tier.name})
+                  {formatTimeRange(s.startTime, s.endTime, tz)}
+                  {s.label && ` (${s.label.name})`}
                 </li>
               ))}
             </ul>

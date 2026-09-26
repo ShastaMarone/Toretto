@@ -19,6 +19,7 @@ import { api } from '../../api/client';
 import { useTimeOffRequests } from '../../api/queries';
 import { cx } from '../../lib/cx';
 import { useBootstrapData, useCurrentUser, useSetSessionUser } from '../../lib/session';
+import { ThemeToggle } from '../ThemeToggle';
 import { Avatar } from '../ui/Misc';
 
 interface NavItem {
@@ -54,17 +55,17 @@ function NavSection({
               onClick={onNavigate}
               className={({ isActive }) =>
                 cx(
-                  'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors [&>svg]:size-[18px] [&>svg]:shrink-0',
+                  'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition [&>svg]:size-[18px] [&>svg]:shrink-0',
                   isActive
-                    ? 'bg-indigo-50 text-indigo-700 [&>svg]:text-indigo-600'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 [&>svg]:text-slate-400',
+                    ? 'bg-linear-to-r from-brand-500/15 to-transparent text-brand-700 shadow-[inset_3px_0_0_var(--color-brand-500)] [&>svg]:text-brand-600 dark:from-brand-500/25 dark:shadow-[inset_3px_0_0_#e040fb,0_0_22px_-8px_var(--glow)]'
+                    : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 [&>svg]:text-slate-400',
                 )
               }
             >
               {item.icon}
               <span className="flex-1">{item.label}</span>
               {item.badge ? (
-                <span className="rounded-full bg-indigo-600 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white">
+                <span className="neon bg-neon rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white">
                   {item.badge}
                 </span>
               ) : null}
@@ -101,10 +102,10 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-16 shrink-0 items-center gap-2.5 px-5">
-        <img src="/favicon.svg" alt="" className="size-8" />
+        <img src="/favicon.svg" alt="" className="size-8 drop-shadow-[0_4px_12px_var(--glow)]" />
         <div className="min-w-0 leading-tight">
           <p className="truncate text-sm font-bold text-slate-900">{org.name}</p>
-          <p className="text-xs text-slate-500">Toretto Scheduling</p>
+          <p className="text-neon text-xs font-semibold">Toretto Scheduling</p>
         </div>
       </div>
       <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4" aria-label="Main">
@@ -118,14 +119,18 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         />
         {isAdmin && <AdminNav onNavigate={onNavigate} />}
       </nav>
-      <div className="border-t border-slate-200 p-3">
+      <div className="border-t border-slate-200/70 p-3">
+        <div className="mb-2 flex items-center justify-between px-2">
+          <span className="text-xs font-medium text-slate-500">Theme</span>
+          <ThemeToggle />
+        </div>
         <NavLink
           to="/profile"
           onClick={onNavigate}
           className={({ isActive }) =>
             cx(
-              'flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-100',
-              isActive && 'bg-slate-100',
+              'flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-100/80',
+              isActive && 'bg-slate-100/80',
             )
           }
         >
@@ -139,7 +144,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         <button
           type="button"
           onClick={() => void signOut()}
-          className="mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          className="mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100/80 hover:text-slate-900"
         >
           <LogOut className="size-[18px] text-slate-400" /> Sign out
         </button>
@@ -173,12 +178,12 @@ export function AppShell() {
   return (
     <div className="min-h-dvh">
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-slate-200 bg-white lg:block">
+      <aside className="glass fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-slate-200/70 lg:block">
         <Sidebar onNavigate={() => undefined} />
       </aside>
 
       {/* Mobile top bar + drawer */}
-      <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-slate-200 bg-white/90 px-4 backdrop-blur lg:hidden">
+      <header className="glass sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-slate-200/70 px-4 lg:hidden">
         <button
           type="button"
           aria-label="Open menu"
@@ -197,8 +202,11 @@ export function AppShell() {
           aria-modal="true"
           aria-label="Menu"
         >
-          <div className="absolute inset-0 bg-slate-900/40" onClick={() => setDrawerOpen(false)} />
-          <div className="absolute inset-y-0 left-0 w-72 max-w-[85vw] bg-white shadow-xl">
+          <div
+            className="absolute inset-0 bg-[rgb(10_8_24/0.45)] backdrop-blur-sm"
+            onClick={() => setDrawerOpen(false)}
+          />
+          <div className="absolute inset-y-0 left-0 w-72 max-w-[85vw] bg-surface/95 shadow-xl backdrop-blur-xl">
             <button
               type="button"
               aria-label="Close menu"

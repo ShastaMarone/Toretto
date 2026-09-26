@@ -9,9 +9,12 @@ export interface AuthUser {
   teamId: string | null;
   timezone: string | null;
   hasPassword: boolean;
+  notifyTimeOff: boolean;
+  notifyConfirmations: boolean;
 }
 
 /** SQL select list producing an AuthUser from `users u`. */
 export const AUTH_USER_COLUMNS = `
   u.id, u.name, u.email, u.role, u.tier_id AS "tierId", u.team_id AS "teamId",
-  u.timezone, (u.password_hash IS NOT NULL) AS "hasPassword"`;
+  u.timezone, (u.password_hash IS NOT NULL) AS "hasPassword",
+  u.notify_time_off AS "notifyTimeOff", u.notify_confirmations AS "notifyConfirmations"`;

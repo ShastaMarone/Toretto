@@ -116,6 +116,12 @@ export async function createLabel(
   return rows[0]!.id;
 }
 
+/** The main schedule every test database starts with. */
+export async function defaultScheduleId(db: pg.Pool): Promise<string> {
+  const { rows } = await db.query<{ id: string }>('SELECT id FROM schedules WHERE is_default');
+  return rows[0]!.id;
+}
+
 /** Monday of next week in the test time zone (so shifts are in the future). */
 export function nextMonday(): string {
   return addDays(startOfWeek(todayIn(TZ), 1), 7);
