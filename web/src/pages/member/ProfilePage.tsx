@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
+import { CalendarFeedPanel } from '../../components/CalendarFeed';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { TimezoneSelect } from '../../components/TimezoneSelect';
 import { Button } from '../../components/ui/Button';
@@ -114,6 +115,16 @@ export default function ProfilePage() {
               </Button>
             </div>
           </form>
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Calendar"
+            description="See your shifts and time off in Google Calendar, or any calendar app."
+          />
+          <div className="p-5">
+            <CalendarFeedPanel />
+          </div>
         </Card>
 
         <Card>

@@ -1,13 +1,15 @@
+import type { CalendarFeed } from '@shared/types';
 import { Router } from 'express';
 import { z } from 'zod';
-import { hashPassword, verifyPassword } from '../auth/crypto';
+import { hashPassword, randomToken, verifyPassword } from '../auth/crypto';
 import { destroyUserSessions } from '../auth/sessions';
 import type { AppDeps } from '../deps';
 import { HttpError } from '../errors';
 import { parse, zName, zPassword, zTimezone } from '../lib/validation';
+import { calendarFeedUrl } from '../services/calendarFeed';
 import { loadAuthUser, toSessionUser } from './auth';
 
-export function meRoutes({ db }: AppDeps): Router {
+export function meRoutes({ db, config }: AppDeps): Router {
   const r = Router();
 
   r.patch('/', async (req, res) => {
@@ -69,6 +71,30 @@ export function meRoutes({ db }: AppDeps): Router {
 
   r.post('/sign-out-others', async (req, res) => {
     await destroyUserSessions(db, req.user!.id, req.sessionId);
+    res.status(204).end();
+  });
+
+  // Your shifts as a calendar feed, for Google Calendar and other calendar apps.
+  r.get('/calendar', async (req, res) => {
+    const { rows } = await db.query<{ token: string | null }>(
+      'SELECT calendar_token AS token FROM users WHERE id = $1',
+      [req.user!.id],
+    );
+    const token = rows[0]?.token;
+    const body: CalendarFeed = { url: token ? calendarFeedUrl(config, token) : null };
+    res.json(body);
+  });
+
+  // Turn the feed on, or swap its link for a new one (the old link stops working).
+  r.post('/calendar', async (req, res) => {
+    const token = randomToken();
+    await db.query('UPDATE users SET calendar_token = $2 WHERE id = $1', [req.user!.id, token]);
+    const body: CalendarFeed = { url: calendarFeedUrl(config, token) };
+    res.json(body);
+  });
+
+  r.delete('/calendar', async (req, res) => {
+    await db.query('UPDATE users SET calendar_token = NULL WHERE id = $1', [req.user!.id]);
     res.status(204).end();
   });
 

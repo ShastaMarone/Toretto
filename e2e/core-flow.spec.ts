@@ -242,3 +242,29 @@ test('people can switch to 24-hour times', async () => {
     member.getByRole('row', { name: /Priya Patel/ }).getByText('09:00–17:00'),
   ).toBeVisible();
 });
+
+test('the member adds their shifts to Google Calendar', async ({ request }) => {
+  await member.goto('/my-schedule');
+  await member.getByRole('button', { name: 'Add to calendar' }).click();
+  const dialog = member.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Create calendar link' }).click();
+  const link = await dialog.getByLabel('Your calendar link').inputValue();
+  expect(link).toMatch(/^http:\/\/localhost:\d+\/api\/calendar\/[\w-]{43}\.ics$/);
+  // Google Calendar only takes the link as webcal://.
+  const google = await dialog
+    .getByRole('link', { name: 'Add to Google Calendar' })
+    .getAttribute('href');
+  expect(new URL(google!).searchParams.get('cid')).toBe(link.replace(/^http:/, 'webcal:'));
+
+  // Calendar apps fetch it without signing in: the published shift and the
+  // approved day off, but not the repeating shifts that are still drafts.
+  const feed = await request.get(link);
+  expect(feed.headers()['content-type']).toBe('text/calendar; charset=utf-8');
+  const ics = await feed.text();
+  expect(ics).toContain('SUMMARY:On-Call shift');
+  expect(ics).toContain('SUMMARY:Time off: Personal Day');
+  expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(2);
+  // Google Calendar checks robots.txt before fetching.
+  const robots = await (await request.get('/robots.txt')).text();
+  expect(robots).toContain('Allow: /api/calendar/');
+});

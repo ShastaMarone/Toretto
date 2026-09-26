@@ -19,6 +19,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
 import {
   CalendarCheck,
+  CalendarPlus,
   CheckCheck,
   ChevronLeft,
   ChevronRight,
@@ -30,6 +31,7 @@ import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
 import { useMyShifts, useMyTimeOff } from '../../api/queries';
+import { CalendarFeedPanel } from '../../components/CalendarFeed';
 import { HolidayBadge } from '../../components/schedule/CalendarBits';
 import { ShiftChip, StatusIcon } from '../../components/schedule/ShiftChip';
 import { TimeOffRequestDialog } from '../../components/TimeOffRequestDialog';
@@ -97,6 +99,7 @@ export default function MySchedulePage() {
   const [dayOpen, setDayOpen] = useState<ISODate | null>(null);
   const [shiftOpen, setShiftOpen] = useState<ShiftView | null>(null);
   const [cancelling, setCancelling] = useState<TimeOffRequest | null>(null);
+  const [addingCalendar, setAddingCalendar] = useState(false);
   const queryClient = useQueryClient();
 
   const gridStart = startOfWeek(month, org.weekStartsOn);
@@ -139,13 +142,21 @@ export default function MySchedulePage() {
         title="My schedule"
         description={`Times shown in ${zoneLabel(tz)}`}
         actions={
-          <Button
-            variant="primary"
-            icon={<Plane className="size-4" />}
-            onClick={() => setRequestFor(today)}
-          >
-            Request time off
-          </Button>
+          <>
+            <Button
+              icon={<CalendarPlus className="size-4" />}
+              onClick={() => setAddingCalendar(true)}
+            >
+              Add to calendar
+            </Button>
+            <Button
+              variant="primary"
+              icon={<Plane className="size-4" />}
+              onClick={() => setRequestFor(today)}
+            >
+              Request time off
+            </Button>
+          </>
         }
       />
 
@@ -360,6 +371,15 @@ export default function MySchedulePage() {
 
       {requestFor && (
         <TimeOffRequestDialog initialDate={requestFor} onClose={() => setRequestFor(null)} />
+      )}
+      {addingCalendar && (
+        <Modal
+          title="Add your shifts to Google Calendar"
+          description="Or to any calendar app that can subscribe to a link."
+          onClose={() => setAddingCalendar(false)}
+        >
+          <CalendarFeedPanel />
+        </Modal>
       )}
       {shiftOpen && (
         <ShiftDetailsDialog

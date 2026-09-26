@@ -42,6 +42,11 @@ export interface SessionUser {
   notifyConfirmations: boolean;
 }
 
+/** Someone's calendar feed link, or null while it's turned off. */
+export interface CalendarFeed {
+  url: string | null;
+}
+
 export interface OrgInfo {
   name: string;
   timezone: string;

@@ -26,7 +26,10 @@ neon dark theme.
   </tr>
   <tr>
     <td><img src="docs/screenshots/email-schedule-published.png" alt="Schedule email with confirm links" /></td>
-    <td align="center"><img src="docs/screenshots/mobile-my-schedule.png" alt="Mobile" width="260" /></td>
+    <td><img src="docs/screenshots/add-to-calendar.png" alt="Adding your shifts to Google Calendar" /></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/screenshots/mobile-my-schedule.png" alt="Mobile" width="260" /></td>
   </tr>
 </table>
 
@@ -60,6 +63,7 @@ neon dark theme.
 - **My Schedule**: a month calendar, shifts waiting for confirmation (confirm one or all), the next two weeks, and your time-off requests.
 - **Request time off** by clicking any day. Pick a type (Paid Holiday, Personal Day, Vacation, Sick Day, Unpaid Leave — admins can edit the list) and a date range. You're warned if you're scheduled during that time.
 - **Team Schedule**: everyone's published shifts across every tier (week, 2 weeks or month), filterable by tier, team and schedule. Coworkers see that someone is off, not why.
+- **Google Calendar**: **Add to calendar** on My Schedule (or **Calendar** in your profile) creates a private link to your published shifts and approved time off, and **Add to Google Calendar** subscribes to it. Outlook, Apple Calendar and other apps can subscribe to the same link. Google Calendar checks for changes every few hours, so an update can take up to a day to show there. **Get a new link** replaces a link that was shared by mistake. See [Calendar feeds](#calendar-feeds).
 - **Light, dark or system theme**, with frosted-glass panels and neon glows in the dark theme. Saved per device.
 - Works on phones. The calendars switch to a compact dot view and a day-by-day agenda.
 - Times are shown in each person's own time zone, in the app and in emails, as 12-hour ("3:00 PM") or 24-hour ("15:00") times. The organization sets the default; anyone can pick their own in their profile.
@@ -299,6 +303,28 @@ zone (Settings). Each person can pick their own zone (Profile), and their views
 and emails use it. Moving or copying a shift keeps its wall-clock times, even
 across daylight-saving changes.
 
+### Calendar feeds
+
+Each person's link is `APP_URL/api/calendar/<secret>.ics`: an iCalendar feed
+of their published shifts (never drafts) from 90 days ago to a year ahead,
+and their approved time off as all-day events. Calendar apps fetch it without
+signing in, so the secret in the link is what protects it. It stops working
+when the person turns it off, gets a new link, or is deactivated. Unlike
+sign-in tokens, it's stored as-is (so the profile can show it again); it only
+gives read access to shifts that are already in the same database.
+
+Google Calendar fetches feeds from Google's servers, so for **Add to Google
+Calendar** to work:
+
+- The app must be reachable from the internet over **https** at `APP_URL`. A
+  server that's only on the company network or VPN can't be reached by Google.
+- `robots.txt` must keep allowing `/api/calendar/`: Google Calendar checks it
+  before fetching. The one that ships blocks search engines from everything
+  else.
+- Google decides how often to check for changes (every few hours, up to about
+  a day), and there's no way to make it check sooner. Outlook and Apple
+  Calendar check hourly.
+
 ### Security
 
 - Passwords are hashed with scrypt, and are only ever chosen from a link
@@ -309,6 +335,9 @@ across daylight-saving changes.
 - Sessions use a server-side, httpOnly, SameSite cookie. Changing a password
   signs out other devices.
 - Email links are single-use, expire, and are stored hashed.
+- Calendar feed links are 256-bit random secrets. Each one shows only its
+  owner's published shifts and approved time off, and can be replaced or
+  turned off at any time.
 - Sign-in, sign-up and password-reset responses never reveal whether an email
   has an account.
 - Auth endpoints are rate limited, and cross-site requests are rejected.
@@ -384,7 +413,6 @@ e2e/               Playwright end-to-end test
 
 - Shift swaps and open shifts that people can pick up
 - SMS or push notifications
-- Calendar feeds (iCal) for Google/Outlook calendars
 - Partial-day time off and time-off balances
 - Shift templates and availability preferences
 - Reporting on hours per person

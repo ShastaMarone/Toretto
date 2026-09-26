@@ -2,6 +2,7 @@ import type {
   AdminOverview,
   AuditEntry,
   Bootstrap,
+  CalendarFeed,
   Label,
   NotificationEntry,
   OrgSettings,
@@ -35,6 +36,7 @@ export const keys = {
   activity: ['activity'] as const,
   notifications: (status: string) => ['notifications', status] as const,
   settings: ['settings'] as const,
+  calendarFeed: ['calendar-feed'] as const,
 };
 
 export const useBootstrap = () =>
@@ -99,3 +101,5 @@ export const useNotifications = (status: string) =>
   });
 export const useSettings = () =>
   useQuery({ queryKey: keys.settings, queryFn: () => api.get<OrgSettings>('/admin/settings') });
+export const useCalendarFeed = () =>
+  useQuery({ queryKey: keys.calendarFeed, queryFn: () => api.get<CalendarFeed>('/me/calendar') });

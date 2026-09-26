@@ -10,6 +10,7 @@ import type { AppDeps } from './deps';
 import { errorHandler, notFound, unauthorized } from './errors';
 import { adminRoutes, devRoutes, timeOffAdminRoutes } from './routes/admin';
 import { authRoutes, hasAnyUsers, toSessionUser } from './routes/auth';
+import { calendarRoutes } from './routes/calendar';
 import { catalogRoutes } from './routes/catalog';
 import { meRoutes } from './routes/me';
 import { myRoutes, teamRoutes } from './routes/member';
@@ -86,6 +87,7 @@ export function createApp(deps: AppDeps): express.Express {
   const catalog = catalogRoutes(deps);
   api.use('/auth', authRoutes(deps));
   api.use('/dev', devRoutes(deps));
+  api.use('/calendar', calendarRoutes(deps));
   api.use('/me', requireAuth, meRoutes(deps));
   api.use('/my', requireAuth, myRoutes(deps));
   api.use('/team', requireAuth, teamRoutes(deps));
