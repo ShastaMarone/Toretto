@@ -182,6 +182,13 @@ export async function queueReminders(db: Db, config: Config, now = new Date()): 
 export async function cleanupExpired(db: Db): Promise<void> {
   await db.query('DELETE FROM sessions WHERE expires_at < now()');
   await db.query(`DELETE FROM auth_tokens WHERE expires_at < now() - interval '7 days'`);
+  // Emails older than the organization keeps them (never ones still being sent).
+  await db.query(
+    `DELETE FROM notifications n USING org_settings o
+      WHERE o.id AND o.email_retention_days IS NOT NULL
+        AND n.status IN ('sent', 'failed')
+        AND n.created_at < now() - make_interval(days => o.email_retention_days)`,
+  );
 }
 
 export interface JobsReport {
@@ -199,9 +206,10 @@ export interface Jobs {
    */
   drainOutbox(): Promise<number>;
   /**
-   * Periodic upkeep: queue due reminders, send due emails (including retries)
-   * and delete expired sessions. Reminders run at most every few minutes and
-   * cleanup hourly, unless `force` is set.
+   * Periodic upkeep: queue due reminders, send due emails (including retries),
+   * delete expired sessions and emails past the log's retention period.
+   * Reminders run at most every few minutes and cleanup hourly, unless
+   * `force` is set.
    */
   runDue(options?: { force?: boolean }): Promise<JobsReport>;
 }

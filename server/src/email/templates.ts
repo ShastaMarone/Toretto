@@ -1,5 +1,4 @@
 import {
-  diffDays,
   formatDateRange,
   formatDay,
   formatShiftWhen,
@@ -7,6 +6,7 @@ import {
   tzAbbreviation,
   type TimeFormat,
 } from '@shared/time';
+import { formatTimeOffWhen, timeOffLength, type TimeOffSpan } from '@shared/timeOff';
 import { html, safeColor, type SafeHtml } from './html';
 
 export interface RenderedEmail {
@@ -206,10 +206,6 @@ const plural = (n: number, word: string, pluralWord = `${word}s`) =>
 /** Greet people by first name: "Hi Priya,". */
 export function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] || name;
-}
-
-function dayCount(startDate: string, endDate: string): string {
-  return plural(diffDays(startDate, endDate) + 1, 'day');
 }
 
 function oneLine(subject: string): string {
@@ -511,15 +507,16 @@ export function timeOffRequestedTemplate(
     recipientName: string;
     requesterName: string;
     typeName: string;
-    startDate: string;
-    endDate: string;
+    span: TimeOffSpan;
+    tz: string;
+    timeFormat: TimeFormat;
     note: string | null;
     conflicts: number;
   },
 ): RenderedEmail {
-  const range = formatDateRange(input.startDate, input.endDate);
+  const range = formatTimeOffWhen(input.span, input.tz, input.timeFormat);
   const subject = `Time-off request: ${input.requesterName} · ${input.typeName}, ${range}`;
-  const summary = `${input.requesterName} requested ${input.typeName} for ${range} (${dayCount(input.startDate, input.endDate)}).`;
+  const summary = `${input.requesterName} requested ${input.typeName} for ${range} (${timeOffLength(input.span)}).`;
   const conflictText = input.conflicts
     ? `They're scheduled for ${plural(input.conflicts, 'shift')} during this time.`
     : null;
@@ -549,23 +546,25 @@ export function timeOffReviewedTemplate(
     recipientName: string;
     status: 'approved' | 'denied';
     typeName: string;
-    startDate: string;
-    endDate: string;
+    span: TimeOffSpan;
+    tz: string;
+    timeFormat: TimeFormat;
     reviewerName: string | null;
     reviewNote: string | null;
     /** An admin added this time off directly (rather than approving a request). */
     addedByAdmin?: boolean;
   },
 ): RenderedEmail {
-  const range = formatDateRange(input.startDate, input.endDate);
+  const range = formatTimeOffWhen(input.span, input.tz, input.timeFormat);
+  const length = timeOffLength(input.span);
   const approved = input.status === 'approved';
   const subject = input.addedByAdmin
     ? `Time off added: ${input.typeName}, ${range}`
     : `Your time off was ${approved ? 'approved' : 'declined'}: ${input.typeName}, ${range}`;
   const by = input.reviewerName ? ` by ${input.reviewerName}` : '';
   const summary = input.addedByAdmin
-    ? `${input.typeName} for ${range} (${dayCount(input.startDate, input.endDate)}) was added to your schedule${by}.`
-    : `Your ${input.typeName} request for ${range} (${dayCount(input.startDate, input.endDate)}) was ${approved ? 'approved' : 'declined'}${by}.`;
+    ? `${input.typeName} for ${range} (${length}) was added to your schedule${by}.`
+    : `Your ${input.typeName} request for ${range} (${length}) was ${approved ? 'approved' : 'declined'}${by}.`;
   const url = `${ctx.appUrl}/my-schedule`;
   const body = html`${heading(input.addedByAdmin ? 'Time off added' : approved ? 'Time off approved' : 'Time off declined')}
   ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
@@ -588,16 +587,288 @@ export function timeOffCancelledTemplate(
     recipientName: string;
     requesterName: string;
     typeName: string;
-    startDate: string;
-    endDate: string;
+    span: TimeOffSpan;
+    tz: string;
+    timeFormat: TimeFormat;
   },
 ): RenderedEmail {
-  const range = formatDateRange(input.startDate, input.endDate);
+  const range = formatTimeOffWhen(input.span, input.tz, input.timeFormat);
   const subject = `Time off cancelled: ${input.requesterName} · ${input.typeName}, ${range}`;
   const summary = `${input.requesterName} cancelled their approved ${input.typeName} for ${range}. They're available to be scheduled again.`;
   const url = `${ctx.appUrl}/admin/time-off`;
   const body = html`${heading('Time off cancelled')}
   ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)} ${button(url, 'Open time off')}`;
   const text = `Hi ${firstName(input.recipientName)},\n\n${summary}\n\n${url}`;
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+// ---------------------------------------------------------------------------
+// Shift swaps
+// ---------------------------------------------------------------------------
+
+interface SwapEmail {
+  recipientName: string;
+  /** The requester's shift, offered to the coworker. */
+  shift: EmailShift;
+  /** A trade: the coworker's shift the requester takes in return. */
+  returnShift: EmailShift | null;
+  tz: string;
+  timeFormat: TimeFormat;
+}
+
+const quote = (text: string) =>
+  html`<blockquote
+    style="margin:0 0 14px;padding:10px 14px;border-left:3px solid #cbd5e1;background-color:#f8fafc;color:#334155;"
+  >
+    ${text}
+  </blockquote>`;
+
+const shiftDay = (shift: EmailShift, tz: string) => formatDay(localDate(shift.startTime, tz));
+
+/** A shift in the body as HTML and as text, under a small heading. */
+function swapShifts(
+  ctx: EmailContext,
+  input: SwapEmail,
+  parts: { title: string; shift: EmailShift; cancelled?: boolean }[],
+): { body: SafeHtml; text: string } {
+  return {
+    body: html`${parts.map(
+      (p) =>
+        html`${sectionTitle(p.title)}
+        ${shiftCard(ctx, p.shift, input.tz, input.timeFormat, { cancelled: p.cancelled })}`,
+    )}`,
+    text: parts
+      .map((p) => `${p.title}:\n${shiftText(ctx, p.shift, input.tz, input.timeFormat)}`)
+      .join('\n\n'),
+  };
+}
+
+export function swapRequestedTemplate(
+  ctx: EmailContext,
+  input: SwapEmail & { requesterName: string; note: string | null },
+): RenderedEmail {
+  const trade = input.returnShift;
+  const subject = trade
+    ? `${input.requesterName} wants to swap shifts with you`
+    : `${input.requesterName} asked you to take their shift on ${shiftDay(input.shift, input.tz)}`;
+  const summary = trade
+    ? `${input.requesterName} would like to swap shifts: you take theirs, they take yours.`
+    : `${input.requesterName} would like you to take their shift.`;
+  const shifts = swapShifts(ctx, input, [
+    { title: trade ? 'You would work' : 'Their shift', shift: input.shift },
+    ...(trade ? [{ title: 'They would work (yours now)', shift: trade }] : []),
+  ]);
+  const after = 'If you accept, an admin approves it before anything changes.';
+  const url = `${ctx.appUrl}/my-schedule`;
+  const body = html`${heading(trade ? 'Swap shifts?' : 'Can you take this shift?')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)} ${shifts.body}
+  ${input.note ? quote(input.note) : ''} ${para(after)} ${button(url, 'Accept or decline')}
+  ${muted(tzNote(input.tz, input.shift.startTime))}`;
+  const text = [
+    `Hi ${firstName(input.recipientName)},`,
+    '',
+    summary,
+    '',
+    shifts.text,
+    input.note ? `\nNote: ${input.note}` : '',
+    '',
+    after,
+    `Accept or decline: ${url}`,
+  ].join('\n');
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+export function swapAcceptedTemplate(
+  ctx: EmailContext,
+  input: SwapEmail & { requesterName: string; takerName: string },
+): RenderedEmail {
+  const trade = input.returnShift;
+  const subject = `Swap to approve: ${input.requesterName} → ${input.takerName}, ${shiftDay(input.shift, input.tz)}`;
+  const summary = trade
+    ? `${input.takerName} and ${input.requesterName} agreed to swap shifts.`
+    : `${input.takerName} agreed to take ${input.requesterName}'s shift.`;
+  const shifts = swapShifts(ctx, input, [
+    { title: `${firstName(input.takerName)} would work`, shift: input.shift },
+    ...(trade ? [{ title: `${firstName(input.requesterName)} would work`, shift: trade }] : []),
+  ]);
+  const url = `${ctx.appUrl}/admin/shift-requests`;
+  const body = html`${heading('A shift swap needs your approval')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary} Nothing changes until you approve it.`)}
+  ${shifts.body} ${button(url, 'Review swap')} ${muted(tzNote(input.tz, input.shift.startTime))}`;
+  const text = `Hi ${firstName(input.recipientName)},\n\n${summary} Nothing changes until you approve it.\n\n${shifts.text}\n\nReview: ${url}`;
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+export function swapDeclinedTemplate(
+  ctx: EmailContext,
+  input: SwapEmail & { takerName: string },
+): RenderedEmail {
+  const subject = `${input.takerName} can't take your shift on ${shiftDay(input.shift, input.tz)}`;
+  const summary = `${input.takerName} declined your swap request, so the shift stays yours.`;
+  const shifts = swapShifts(ctx, input, [{ title: 'Your shift', shift: input.shift }]);
+  const url = `${ctx.appUrl}/my-schedule`;
+  const body = html`${heading('Swap declined')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)} ${shifts.body}
+  ${button(url, 'Open my schedule')}`;
+  const text = `Hi ${firstName(input.recipientName)},\n\n${summary}\n\n${shifts.text}\n\n${url}`;
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+export function swapCancelledTemplate(
+  ctx: EmailContext,
+  input: SwapEmail & { requesterName: string },
+): RenderedEmail {
+  const subject = `${input.requesterName} withdrew their swap request`;
+  const summary = `${input.requesterName} withdrew the request, so nothing changes for you.`;
+  const shifts = swapShifts(ctx, input, [{ title: 'The shift they offered', shift: input.shift }]);
+  const url = `${ctx.appUrl}/my-schedule`;
+  const body = html`${heading('Swap request withdrawn')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)} ${shifts.body}
+  ${button(url, 'Open my schedule')}`;
+  const text = `Hi ${firstName(input.recipientName)},\n\n${summary}\n\n${shifts.text}\n\n${url}`;
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+/** An admin's decision, for either person in the swap. */
+export function swapReviewedTemplate(
+  ctx: EmailContext,
+  input: SwapEmail & {
+    status: 'approved' | 'denied';
+    /** Whether the reader offered the shift or was asked to take it. */
+    role: 'requester' | 'recipient';
+    otherName: string;
+    reviewerName: string;
+    reviewNote: string | null;
+  },
+): RenderedEmail {
+  const day = shiftDay(input.shift, input.tz);
+  const trade = input.returnShift;
+  const approved = input.status === 'approved';
+  const asker = input.role === 'requester';
+  const subject = !approved
+    ? `Swap declined: ${day}`
+    : asker
+      ? `Swap approved: ${input.otherName} is taking your shift on ${day}`
+      : `Swap approved: you're working ${day}`;
+  const summary = approved
+    ? `${input.reviewerName} approved your swap with ${input.otherName}. It's on your schedule now.`
+    : `${input.reviewerName} declined your swap with ${input.otherName}, so nothing changes.`;
+  const gone = { title: 'You no longer work', cancelled: true };
+  const added = { title: 'You now work' };
+  const parts = !approved
+    ? [{ title: asker ? 'Your shift' : 'Their shift', shift: input.shift }]
+    : asker
+      ? [{ ...gone, shift: input.shift }, ...(trade ? [{ ...added, shift: trade }] : [])]
+      : [{ ...added, shift: input.shift }, ...(trade ? [{ ...gone, shift: trade }] : [])];
+  const shifts = swapShifts(ctx, input, parts);
+  const url = `${ctx.appUrl}/my-schedule`;
+  const body = html`${heading(approved ? 'Swap approved' : 'Swap declined')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
+  ${input.reviewNote ? quote(input.reviewNote) : ''} ${shifts.body}
+  ${button(url, 'View my schedule')} ${muted(tzNote(input.tz, input.shift.startTime))}`;
+  const text = [
+    `Hi ${firstName(input.recipientName)},`,
+    '',
+    summary,
+    input.reviewNote ? `Note: ${input.reviewNote}` : '',
+    '',
+    shifts.text,
+    '',
+    `My schedule: ${url}`,
+  ].join('\n');
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+// ---------------------------------------------------------------------------
+// Open shifts
+// ---------------------------------------------------------------------------
+
+interface OpenShiftEmail {
+  recipientName: string;
+  shift: EmailShift;
+  tierName: string;
+  tz: string;
+  timeFormat: TimeFormat;
+}
+
+export function openShiftPostedTemplate(ctx: EmailContext, input: OpenShiftEmail): RenderedEmail {
+  const day = shiftDay(input.shift, input.tz);
+  const subject = `Open shift on ${day}: can you take it?`;
+  const summary = `There's an open ${input.tierName} shift anyone in your tier can pick up.`;
+  const after = 'The first person to pick it up gets it once an admin approves.';
+  const url = `${ctx.appUrl}/my-schedule`;
+  const body = html`${heading('Open shift')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
+  ${shiftCard(ctx, input.shift, input.tz, input.timeFormat)} ${para(after)}
+  ${button(url, 'Pick it up')} ${muted(tzNote(input.tz, input.shift.startTime))}`;
+  const text = `Hi ${firstName(input.recipientName)},\n\n${summary}\n\n${shiftText(ctx, input.shift, input.tz, input.timeFormat)}\n\n${after}\n\nPick it up: ${url}`;
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+export function openShiftClaimedTemplate(
+  ctx: EmailContext,
+  input: OpenShiftEmail & { claimerName: string },
+): RenderedEmail {
+  const day = shiftDay(input.shift, input.tz);
+  const subject = `${input.claimerName} picked up the open shift on ${day}`;
+  const summary = `${input.claimerName} wants the open ${input.tierName} shift. It's theirs once you approve it.`;
+  const url = `${ctx.appUrl}/admin/shift-requests?tab=open`;
+  const body = html`${heading('An open shift was picked up')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
+  ${shiftCard(ctx, input.shift, input.tz, input.timeFormat)} ${button(url, 'Review')}
+  ${muted(tzNote(input.tz, input.shift.startTime))}`;
+  const text = `Hi ${firstName(input.recipientName)},\n\n${summary}\n\n${shiftText(ctx, input.shift, input.tz, input.timeFormat)}\n\nReview: ${url}`;
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+export function openShiftReviewedTemplate(
+  ctx: EmailContext,
+  input: OpenShiftEmail & {
+    status: 'approved' | 'denied';
+    reviewerName: string;
+    reviewNote: string | null;
+  },
+): RenderedEmail {
+  const day = shiftDay(input.shift, input.tz);
+  const approved = input.status === 'approved';
+  const subject = approved
+    ? `You've got the shift on ${day}`
+    : `The open shift on ${day} wasn't approved for you`;
+  const summary = approved
+    ? `${input.reviewerName} approved it: it's on your schedule now, already confirmed.`
+    : `${input.reviewerName} didn't approve your pickup, so it's not on your schedule.`;
+  const url = `${ctx.appUrl}/my-schedule`;
+  const body = html`${heading(approved ? "It's your shift" : 'Pickup not approved')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
+  ${input.reviewNote ? quote(input.reviewNote) : ''}
+  ${shiftCard(ctx, input.shift, input.tz, input.timeFormat, { cancelled: !approved })}
+  ${button(url, 'View my schedule')}`;
+  const text = [
+    `Hi ${firstName(input.recipientName)},`,
+    '',
+    summary,
+    input.reviewNote ? `Note: ${input.reviewNote}` : '',
+    '',
+    shiftText(ctx, input.shift, input.tz, input.timeFormat),
+    '',
+    `My schedule: ${url}`,
+  ].join('\n');
+  return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
+}
+
+export function openShiftCancelledTemplate(
+  ctx: EmailContext,
+  input: OpenShiftEmail,
+): RenderedEmail {
+  const day = shiftDay(input.shift, input.tz);
+  const subject = `The open shift on ${day} was cancelled`;
+  const summary =
+    "An admin cancelled the open shift you picked up, so it won't be on your schedule.";
+  const url = `${ctx.appUrl}/my-schedule`;
+  const body = html`${heading('Open shift cancelled')}
+  ${para(`Hi ${firstName(input.recipientName)}, ${summary}`)}
+  ${shiftCard(ctx, input.shift, input.tz, input.timeFormat, { cancelled: true })}
+  ${button(url, 'View my schedule')}`;
+  const text = `Hi ${firstName(input.recipientName)},\n\n${summary}\n\n${shiftText(ctx, input.shift, input.tz, input.timeFormat)}\n\n${url}`;
   return finish(subject, layout(ctx, { title: subject, preheader: summary, body }), text);
 }

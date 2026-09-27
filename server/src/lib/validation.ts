@@ -43,3 +43,11 @@ export const zText = (max: number) =>
     .transform((v) => (v ? v : null));
 
 export const zIdParam = z.object({ id: zId });
+
+/** When time off is: whole days, or the start and end of part of a day (checked in the service). */
+export const zTimeOffWhen = {
+  startDate: zDate.optional(),
+  endDate: zDate.optional(),
+  startTime: zDateTime.optional(),
+  endTime: zDateTime.optional(),
+};

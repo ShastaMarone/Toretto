@@ -4,8 +4,18 @@ import type { AuditEntry } from '@shared/types';
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 const num = (v: unknown) => (typeof v === 'number' ? v : 0);
 
-function range(d: Record<string, unknown>): string {
+/** Time off's days, or its hours for part of a day. */
+function range(d: Record<string, unknown>, tz: string, format: TimeFormat): string {
+  if (d.startTime && d.endTime)
+    return formatShiftWhen(str(d.startTime), str(d.endTime), tz, format);
   return d.startDate && d.endDate ? formatDateRange(str(d.startDate), str(d.endDate)) : '';
+}
+
+/** "Mon, Oct 5 · 9:00 AM – 5:00 PM" from startTime/endTime details. */
+function shiftWhen(d: Record<string, unknown>, tz: string, format: TimeFormat): string {
+  return d.startTime && d.endTime
+    ? formatShiftWhen(str(d.startTime), str(d.endTime), tz, format)
+    : '';
 }
 
 function plural(n: number, word: string) {
@@ -64,15 +74,39 @@ export function describeActivity(
     case 'shift.confirmed_all':
       return `confirmed ${plural(num(d.count), 'shift')}`;
     case 'time_off.requested':
-      return `requested ${str(d.typeName)}, ${range(d)}`;
+      return `requested ${str(d.typeName)}, ${range(d, tz, format)}`;
     case 'time_off.approved':
-      return `approved ${str(d.personName)}'s ${str(d.typeName)}, ${range(d)}`;
+      return `approved ${str(d.personName)}'s ${str(d.typeName)}, ${range(d, tz, format)}`;
     case 'time_off.denied':
-      return `declined ${str(d.personName)}'s ${str(d.typeName)}, ${range(d)}`;
+      return `declined ${str(d.personName)}'s ${str(d.typeName)}, ${range(d, tz, format)}`;
     case 'time_off.cancelled':
-      return `cancelled their ${str(d.typeName)}, ${range(d)}`;
+      return `cancelled their ${str(d.typeName)}, ${range(d, tz, format)}`;
     case 'time_off.added':
-      return `added ${str(d.typeName)} for ${str(d.personName)}, ${range(d)}`;
+      return `added ${str(d.typeName)} for ${str(d.personName)}, ${range(d, tz, format)}`;
+    case 'swap.requested':
+      return `offered ${str(d.recipientName)} their shift ${shiftWhen(d, tz, format)}${d.trade ? ' as a trade' : ''}`;
+    case 'swap.accepted':
+      return `agreed to take ${str(d.requesterName)}'s shift ${shiftWhen(d, tz, format)}`;
+    case 'swap.declined':
+      return `declined ${str(d.requesterName)}'s swap request`;
+    case 'swap.cancelled':
+      return `withdrew their swap request to ${str(d.recipientName)}`;
+    case 'swap.approved':
+      return `approved ${str(d.requesterName)} and ${str(d.recipientName)}'s swap (${shiftWhen(d, tz, format)})`;
+    case 'swap.denied':
+      return `declined ${str(d.requesterName)} and ${str(d.recipientName)}'s swap`;
+    case 'open_shift.posted':
+      return `posted an open ${str(d.tierName)} shift, ${shiftWhen(d, tz, format)}`;
+    case 'open_shift.claimed':
+      return `picked up the open shift ${shiftWhen(d, tz, format)}`;
+    case 'open_shift.released':
+      return `let go of the open shift ${shiftWhen(d, tz, format)}`;
+    case 'open_shift.approved':
+      return `gave ${str(d.personName)} the open shift ${shiftWhen(d, tz, format)}`;
+    case 'open_shift.denied':
+      return `declined ${str(d.personName)}'s pickup of the open shift ${shiftWhen(d, tz, format)}`;
+    case 'open_shift.cancelled':
+      return `cancelled the open ${str(d.tierName)} shift ${shiftWhen(d, tz, format)}`;
     case 'user.invited':
       return `invited ${str(d.name)} (${str(d.email)})`;
     case 'user.invite_resent':

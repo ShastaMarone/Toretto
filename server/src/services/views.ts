@@ -63,13 +63,16 @@ export async function teamSchedule(
       ORDER BY lower(u.name)`,
     [[...new Set(shifts.map((s) => s.userId))]],
   );
+  // A day either side: part-day time off near midnight can fall on another
+  // day in the viewer's zone than on the organization's calendar.
   const { rows: timeOff } = await db.query<TimeOffEntry & { userId: string }>(
     `SELECT r.id, r.user_id AS "userId", r.start_date AS "startDate", r.end_date AS "endDate",
+            r.start_time AS "startTime", r.end_time AS "endTime",
             r.status, tt.name AS "typeName", tt.color AS "typeColor"
        FROM time_off_requests r JOIN time_off_types tt ON tt.id = r.type_id
       WHERE r.user_id = ANY($1) AND r.status = 'approved'
-        AND r.start_date <= $3 AND r.end_date >= $2
-      ORDER BY r.start_date`,
+        AND r.start_date <= $3::date + 1 AND r.end_date >= $2::date - 1
+      ORDER BY r.start_date, r.start_time NULLS FIRST`,
     [people.map((p) => p.id), input.startDate, input.endDate],
   );
   // Coworkers see that someone is off, not why.

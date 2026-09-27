@@ -2,36 +2,42 @@ import {
   addDays,
   addMonths,
   dayOfWeek,
-  diffDays,
   eachDay,
   endOfMonth,
-  formatDateRange,
   formatDay,
   formatTimeRange,
+  formatTimeRangeCompact,
   localDate,
   startOfMonth,
   startOfWeek,
   todayIn,
   type ISODate,
 } from '@shared/time';
-import type { ShiftView, TimeOffRequest } from '@shared/types';
+import { formatTimeOffWhen, timeOffDays, timeOffLength } from '@shared/timeOff';
+import type { ShiftSwap, ShiftView, TimeOffRequest } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
 import {
   CalendarCheck,
+  CalendarPlus,
   CheckCheck,
   ChevronLeft,
   ChevronRight,
   Leaf,
   Plane,
   Plus,
+  Repeat,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
-import { useMyShifts, useMyTimeOff } from '../../api/queries';
+import { useMyShifts, useMySwaps, useMyTimeOff } from '../../api/queries';
+import { CalendarFeedPanel } from '../../components/CalendarFeed';
 import { HolidayBadge } from '../../components/schedule/CalendarBits';
 import { ShiftChip, StatusIcon } from '../../components/schedule/ShiftChip';
+import { OpenShiftsCard } from '../../components/swaps/OpenShiftsCard';
+import { SwapDialog } from '../../components/swaps/SwapDialog';
+import { SwapsCard } from '../../components/swaps/SwapsCard';
 import { TimeOffRequestDialog } from '../../components/TimeOffRequestDialog';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog, Modal } from '../../components/ui/Modal';
@@ -49,7 +55,8 @@ import {
 import { cx } from '../../lib/cx';
 import { useHolidays } from '../../lib/holidays';
 import { groupByDay, shiftColor } from '../../lib/schedule';
-import { useBootstrapData, useTimeFormat, useViewerZone } from '../../lib/session';
+import { useBootstrapData, useCurrentUser, useTimeFormat, useViewerZone } from '../../lib/session';
+import { firstName, isOpenSwap, swapStatus } from '../../lib/swaps';
 import { zoneLabel } from '../../lib/timezones';
 import { useMediaQuery } from '../../lib/useMediaQuery';
 import { useNow } from '../../lib/useNow';
@@ -88,6 +95,7 @@ function useConfirmShifts() {
 
 export default function MySchedulePage() {
   const { org } = useBootstrapData();
+  const me = useCurrentUser();
   const tz = useViewerZone();
   const timeFormat = useTimeFormat();
   const today = todayIn(tz);
@@ -97,6 +105,13 @@ export default function MySchedulePage() {
   const [dayOpen, setDayOpen] = useState<ISODate | null>(null);
   const [shiftOpen, setShiftOpen] = useState<ShiftView | null>(null);
   const [cancelling, setCancelling] = useState<TimeOffRequest | null>(null);
+  const [addingCalendar, setAddingCalendar] = useState(false);
+  const [offering, setOffering] = useState<ShiftView | null>(null);
+  const swaps = useMySwaps();
+  const openSwapFor = (shiftId: string) =>
+    swaps.data?.find(
+      (w) => isOpenSwap(w) && (w.shift.id === shiftId || w.returnShift?.id === shiftId),
+    );
   const queryClient = useQueryClient();
 
   const gridStart = startOfWeek(month, org.weekStartsOn);
@@ -128,8 +143,7 @@ export default function MySchedulePage() {
   const activeTimeOff = (timeOff.data ?? []).filter(
     (r) => r.status === 'pending' || r.status === 'approved',
   );
-  const timeOffOn = (day: ISODate) =>
-    activeTimeOff.filter((r) => r.startDate <= day && r.endDate >= day);
+  const timeOffOn = (day: ISODate) => activeTimeOff.filter((r) => timeOffDays(r, tz).includes(day));
 
   const onDayClick = (day: ISODate) => (isDesktop ? setRequestFor(day) : setDayOpen(day));
 
@@ -139,13 +153,21 @@ export default function MySchedulePage() {
         title="My schedule"
         description={`Times shown in ${zoneLabel(tz)}`}
         actions={
-          <Button
-            variant="primary"
-            icon={<Plane className="size-4" />}
-            onClick={() => setRequestFor(today)}
-          >
-            Request time off
-          </Button>
+          <>
+            <Button
+              icon={<CalendarPlus className="size-4" />}
+              onClick={() => setAddingCalendar(true)}
+            >
+              Add to calendar
+            </Button>
+            <Button
+              variant="primary"
+              icon={<Plane className="size-4" />}
+              onClick={() => setRequestFor(today)}
+            >
+              Request time off
+            </Button>
+          </>
         }
       />
 
@@ -205,7 +227,7 @@ export default function MySchedulePage() {
         </Card>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
             <h2 className="text-base font-semibold text-slate-900">
@@ -258,7 +280,9 @@ export default function MySchedulePage() {
           </p>
         </Card>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
+          <SwapsCard tz={tz} />
+          <OpenShiftsCard tz={tz} />
           <Card>
             <CardHeader title="Next two weeks" />
             {upcoming.isLoading ? (
@@ -319,8 +343,8 @@ export default function MySchedulePage() {
             ) : (
               <ul className="divide-y divide-slate-100">
                 {timeOff.data.slice(0, 12).map((r) => {
-                  const canCancel =
-                    r.status === 'pending' || (r.status === 'approved' && r.endDate >= today);
+                  const upcoming = r.endTime ? Date.parse(r.endTime) > now : r.endDate >= today;
+                  const canCancel = r.status === 'pending' || (r.status === 'approved' && upcoming);
                   return (
                     <li key={r.id} className="px-5 py-3">
                       <div className="flex items-start gap-3">
@@ -328,9 +352,7 @@ export default function MySchedulePage() {
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-slate-900">{r.type.name}</p>
                           <p className="text-xs text-slate-500">
-                            {formatDateRange(r.startDate, r.endDate)} ·{' '}
-                            {diffDays(r.startDate, r.endDate) + 1} day
-                            {r.startDate === r.endDate ? '' : 's'}
+                            {formatTimeOffWhen(r, tz, timeFormat)} · {timeOffLength(r)}
                           </p>
                           {r.reviewNote && (
                             <p className="mt-1 text-xs italic text-slate-600">“{r.reviewNote}”</p>
@@ -361,10 +383,29 @@ export default function MySchedulePage() {
       {requestFor && (
         <TimeOffRequestDialog initialDate={requestFor} onClose={() => setRequestFor(null)} />
       )}
+      {offering && <SwapDialog shift={offering} tz={tz} onClose={() => setOffering(null)} />}
+      {addingCalendar && (
+        <Modal
+          title="Add your shifts to Google Calendar"
+          description="Or to any calendar app that can subscribe to a link."
+          onClose={() => setAddingCalendar(false)}
+        >
+          <CalendarFeedPanel />
+        </Modal>
+      )}
       {shiftOpen && (
         <ShiftDetailsDialog
           shift={shiftOpen}
           tz={tz}
+          swap={openSwapFor(shiftOpen.id)}
+          onOffer={
+            me.tierId
+              ? () => {
+                  setOffering(shiftOpen);
+                  setShiftOpen(null);
+                }
+              : undefined
+          }
           confirming={confirmOne.isPending}
           onConfirm={() => confirmOne.mutate(shiftOpen.id, { onSuccess: () => setShiftOpen(null) })}
           onClose={() => setShiftOpen(null)}
@@ -376,7 +417,11 @@ export default function MySchedulePage() {
             {timeOffOn(dayOpen).map((r) => (
               <div key={r.id} className="flex items-center gap-2 text-sm">
                 <Plane className="size-4" style={{ color: r.type.color }} />
-                {r.type.name} <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
+                {r.type.name}
+                {r.startTime &&
+                  r.endTime &&
+                  ` · ${formatTimeRange(r.startTime, r.endTime, tz, { format: timeFormat })}`}{' '}
+                <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
               </div>
             ))}
             {(shiftsByDay.get(dayOpen) ?? []).map((s) => (
@@ -421,7 +466,7 @@ export default function MySchedulePage() {
           onConfirm={() => cancel.mutate(cancelling.id)}
           onClose={() => setCancelling(null)}
         >
-          {cancelling.type.name}, {formatDateRange(cancelling.startDate, cancelling.endDate)}.
+          {cancelling.type.name}, {formatTimeOffWhen(cancelling, tz, timeFormat)}.
           {cancelling.status === 'approved' &&
             ' Your admin will be notified that you are available again.'}
         </ConfirmDialog>
@@ -465,6 +510,7 @@ function MonthGrid({
   onDayClick: (day: ISODate) => void;
   onShiftClick: (shift: ShiftView) => void;
 }) {
+  const timeFormat = useTimeFormat();
   const monthKey = month.slice(0, 7);
   return (
     <div className="p-2 sm:p-3">
@@ -563,6 +609,11 @@ function MonthGrid({
                       )}
                       style={{ backgroundColor: `${r.type.color}1f`, borderColor: r.type.color }}
                     >
+                      {r.startTime && r.endTime && (
+                        <span className="font-semibold text-slate-800">
+                          {formatTimeRangeCompact(r.startTime, r.endTime, tz, timeFormat)}{' '}
+                        </span>
+                      )}
                       {r.type.name}
                       {r.status === 'pending' && ' (requested)'}
                     </div>
@@ -598,19 +649,32 @@ function MonthGrid({
 function ShiftDetailsDialog({
   shift,
   tz,
+  swap,
+  onOffer,
   confirming,
   onConfirm,
   onClose,
 }: {
   shift: ShiftView;
   tz: string;
+  /** An open swap this shift is part of. */
+  swap: ShiftSwap | undefined;
+  /** Offer it to a coworker (for people in a tier). */
+  onOffer?: () => void;
   confirming: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const me = useCurrentUser();
   const timeFormat = useTimeFormat();
   const now = useNow();
   const ended = Date.parse(shift.endTime) < now;
+  const canOffer = onOffer && !swap && Date.parse(shift.startTime) > now;
+  const offer = canOffer && (
+    <Button icon={<Repeat className="size-4" />} onClick={onOffer}>
+      Offer to a coworker
+    </Button>
+  );
   return (
     <Modal
       title={formatDay(localDate(shift.startTime, tz), 'long')}
@@ -621,6 +685,7 @@ function ShiftDetailsDialog({
         shift.status === 'pending' && !ended ? (
           <>
             <Button onClick={onClose}>Close</Button>
+            {offer}
             <Button
               variant="success"
               icon={<CalendarCheck className="size-4" />}
@@ -631,7 +696,10 @@ function ShiftDetailsDialog({
             </Button>
           </>
         ) : (
-          <Button onClick={onClose}>Close</Button>
+          <>
+            <Button onClick={onClose}>Close</Button>
+            {offer}
+          </>
         )
       }
     >
@@ -666,6 +734,19 @@ function ShiftDetailsDialog({
             )}
           </dd>
         </div>
+        {swap && (
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Swap</dt>
+            <dd>
+              <Badge tone={swapStatus(swap, me.id).tone}>
+                {swap.requester.id === me.id
+                  ? `Offered to ${firstName(swap.recipient.name)}`
+                  : `From ${firstName(swap.requester.name)}`}{' '}
+                · {swapStatus(swap, me.id).label.toLowerCase()}
+              </Badge>
+            </dd>
+          </div>
+        )}
         {shift.notes && (
           <div>
             <dt className="text-slate-500">Note</dt>
@@ -675,7 +756,10 @@ function ShiftDetailsDialog({
       </dl>
       {shift.status === 'pending' && (
         <p className="mt-4 text-xs text-slate-500">
-          Can't make this shift? Let your admin know so they can adjust the schedule.
+          Can't make this shift?{' '}
+          {onOffer
+            ? 'Offer it to a coworker, or let your admin know.'
+            : 'Let your admin know so they can adjust the schedule.'}
         </p>
       )}
     </Modal>

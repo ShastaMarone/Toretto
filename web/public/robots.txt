@@ -1,0 +1,5 @@
+# A private scheduling app: keep search engines out. Calendar feeds stay
+# allowed, because Google Calendar checks this file before fetching them.
+User-agent: *
+Allow: /api/calendar/
+Disallow: /

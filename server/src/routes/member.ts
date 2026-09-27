@@ -8,7 +8,7 @@ import { withTransaction, type Queryable } from '../db';
 import type { AppDeps } from '../deps';
 import { shiftsConfirmedTemplate } from '../email/templates';
 import { badRequest, notFound } from '../errors';
-import { parse, zDate, zId, zIdParam, zText } from '../lib/validation';
+import { parse, zDate, zId, zIdParam, zText, zTimeOffWhen } from '../lib/validation';
 import { audit } from '../services/audit';
 import { notifyAdmins } from '../services/notify';
 import { getSettings, zoneFor } from '../services/settings';
@@ -127,10 +127,7 @@ export function myRoutes({ db, config, kick }: AppDeps): Router {
   });
 
   r.post('/time-off', async (req, res) => {
-    const body = parse(
-      z.object({ typeId: zId, startDate: zDate, endDate: zDate, note: zText(500) }),
-      req.body,
-    );
+    const body = parse(z.object({ typeId: zId, ...zTimeOffWhen, note: zText(500) }), req.body);
     const request = await requestTimeOff(db, config, req.user!, body);
     kick();
     res.status(201).json(forMember(request));

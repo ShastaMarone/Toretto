@@ -5,8 +5,8 @@ import {
   formatDateRange,
   formatDay,
   formatHours,
+  formatShiftWhen,
   formatTimestamp,
-  isWeekend,
   localDate,
   moveShiftToDate,
   todayIn,
@@ -23,18 +23,23 @@ import type {
 } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
-import { CopyPlus, Ellipsis, Plus, Send, Undo2 } from 'lucide-react';
+import { AlarmClock, CopyPlus, Ellipsis, Plus, Send, Undo2 } from 'lucide-react';
 import { useMemo, useState, type DragEvent, type ReactNode } from 'react';
-import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
-import { keys, useScheduleRange, useSchedules, useTeams, useTiers } from '../../api/queries';
 import {
-  CalendarNav,
-  DayHeader,
-  GroupRows,
-  TierFilter,
-} from '../../components/schedule/CalendarBits';
+  keys,
+  useScheduleRange,
+  useOpenShifts,
+  useSchedules,
+  useSettings,
+  useTeamSchedule,
+  useTeams,
+  useTiers,
+} from '../../api/queries';
+import { CalendarNav, TierFilter } from '../../components/schedule/CalendarBits';
+import { ScheduleGrid } from '../../components/schedule/ScheduleGrid';
 import { ScheduleSwitcher } from '../../components/schedule/ScheduleSwitcher';
 import {
   ShiftDialog,
@@ -48,7 +53,7 @@ import { Field, FormError, Input, Select } from '../../components/ui/Form';
 import { ConfirmDialog, Modal } from '../../components/ui/Modal';
 import {
   Avatar,
-  Card,
+  Badge,
   ErrorBlock,
   LoadingBlock,
   Menu,
@@ -58,6 +63,7 @@ import {
 import { cx } from '../../lib/cx';
 import { fieldErrors, formMessage } from '../../lib/forms';
 import { useHolidays } from '../../lib/holidays';
+import { overtimeIn, overtimeRules } from '../../lib/overtime';
 import {
   draftFromShift,
   groupByTier,
@@ -70,7 +76,6 @@ import {
 } from '../../lib/schedule';
 import { useBootstrapData, useTimeFormat } from '../../lib/session';
 import { zoneLabel } from '../../lib/timezones';
-import { useScrollToToday } from '../../lib/useScrollToToday';
 
 type DialogState = { mode: 'create'; draft: ShiftDraft } | { mode: 'edit'; shift: BuilderShift };
 
@@ -192,16 +197,19 @@ function Builder({
   const navigate = useNavigate();
   const tiers = useTiers();
   const teams = useTeams();
+  const rules = overtimeRules(useSettings().data);
+  const openShifts = useOpenShifts();
+  // Everyone's published shifts, for overtime worked on other schedules. (The
+  // team schedule's days are the viewer's: a day either side covers the edges.)
+  const team = useTeamSchedule(addDays(data.from, -1), addDays(data.to, 1));
   const days = useMemo(() => eachDay(data.from, data.to), [data.from, data.to]);
   const compact = days.length > 14;
   const holidays = useHolidays(data.from, data.to);
-  const scroller = useScrollToToday<HTMLDivElement>(`${data.from}:${data.to}`);
   const queryKey = keys.schedule(schedule.id, data.from, data.to);
 
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [publishing, setPublishing] = useState<null | { all: boolean }>(null);
   const [discarding, setDiscarding] = useState(false);
   const [naming, setNaming] = useState<null | 'create' | 'rename'>(null);
@@ -239,7 +247,19 @@ function Builder({
       ),
     [data.removedShifts, tz],
   );
-  const offByUserDay = useMemo(() => timeOffByUserDay(data.timeOff, days), [data.timeOff, days]);
+  const offByUserDay = useMemo(
+    () => timeOffByUserDay(data.timeOff, days, tz),
+    [data.timeOff, days, tz],
+  );
+  const onOtherSchedules = useMemo(() => {
+    const byUser = new Map<string, { startTime: string; endTime: string }[]>();
+    for (const s of team.data?.shifts ?? []) {
+      const d = localDate(s.startTime, tz);
+      if (s.scheduleId === schedule.id || d < data.from || d > data.to) continue;
+      byUser.set(s.userId, [...(byUser.get(s.userId) ?? []), s]);
+    }
+    return byUser;
+  }, [team.data, schedule.id, tz, data.from, data.to]);
   const labelsById = new Map(data.labels.map((l) => [l.id, l]));
   const tierColor = new Map(tierList.map((t) => [t.id, t.color]));
   const colorFor = (s: BuilderShift, person?: PersonRow) =>
@@ -257,6 +277,14 @@ function Builder({
     return ids.size;
   }, [data.shifts, data.removedShifts]);
   const elsewhere = Math.max(0, schedule.pendingChanges - data.changes.total);
+  // Open shifts on this schedule in the days shown, not taken yet.
+  const openHere = (openShifts.data ?? []).filter(
+    (o) =>
+      (o.status === 'open' || o.status === 'claimed') &&
+      o.scheduleId === schedule.id &&
+      localDate(o.startTime, tz) >= data.from &&
+      localDate(o.startTime, tz) <= data.to,
+  );
 
   // ---- mutations ------------------------------------------------------------
   const create = useMutation({
@@ -603,215 +631,174 @@ function Builder({
           </button>
         </Banner>
       )}
-
-      <Card className="overflow-hidden">
-        <div ref={scroller} className="overflow-x-auto scrollbar-thin">
-          <table
-            className="w-full table-fixed border-collapse text-sm"
-            style={{ minWidth: compact ? 180 + days.length * 80 : 180 + days.length * 128 }}
+      {openHere.length > 0 && (
+        <Banner tone="slate">
+          <strong>
+            {openHere.length} open shift{openHere.length === 1 ? '' : 's'} this {periodWord}
+          </strong>
+          :{' '}
+          {openHere
+            .slice(0, 3)
+            .map(
+              (o) =>
+                `${formatShiftWhen(o.startTime, o.endTime, tz, timeFormat)} (${o.tier.name}${o.claimedBy ? `, picked up by ${o.claimedBy.name}` : ''})`,
+            )
+            .join('; ')}
+          {openHere.length > 3 && ` and ${openHere.length - 3} more`}.{' '}
+          <Link
+            to="/admin/shift-requests?tab=open"
+            className="font-semibold text-brand-600 hover:underline"
           >
-            <colgroup>
-              <col className="w-44 sm:w-52" />
-              {days.map((d) => (
-                <col key={d} />
+            Manage open shifts
+          </Link>
+        </Banner>
+      )}
+
+      <ScheduleGrid
+        days={days}
+        today={today}
+        holidays={holidays}
+        compact={compact}
+        groups={groups}
+        dayWidth={[80, 128]}
+        rowHeight="h-20"
+        daySummary={(d) => {
+          const dayShifts = shifts.filter((s) => localDate(s.startTime, tz) === d);
+          if (!dayShifts.length) return '—';
+          return compact
+            ? String(dayShifts.length)
+            : `${dayShifts.length} · ${formatHours(totalHours(dayShifts))}`;
+        }}
+        groupHours={(group) => {
+          const ids = new Set(group.people.map((p) => p.id));
+          return formatHours(totalHours(shifts.filter((s) => ids.has(s.userId))));
+        }}
+        renderPerson={(person) => {
+          const personShifts = shifts.filter((s) => s.userId === person.id);
+          const other = onOtherSchedules.get(person.id) ?? [];
+          const overtime = overtimeIn(
+            [...personShifts, ...other],
+            data.from,
+            data.to,
+            tz,
+            org.weekStartsOn,
+            rules,
+          );
+          if (other.length) {
+            overtime.reasons.push(
+              `Counting ${other.length} published shift${other.length === 1 ? '' : 's'} on other schedules`,
+            );
+          }
+          return (
+            <div className="flex items-center gap-2.5">
+              <Avatar name={person.name} size="sm" className="hidden sm:inline-flex" />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-slate-900">{person.name}</p>
+                <p className="text-xs text-slate-500">
+                  {personShifts.length
+                    ? `${formatHours(totalHours(personShifts))} · ${personShifts.length} shift${personShifts.length === 1 ? '' : 's'}`
+                    : 'No shifts'}
+                  {!person.active && ' · deactivated'}
+                </p>
+                {overtime.hours > 0 && (
+                  <span title={overtime.reasons.join('\n')}>
+                    <Badge tone="amber" className="mt-0.5 px-1.5 py-0 text-[11px]">
+                      <AlarmClock className="size-3" aria-hidden />
+                      {formatHours(overtime.hours)} overtime
+                    </Badge>
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        }}
+        cellProps={(person, day) => ({
+          ...cellDrop(person.id, day),
+          className: cx(
+            'group transition-colors',
+            dropKey === `${person.id}|${day}` && 'bg-brand-50 ring-2 ring-inset ring-brand-400',
+          ),
+        })}
+        renderCell={(person, day) => {
+          const cellShifts = byUserDay.get(person.id)?.get(day) ?? [];
+          const cellGhosts = ghosts.get(person.id)?.get(day) ?? [];
+          const off = offByUserDay.get(person.id)?.get(day) ?? [];
+          return (
+            <div className="flex min-h-[4.5rem] flex-col gap-1">
+              {off.map((entry) => (
+                <TimeOffChip key={entry.id} entry={entry} tz={tz} compact={compact} />
               ))}
-            </colgroup>
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/70">
-                <th
-                  scope="col"
-                  className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left align-top text-xs font-semibold text-slate-500"
-                >
-                  {visiblePeople.length} {visiblePeople.length === 1 ? 'person' : 'people'}
-                </th>
-                {days.map((d) => {
-                  const dayShifts = shifts.filter((s) => localDate(s.startTime, tz) === d);
-                  return (
-                    <DayHeader
-                      key={d}
-                      day={d}
-                      today={today}
-                      holidays={holidays.get(d)}
-                      compact={compact}
-                      summary={
-                        dayShifts.length
-                          ? compact
-                            ? String(dayShifts.length)
-                            : `${dayShifts.length} · ${formatHours(totalHours(dayShifts))}`
-                          : '—'
-                      }
-                    />
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {groups.map((group) => {
-                const isCollapsed = collapsed.has(group.key);
-                const groupShifts = shifts.filter((s) =>
-                  group.people.some((p) => p.id === s.userId),
-                );
-                return (
-                  <GroupRows
-                    key={group.key}
-                    label={group.tier?.name ?? 'No tier'}
-                    color={group.tier?.color ?? 'var(--color-slate-400)'}
-                    count={group.people.length}
-                    hours={formatHours(totalHours(groupShifts))}
-                    colSpan={days.length + 1}
-                    collapsed={isCollapsed}
-                    onToggle={() =>
-                      setCollapsed((c) => {
-                        const next = new Set(c);
-                        if (next.has(group.key)) next.delete(group.key);
-                        else next.add(group.key);
-                        return next;
-                      })
-                    }
-                  >
-                    {!isCollapsed &&
-                      group.people.map((person) => {
-                        const personShifts = shifts.filter((s) => s.userId === person.id);
-                        return (
-                          <tr key={person.id} className="border-b border-slate-100">
-                            <th
-                              scope="row"
-                              className="sticky left-0 z-10 bg-surface px-3 py-2 text-left font-normal sm:px-4"
-                            >
-                              <div className="flex items-center gap-2.5">
-                                <Avatar
-                                  name={person.name}
-                                  size="sm"
-                                  className="hidden sm:inline-flex"
-                                />
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-medium text-slate-900">
-                                    {person.name}
-                                  </p>
-                                  <p className="text-xs text-slate-500">
-                                    {personShifts.length
-                                      ? `${formatHours(totalHours(personShifts))} · ${personShifts.length} shift${personShifts.length === 1 ? '' : 's'}`
-                                      : 'No shifts'}
-                                    {!person.active && ' · deactivated'}
-                                  </p>
-                                </div>
-                              </div>
-                            </th>
-                            {days.map((day) => {
-                              const key = `${person.id}|${day}`;
-                              const cellShifts = byUserDay.get(person.id)?.get(day) ?? [];
-                              const cellGhosts = ghosts.get(person.id)?.get(day) ?? [];
-                              const off = offByUserDay.get(person.id)?.get(day);
-                              return (
-                                <td
-                                  key={day}
-                                  {...cellDrop(person.id, day)}
-                                  className={cx(
-                                    'group h-20 border-l border-slate-100 p-1 align-top transition-colors',
-                                    isWeekend(day) && 'bg-slate-50/40',
-                                    holidays.has(day) && 'bg-rose-50/30',
-                                    day === today && 'bg-brand-50/40',
-                                    dropKey === key &&
-                                      'bg-brand-50 ring-2 ring-inset ring-brand-400',
-                                  )}
-                                >
-                                  <div className="flex min-h-[4.5rem] flex-col gap-1">
-                                    {off && <TimeOffChip entry={off} compact={compact} />}
-                                    {cellShifts.map((s) => {
-                                      const label = s.labelId
-                                        ? labelsById.get(s.labelId)
-                                        : undefined;
-                                      return (
-                                        <ShiftChip
-                                          key={s.id}
-                                          shift={s}
-                                          tz={tz}
-                                          compact={compact}
-                                          color={colorFor(s, person)}
-                                          labelName={label?.name}
-                                          status={s.published ? s.status : null}
-                                          change={
-                                            s.changeState === 'new' || s.changeState === 'updated'
-                                              ? s.changeState
-                                              : null
-                                          }
-                                          draggable
-                                          dragging={draggingId === s.id}
-                                          onDragStart={onDragStart(s)}
-                                          onDragEnd={onDragEnd}
-                                          onClick={() => setDialog({ mode: 'edit', shift: s })}
-                                        />
-                                      );
-                                    })}
-                                    {cellGhosts.map((g) =>
-                                      g.working.changeState === 'removed' ? (
-                                        <ShiftChip
-                                          key={g.id}
-                                          shift={g}
-                                          tz={tz}
-                                          compact={compact}
-                                          color={colorFor(g.working, person)}
-                                          status={null}
-                                          removed
-                                          onRestore={() => restore.mutate(g.id)}
-                                        />
-                                      ) : (
-                                        <ShiftChip
-                                          key={g.id}
-                                          shift={g}
-                                          tz={tz}
-                                          compact={compact}
-                                          color={colorFor(g.working, person)}
-                                          status={null}
-                                          removed
-                                          caption={`Moved to ${formatDay(localDate(g.working.startTime, tz))}`}
-                                          onClick={() => onDate(localDate(g.working.startTime, tz))}
-                                        />
-                                      ),
-                                    )}
-                                    {person.active && (
-                                      <button
-                                        type="button"
-                                        onClick={() => openCreate(person.id, day)}
-                                        aria-label={`Add shift for ${person.name} on ${formatDay(day)}`}
-                                        className="flex h-6 w-full items-center justify-center rounded-md border border-dashed border-slate-300 text-slate-400 opacity-0 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-600 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                                      >
-                                        <Plus className="size-3.5" />
-                                      </button>
-                                    )}
-                                  </div>
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        );
-                      })}
-                  </GroupRows>
-                );
-              })}
-              {groups.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={days.length + 1}
-                    className="px-4 py-10 text-center text-sm text-slate-500"
-                  >
-                    No one matches these filters. Add people on the People page.
-                  </td>
-                </tr>
+              {cellShifts.map((s) => (
+                <ShiftChip
+                  key={s.id}
+                  shift={s}
+                  tz={tz}
+                  compact={compact}
+                  color={colorFor(s, person)}
+                  labelName={s.labelId ? labelsById.get(s.labelId)?.name : undefined}
+                  status={s.published ? s.status : null}
+                  change={
+                    s.changeState === 'new' || s.changeState === 'updated' ? s.changeState : null
+                  }
+                  draggable
+                  dragging={draggingId === s.id}
+                  onDragStart={onDragStart(s)}
+                  onDragEnd={onDragEnd}
+                  onClick={() => setDialog({ mode: 'edit', shift: s })}
+                />
+              ))}
+              {cellGhosts.map((g) =>
+                g.working.changeState === 'removed' ? (
+                  <ShiftChip
+                    key={g.id}
+                    shift={g}
+                    tz={tz}
+                    compact={compact}
+                    color={colorFor(g.working, person)}
+                    status={null}
+                    removed
+                    onRestore={() => restore.mutate(g.id)}
+                  />
+                ) : (
+                  <ShiftChip
+                    key={g.id}
+                    shift={g}
+                    tz={tz}
+                    compact={compact}
+                    color={colorFor(g.working, person)}
+                    status={null}
+                    removed
+                    caption={`Moved to ${formatDay(localDate(g.working.startTime, tz))}`}
+                    onClick={() => onDate(localDate(g.working.startTime, tz))}
+                  />
+                ),
               )}
-            </tbody>
-          </table>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 px-4 py-3 text-xs text-slate-500">
-          <ScheduleLegend showChanges />
-          <p>
-            Drag shifts to move them · hold{' '}
-            <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Alt</kbd> or{' '}
-            <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Ctrl</kbd> to copy ·
-            times in {zoneLabel(tz)}
-          </p>
-        </div>
-      </Card>
+              {person.active && (
+                <button
+                  type="button"
+                  onClick={() => openCreate(person.id, day)}
+                  aria-label={`Add shift for ${person.name} on ${formatDay(day)}`}
+                  className="flex h-6 w-full items-center justify-center rounded-md border border-dashed border-slate-300 text-slate-400 opacity-0 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-600 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                >
+                  <Plus className="size-3.5" />
+                </button>
+              )}
+            </div>
+          );
+        }}
+        empty="No one matches these filters. Add people on the People page."
+        footer={
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 px-4 py-3 text-xs text-slate-500">
+            <ScheduleLegend showChanges />
+            <p>
+              Drag shifts to move them · hold{' '}
+              <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Alt</kbd> or{' '}
+              <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Ctrl</kbd> to copy ·
+              times in {zoneLabel(tz)}
+            </p>
+          </div>
+        }
+      />
 
       {dialog?.mode === 'create' && (
         <ShiftDialog

@@ -40,6 +40,13 @@ export interface SessionUser {
   notifyTimeOff: boolean;
   /** Admins: email me when someone confirms shifts. */
   notifyConfirmations: boolean;
+  /** Admins: email me about shift swaps and open shifts to approve. */
+  notifySwaps: boolean;
+}
+
+/** Someone's calendar feed link, or null while it's turned off. */
+export interface CalendarFeed {
+  url: string | null;
 }
 
 export interface OrgInfo {
@@ -72,6 +79,12 @@ export interface OrgSettings {
   allowedDomains: string[];
   holidayRegion: HolidayRegion;
   timeFormat: TimeFormat;
+  /** Days the email log keeps sent and failed emails; null keeps them forever. */
+  emailRetentionDays: number | null;
+  /** Overtime past this many hours in a day (null: no daily limit). */
+  overtimeDailyHours: number | null;
+  /** Overtime past this many hours in a week (null: no weekly limit). */
+  overtimeWeeklyHours: number | null;
 }
 
 export interface Tier {
@@ -171,6 +184,9 @@ export interface TimeOffEntry {
   userId: string;
   startDate: string;
   endDate: string;
+  /** Only for part of a day. */
+  startTime: string | null;
+  endTime: string | null;
   status: 'pending' | 'approved';
   /** Hidden (null) when a team member looks at someone else's time off. */
   typeName: string | null;
@@ -259,6 +275,9 @@ export interface TimeOffRequest {
   type: { id: string; name: string; color: string; paid: boolean };
   startDate: string;
   endDate: string;
+  /** Only for part of a day. */
+  startTime: string | null;
+  endTime: string | null;
   note: string | null;
   status: TimeOffStatus;
   reviewedAt: string | null;
@@ -267,6 +286,90 @@ export interface TimeOffRequest {
   createdAt: string;
   /** Admin view only: scheduled shifts that overlap the requested days. */
   conflicts?: number;
+}
+
+export type SwapStatus =
+  /** Waiting for the coworker. */
+  | 'pending'
+  /** The coworker agreed; waiting for an admin. */
+  | 'accepted'
+  | 'approved'
+  /** The coworker said no. */
+  | 'declined'
+  /** An admin said no. */
+  | 'denied'
+  | 'cancelled'
+  /** A shift started before it was settled. */
+  | 'expired'
+  /** A shift was republished differently (or reassigned) before it was settled. */
+  | 'changed';
+
+/** A shift in a swap, as published. */
+export interface SwapShift {
+  id: string;
+  startTime: string;
+  endTime: string;
+  labelName: string | null;
+  /** The label's color, else the owner's tier's. */
+  color: string | null;
+  scheduleName: string;
+}
+
+export interface ShiftSwap {
+  id: string;
+  status: SwapStatus;
+  requester: { id: string; name: string };
+  recipient: { id: string; name: string };
+  /** The requester's shift, offered to the recipient. */
+  shift: SwapShift;
+  /** A trade: the recipient's shift the requester takes in return. */
+  returnShift: SwapShift | null;
+  note: string | null;
+  reviewNote: string | null;
+  reviewedByName: string | null;
+  createdAt: string;
+  respondedAt: string | null;
+  reviewedAt: string | null;
+}
+
+/** A coworker who could take a shift. */
+export interface SwapOption {
+  id: string;
+  name: string;
+  /** Why they can't take it ("Working then", "Off then"), or null if they can. */
+  busy: string | null;
+  /** Their upcoming shifts that could be traded for it (you're free then). */
+  shifts: SwapShift[];
+}
+
+export type OpenShiftStatus =
+  | 'open'
+  /** Someone picked it up; waiting for an admin. */
+  | 'claimed'
+  /** Approved: it's someone's shift now. */
+  | 'filled'
+  | 'cancelled'
+  /** It started while still open. */
+  | 'expired';
+
+/** A shift nobody has yet, for anyone in its tier to pick up. */
+export interface OpenShift {
+  id: string;
+  status: OpenShiftStatus;
+  scheduleId: string;
+  scheduleName: string;
+  tier: { id: string; name: string; color: string };
+  label: { id: string; name: string; color: string } | null;
+  startTime: string;
+  endTime: string;
+  notes: string | null;
+  /** Who picked it up (or got it). */
+  claimedBy: { id: string; name: string } | null;
+  claimedAt: string | null;
+  reviewedByName: string | null;
+  createdAt: string;
+  /** For team members: why you can't pick it up now, or null if you can. */
+  busy?: string | null;
 }
 
 export interface AuditEntry {

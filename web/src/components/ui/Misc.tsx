@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { colorFor, initials, PALETTE } from '../../lib/colors';
 import { cx } from '../../lib/cx';
+import { moveMenuFocus } from './menuKeys';
 import { Popover } from './Popover';
 
 export type Tone = 'gray' | 'green' | 'amber' | 'red' | 'brand' | 'blue' | 'purple';
@@ -279,20 +280,9 @@ export function Menu({
   }, [open]);
 
   const onListKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    const enabled = [
-      ...(list.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:enabled') ?? []),
-    ];
-    const at = enabled.indexOf(document.activeElement as HTMLElement);
-    const focus = (i: number) => {
-      e.preventDefault();
-      enabled[(i + enabled.length) % enabled.length]?.focus();
-    };
-    if (e.key === 'ArrowDown') focus(at + 1);
-    else if (e.key === 'ArrowUp') focus(at - 1);
-    else if (e.key === 'Home') focus(0);
-    else if (e.key === 'End') focus(enabled.length - 1);
+    if (moveMenuFocus(e, list.current)) return;
     // Tab carries on from the button, as if the list were right after it.
-    else if (e.key === 'Tab') close(true);
+    if (e.key === 'Tab') close(true);
   };
 
   return (

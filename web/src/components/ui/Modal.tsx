@@ -32,8 +32,16 @@ export function Modal({
 
   useEffect(() => {
     const dialog = ref.current;
+    // Usually the button that opened it.
+    const opener = document.activeElement;
     if (dialog && !dialog.open) dialog.showModal();
-    return () => dialog?.close();
+    return () => {
+      dialog?.close();
+      // React has already taken the dialog off the page, so the browser can't
+      // hand focus back by itself.
+      if (opener instanceof HTMLElement && opener.isConnected)
+        opener.focus({ preventScroll: true });
+    };
   }, []);
 
   const body = (
@@ -52,6 +60,8 @@ export function Modal({
       ref={ref}
       aria-labelledby={titleId}
       onCancel={(e) => {
+        // React hands a dialog opened inside this one its Escape too; leave that to it.
+        if (e.target !== e.currentTarget) return;
         e.preventDefault();
         onClose();
       }}

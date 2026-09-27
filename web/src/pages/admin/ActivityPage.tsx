@@ -43,6 +43,16 @@ const KIND: Record<string, string> = {
   time_off_requested: 'Time-off request',
   time_off_reviewed: 'Time-off decision',
   time_off_cancelled: 'Time off cancelled',
+  shifts_confirmed: 'Shifts confirmed',
+  swap_requested: 'Swap request',
+  swap_accepted: 'Swap to approve',
+  swap_declined: 'Swap declined',
+  swap_cancelled: 'Swap withdrawn',
+  swap_reviewed: 'Swap decision',
+  open_shift_posted: 'Open shift posted',
+  open_shift_claimed: 'Open shift picked up',
+  open_shift_reviewed: 'Open shift decision',
+  open_shift_cancelled: 'Open shift cancelled',
 };
 
 export default function ActivityPage() {

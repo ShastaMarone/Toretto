@@ -12,6 +12,8 @@ import { seedDefaults } from '../src/services/defaults';
 import { publishSchedule } from '../src/services/publish';
 import { copyShifts, ensureDefaultSchedule } from '../src/services/schedules';
 import { createShift } from '../src/services/shifts';
+import { claimOpenShift, postOpenShift } from '../src/services/openShifts';
+import { requestSwap, respondToSwap } from '../src/services/swaps';
 
 const { values } = parseArgs({
   options: {
@@ -323,7 +325,16 @@ await copyShifts(db, admin, scheduleId, { ...week(nextWeek), targetStart: weekAf
 const typeId = async (name: string) =>
   (await db.query<{ id: string }>('SELECT id FROM time_off_types WHERE name = $1', [name])).rows[0]!
     .id;
-const timeOff = [
+const timeOff: {
+  person: string;
+  type: string;
+  start: string;
+  end: string;
+  /** Part of a day: from and to. */
+  hours?: [string, string];
+  status: string;
+  note: string | null;
+}[] = [
   {
     person: 'priya',
     type: 'Vacation',
@@ -340,6 +351,15 @@ const timeOff = [
     status: 'pending',
     note: 'Moving apartments',
   },
+  {
+    person: 'chris',
+    type: 'Personal Day',
+    start: n[2]!,
+    end: n[2]!,
+    hours: ['13:00', '15:00'],
+    status: 'approved',
+    note: 'Dentist',
+  },
   { person: 'taylor', type: 'Sick Day', start: w[3]!, end: w[3]!, status: 'approved', note: null },
   {
     person: 'maria',
@@ -351,13 +371,73 @@ const timeOff = [
   },
 ];
 for (const t of timeOff) {
+  const hours = t.hours ? shiftTimesFromLocal(t.start, t.hours[0], t.hours[1], timezone) : null;
   await db.query(
-    `INSERT INTO time_off_requests (user_id, type_id, start_date, end_date, note, status, reviewed_by, reviewed_at, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $6 = 'approved' THEN $7::uuid END,
+    `INSERT INTO time_off_requests (user_id, type_id, start_date, end_date, start_time, end_time,
+                                    note, status, reviewed_by, reviewed_at, created_by)
+     VALUES ($1, $2, $3, $4, $8, $9, $5, $6, CASE WHEN $6 = 'approved' THEN $7::uuid END,
              CASE WHEN $6 = 'approved' THEN now() END, $1)`,
-    [ids[t.person], await typeId(t.type), t.start, t.end, t.note, t.status, ids.alex],
+    [
+      ids[t.person],
+      await typeId(t.type),
+      t.start,
+      t.end,
+      t.note,
+      t.status,
+      ids.alex,
+      hours?.startTime ?? null,
+      hours?.endTime ?? null,
+    ],
   );
 }
+
+// ---- Swaps: one waiting for Sam, one waiting for an admin -------------------
+const authUser = async (person: string) =>
+  (
+    await db.query<AuthUser>(`SELECT ${AUTH_USER_COLUMNS} FROM users u WHERE u.id = $1`, [
+      ids[person],
+    ])
+  ).rows[0]!;
+const shiftOnDay = async (person: string, date: string) => {
+  const { from, to } = dayRangeToUtc(date, date, timezone);
+  const { rows } = await db.query<{ id: string }>(
+    `SELECT id FROM shifts WHERE published_user_id = $1
+        AND published_start_time >= $2 AND published_start_time < $3`,
+    [ids[person], from, to],
+  );
+  return rows[0]!.id;
+};
+await requestSwap(db, config, await authUser('priya'), {
+  shiftId: await shiftOnDay('priya', n[0]!),
+  recipientId: ids.sam!,
+  returnShiftId: null,
+  note: 'Dentist that morning',
+});
+const morganSwap = await requestSwap(db, config, await authUser('morgan'), {
+  shiftId: await shiftOnDay('morgan', n[3]!),
+  recipientId: ids.riley!,
+  returnShiftId: null,
+  note: null,
+});
+await respondToSwap(db, config, await authUser('riley'), morganSwap.id, 'accept');
+
+// ---- Open shifts: one open for Tier 2, one picked up by Sam -------------------
+const saturday = addDays(nextWeek, 5);
+await postOpenShift(db, config, admin, {
+  scheduleId: null,
+  tierId: tiers.t2!,
+  labelId: labelIds.Escalations ?? null,
+  ...shiftTimesFromLocal(saturday, '09:00', '17:00', timezone),
+  notes: 'Weekend escalations coverage',
+});
+const pickedUp = await postOpenShift(db, config, admin, {
+  scheduleId: null,
+  tierId: tiers.t1!,
+  labelId: null,
+  ...shiftTimesFromLocal(saturday, '10:00', '16:00', timezone),
+  notes: 'Backlog clean-up',
+});
+await claimOpenShift(db, config, await authUser('sam'), pickedUp.id);
 
 // Demo emails are already "delivered" so nothing gets sent to example.com.
 await db.query(`UPDATE notifications SET status = 'sent', sent_at = now() WHERE status = 'queued'`);

@@ -5,6 +5,7 @@ import { createApp } from '../src/app';
 import { enqueueEmail } from '../src/email/outbox';
 import type { Mailer, OutgoingEmail } from '../src/email/transport';
 import {
+  cleanupExpired,
   createJobs,
   createWorker,
   MAX_ATTEMPTS,
@@ -236,6 +237,45 @@ describe('confirmation reminders', () => {
     expect(await queueReminders(ctx.db, ctx.config, new Date(Date.now() + 100 * 3_600_000))).toBe(
       0,
     );
+  });
+});
+
+describe('email log retention', () => {
+  async function logged(to: string, status: string, daysAgo: number) {
+    await enqueueEmail(ctx.db, { userId: null, to, kind: 'invite', email });
+    await ctx.db.query(
+      `UPDATE notifications SET status = $2, created_at = now() - make_interval(days => $3)
+        WHERE to_email = $1`,
+      [to, status, daysAgo],
+    );
+  }
+  const remaining = async () =>
+    (await emails(ctx.db)).map((e) => e.toEmail).sort((a, b) => a.localeCompare(b));
+
+  it('deletes sent and failed emails older than the setting, never ones still going out', async () => {
+    await logged('old-sent@example.com', 'sent', 91);
+    await logged('old-failed@example.com', 'failed', 200);
+    await logged('old-queued@example.com', 'queued', 120);
+    await logged('old-sending@example.com', 'sending', 120);
+    await logged('recent@example.com', 'sent', 89);
+    await cleanupExpired(ctx.db);
+    expect(await remaining()).toEqual([
+      'old-queued@example.com',
+      'old-sending@example.com',
+      'recent@example.com',
+    ]);
+  });
+
+  it('keeps everything when set to forever, and follows a shorter setting', async () => {
+    await logged('year@example.com', 'sent', 400);
+    await logged('month@example.com', 'sent', 40);
+    await ctx.db.query('UPDATE org_settings SET email_retention_days = NULL');
+    await cleanupExpired(ctx.db);
+    expect(await remaining()).toEqual(['month@example.com', 'year@example.com']);
+    await ctx.db.query('UPDATE org_settings SET email_retention_days = 30');
+    await cleanupExpired(ctx.db);
+    expect(await remaining()).toEqual([]);
+    await ctx.db.query('UPDATE org_settings SET email_retention_days = 90');
   });
 });
 

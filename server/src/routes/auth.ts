@@ -43,6 +43,7 @@ export function toSessionUser(user: AuthUser): SessionUser {
     hasPassword: user.hasPassword,
     notifyTimeOff: user.notifyTimeOff,
     notifyConfirmations: user.notifyConfirmations,
+    notifySwaps: user.notifySwaps,
   };
 }
 

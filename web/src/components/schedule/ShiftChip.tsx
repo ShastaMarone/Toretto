@@ -165,30 +165,39 @@ export function ShiftChip({
   );
 }
 
+/** Time off in a grid cell: striped, dashed while it's only requested, with its hours for part of a day. */
 export function TimeOffChip({
   entry,
+  tz,
   compact = false,
 }: {
   entry: TimeOffEntry;
+  tz: string;
   compact?: boolean;
 }) {
+  const timeFormat = useTimeFormat();
   const color = entry.typeColor ?? '#8a90b8';
   const label = entry.typeName ?? 'Time off';
+  const hours =
+    entry.startTime && entry.endTime
+      ? formatTimeRangeCompact(entry.startTime, entry.endTime, tz, timeFormat)
+      : null;
+  const requested = entry.status === 'pending';
   return (
     <div
       className={cx(
-        'stripes flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium leading-tight text-slate-700',
-        entry.status === 'pending' ? 'border-dashed' : 'border-solid',
+        'stripes flex min-w-0 items-center gap-1 rounded-md border py-1 text-[11px] font-medium leading-tight text-slate-700',
+        compact ? 'px-1' : 'px-2',
+        requested ? 'border-dashed' : 'border-solid',
       )}
       style={{ borderColor: alpha(color, 0.6), backgroundColor: alpha(color, 0.08) }}
-      title={`${label}${entry.status === 'pending' ? ' (requested)' : ''}`}
+      title={[label, hours, requested && '(requested)'].filter(Boolean).join(' ')}
     >
       <Plane className="size-3 shrink-0" style={{ color }} aria-hidden />
       <span className="truncate">
-        {label}
-        {entry.status === 'pending' && !compact && (
-          <span className="font-normal text-slate-500"> · requested</span>
-        )}
+        {hours && <span className="font-semibold text-slate-800">{hours} </span>}
+        {(!compact || !hours) && label}
+        {requested && !compact && <span className="font-normal text-slate-500"> · requested</span>}
       </span>
     </div>
   );

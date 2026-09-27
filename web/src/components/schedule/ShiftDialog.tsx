@@ -11,6 +11,7 @@ import {
   type ISODate,
   type TimeFormat,
 } from '@shared/time';
+import { timeOffOverlaps } from '@shared/timeOff';
 import type { BuilderShift, Label, PersonRow, Tier, TimeOffEntry } from '@shared/types';
 import { CalendarClock, Copy, Eye, Repeat, Trash2 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
@@ -152,8 +153,10 @@ export function ShiftDialog({
     { label: 'No tier', people: people.filter((p) => !p.tierId || !tierName.has(p.tierId)) },
   ].filter((g) => g.people.length);
   const overnight = draft.end <= draft.start;
+  const draftTimes = shiftTimesFromLocal(draft.date, draft.start, draft.end, tz);
   const offThatDay = timeOff.find(
-    (t) => t.userId === draft.userId && t.startDate <= draft.date && t.endDate >= draft.date,
+    (t) =>
+      t.userId === draft.userId && timeOffOverlaps(t, draftTimes.startTime, draftTimes.endTime, tz),
   );
   const personName = (id: string) => byId.get(id)?.name ?? 'Someone';
   const errors = fieldErrors(error);
@@ -409,7 +412,11 @@ export function ShiftDialog({
             <p>
               {personName(draft.userId)} has{' '}
               {offThatDay.status === 'approved' ? 'approved' : 'requested'}{' '}
-              <strong>{offThatDay.typeName ?? 'time off'}</strong> on {formatDay(draft.date)}.
+              <strong>{offThatDay.typeName ?? 'time off'}</strong> on{' '}
+              {offThatDay.startTime && offThatDay.endTime
+                ? formatShiftWhen(offThatDay.startTime, offThatDay.endTime, tz, timeFormat)
+                : formatDay(draft.date)}
+              .
             </p>
           </div>
         )}

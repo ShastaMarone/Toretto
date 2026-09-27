@@ -288,6 +288,40 @@ describe('settings', () => {
     await admin.patch('/api/admin/settings').send({ timeFormat: '12h' });
   });
 
+  it('keeps the email log for 90 days unless changed', async () => {
+    expect((await admin.get('/api/admin/settings')).body.emailRetentionDays).toBe(90);
+    const forever = await admin.patch('/api/admin/settings').send({ emailRetentionDays: null });
+    expect(forever.body.emailRetentionDays).toBeNull();
+    // Leaving it out keeps the current choice.
+    const unchanged = await admin.patch('/api/admin/settings').send({ reminderHours: 24 });
+    expect(unchanged.body.emailRetentionDays).toBeNull();
+    const month = await admin.patch('/api/admin/settings').send({ emailRetentionDays: 30 });
+    expect(month.body.emailRetentionDays).toBe(30);
+    for (const bad of [0, 5000, 1.5, '30']) {
+      const res = await admin.patch('/api/admin/settings').send({ emailRetentionDays: bad });
+      expect(res.status).toBe(400);
+    }
+    await admin.patch('/api/admin/settings').send({ emailRetentionDays: 90 });
+  });
+
+  it('flags overtime past 8 hours a day and 40 a week unless changed', async () => {
+    expect((await admin.get('/api/admin/settings')).body).toMatchObject({
+      overtimeDailyHours: 8,
+      overtimeWeeklyHours: 40,
+    });
+    const ontario = await admin
+      .patch('/api/admin/settings')
+      .send({ overtimeDailyHours: null, overtimeWeeklyHours: 44 });
+    expect(ontario.body).toMatchObject({ overtimeDailyHours: null, overtimeWeeklyHours: 44 });
+    for (const bad of [{ overtimeDailyHours: 0 }, { overtimeWeeklyHours: 200 }]) {
+      expect((await admin.patch('/api/admin/settings').send(bad)).status).toBe(400);
+    }
+    await admin
+      .patch('/api/admin/settings')
+      .send({ overtimeDailyHours: 8, overtimeWeeklyHours: 40 })
+      .expect(200);
+  });
+
   it('lets people set their own time zone', async () => {
     const res = await member.patch('/api/me').send({ timezone: 'America/Halifax', name: 'Mo M.' });
     expect(res.body.user).toMatchObject({ timezone: 'America/Halifax', name: 'Mo M.' });

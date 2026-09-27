@@ -29,33 +29,44 @@ describe('schedule grid helpers', () => {
     expect([...groupByDay([late, night, early], TZ).keys()]).toEqual(['2026-10-06']);
   });
 
-  it('spreads time off across days, preferring approved over pending', () => {
+  it('spreads time off across the days it covers, and part-day time off by its hours', () => {
     const entry = (
       id: string,
-      status: 'pending' | 'approved',
       start: string,
       end: string,
+      hours?: { startTime: string; endTime: string },
     ): TimeOffEntry => ({
       id,
       userId: 'ana',
       startDate: start,
       endDate: end,
-      status,
+      startTime: hours?.startTime ?? null,
+      endTime: hours?.endTime ?? null,
+      status: 'approved',
       typeName: 'Vacation',
       typeColor: '#10b981',
     });
     const days = ['2026-10-05', '2026-10-06', '2026-10-07'];
-    const byDay = timeOffByUserDay(
-      [
-        entry('p', 'pending', '2026-10-06', '2026-10-09'),
-        entry('a', 'approved', '2026-10-01', '2026-10-06'),
-      ],
-      days,
-    ).get('ana')!;
-    expect(byDay.get('2026-10-05')?.id).toBe('a');
-    expect(byDay.get('2026-10-06')?.id).toBe('a');
-    expect(byDay.get('2026-10-07')?.id).toBe('p');
-    expect(byDay.has('2026-10-08')).toBe(false); // outside the visible days
+    const afternoon = shiftTimesFromLocal('2026-10-07', '13:00', '15:00', TZ);
+    const morning = shiftTimesFromLocal('2026-10-07', '09:00', '10:00', TZ);
+    // 11 PM to 1 AM in Toronto: two days there, but one in Vancouver.
+    const lateNight = shiftTimesFromLocal('2026-10-05', '23:00', '01:00', TZ);
+    const list = [
+      entry('trip', '2026-10-01', '2026-10-06'),
+      entry('pm', '2026-10-07', '2026-10-07', afternoon),
+      entry('am', '2026-10-07', '2026-10-07', morning),
+      entry('night', '2026-10-05', '2026-10-06', lateNight),
+    ];
+    const ids = (byDay: Map<string, TimeOffEntry[]>, day: string) =>
+      (byDay.get(day) ?? []).map((e) => e.id);
+    const toronto = timeOffByUserDay(list, days, TZ).get('ana')!;
+    expect(ids(toronto, '2026-10-05')).toEqual(['trip', 'night']);
+    expect(ids(toronto, '2026-10-06')).toEqual(['trip', 'night']);
+    // Whole days first, then by start time.
+    expect(ids(toronto, '2026-10-07')).toEqual(['am', 'pm']);
+    expect(toronto.has('2026-10-08')).toBe(false); // outside the visible days
+    const vancouver = timeOffByUserDay(list, days, 'America/Vancouver').get('ana')!;
+    expect(ids(vancouver, '2026-10-06')).toEqual(['trip']);
   });
 
   it('totals hours and titles schedules', () => {

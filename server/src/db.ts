@@ -34,20 +34,30 @@ export function createPool(
   return pool;
 }
 
+/** Postgres broke a deadlock by rolling this transaction back. */
+const DEADLOCK_DETECTED = '40P01';
+
+/**
+ * Run fn in a transaction. If Postgres picks it to break a deadlock, it runs
+ * once more: everything it did was rolled back, and the other side has gone.
+ */
 export async function withTransaction<T>(
   pool: pg.Pool,
   fn: (client: pg.PoolClient) => Promise<T>,
 ): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await fn(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw err;
-  } finally {
-    client.release();
+  for (let attempt = 1; ; attempt++) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await fn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      if (attempt === 1 && (err as { code?: string }).code === DEADLOCK_DETECTED) continue;
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 }
