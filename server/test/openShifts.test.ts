@@ -194,6 +194,36 @@ describe('open shifts', () => {
     expect((await bo.post(`/api/my/open-shifts/${busy.id}/claim`)).status).toBe(409);
   });
 
+  it("don't give away unpublished shifts to team members, but approval counts them", async () => {
+    const draft = await admin
+      .post(`/api/schedules/${main}/shifts`)
+      .send({ userId: people.ana.id, ...shiftOn(day(4), '12:00', '14:00') })
+      .expect(201);
+    const later: OpenShift = (await post({ tierId: tier1, ...shiftOn(day(4)) })).body;
+    expect((await mine(ana)).find((o) => o.id === later.id)?.busy).toBeNull();
+    await ana.post(`/api/my/open-shifts/${later.id}/claim`).expect(200);
+    const blocked = await admin.post(`/api/open-shifts/${later.id}/approve`);
+    expect(blocked.body.error.message).toBe('Ana Ortiz already has a shift then');
+    await admin.delete(`/api/shifts/${draft.body.id}`).expect(200);
+    expect((await admin.post(`/api/open-shifts/${later.id}/approve`)).body.status).toBe('filled');
+  });
+
+  it('open up again if the person holding one is deleted', async () => {
+    const newcomer = await createUser(ctx.db, { name: 'Nia New', tierId: tier1 });
+    const nia = ctx.agent();
+    await login(nia, newcomer.email);
+    const spare: OpenShift = (await post({ tierId: tier1, ...shiftOn(day(6)) })).body;
+    await nia.post(`/api/my/open-shifts/${spare.id}/claim`).expect(200);
+    await admin.delete(`/api/users/${newcomer.id}`).expect(204);
+    const list = (await admin.get('/api/open-shifts')).body as OpenShift[];
+    expect(list.find((o) => o.id === spare.id)).toMatchObject({ status: 'open', claimedBy: null });
+    await bo.post(`/api/my/open-shifts/${spare.id}/claim`).expect(200);
+    // And one can never be held by nobody.
+    await expect(
+      ctx.db.query(`UPDATE open_shifts SET claimed_by = NULL WHERE id = $1`, [spare.id]),
+    ).rejects.toThrow(/open_shifts_claim_check/);
+  });
+
   it('expire once they start', async () => {
     const soon: OpenShift = (await post({ tierId: tier1, ...shiftOn(day(5)) })).body;
     await ctx.db.query(

@@ -288,3 +288,56 @@ describe('withdrawing, declining and expiring', () => {
     expect((await eve.post(`/api/my/swaps/${pending.id}/accept`)).status).toBe(409);
   });
 });
+
+describe('keeping to what was agreed', () => {
+  it('lapses when a shift is republished with a new time, so it can’t go ahead on the old terms', async () => {
+    const cySat = await publishShift(people.cy.id, 5);
+    await publish();
+    const swap = (await offer(cy, { shiftId: cySat, recipientId: people.bo.id })).body;
+    await bo.post(`/api/my/swaps/${swap.id}/accept`).expect(200);
+    // A notes-only change isn't a new version of the shift.
+    await admin.patch(`/api/shifts/${cySat}`).send({ notes: 'Bring your badge' }).expect(200);
+    await publish();
+    expect((await cy.get('/api/my/swaps')).body[0]).toMatchObject({
+      id: swap.id,
+      status: 'accepted',
+    });
+    // A new time is.
+    await admin
+      .patch(`/api/shifts/${cySat}`)
+      .send(shiftOn(day(5), '13:00', '21:00'))
+      .expect(200);
+    await publish();
+    const listed = (await admin.get('/api/swaps')).body as ShiftSwap[];
+    expect(listed.find((s) => s.id === swap.id)?.status).toBe('changed');
+    const approve = await admin.post(`/api/swaps/${swap.id}/approve`);
+    expect(approve.status).toBe(409);
+    expect(approve.body.error.message).toBe(
+      'The schedule has changed since, so this swap no longer applies',
+    );
+    expect((await ownerOf(cySat)).publishedUserId).toBe(people.cy.id);
+    // It no longer holds the shift up: it can be offered again.
+    await offer(cy, { shiftId: cySat, recipientId: people.bo.id }).expect(201);
+  });
+
+  it('only counts published shifts for team members, but admins’ approval counts drafts', async () => {
+    const cySun = await publishShift(people.cy.id, 6);
+    await publish();
+    // Not published yet, so Cy can't see it on the team schedule.
+    const draft = await admin
+      .post(`/api/schedules/${main}/shifts`)
+      .send({ userId: people.bo.id, ...shiftOn(day(6), '12:00', '14:00') })
+      .expect(201);
+    const options = (await cy.get(`/api/my/swaps/options?shiftId=${cySun}`)).body as SwapOption[];
+    expect(options.find((o) => o.id === people.bo.id)?.busy).toBeNull();
+    const swap = (await offer(cy, { shiftId: cySun, recipientId: people.bo.id }).expect(201)).body;
+    await bo.post(`/api/my/swaps/${swap.id}/accept`).expect(200);
+    const blocked = await admin.post(`/api/swaps/${swap.id}/approve`);
+    expect(blocked.body.error).toMatchObject({
+      code: 'SWAP_BUSY',
+      message: "Bo Lee can't take it: they have another shift then",
+    });
+    await admin.delete(`/api/shifts/${draft.body.id}`).expect(200);
+    expect((await admin.post(`/api/swaps/${swap.id}/approve`)).body.status).toBe('approved');
+  });
+});

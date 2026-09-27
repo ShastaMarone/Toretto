@@ -34,6 +34,7 @@ import {
   useOpenShifts,
   useSchedules,
   useSettings,
+  useTeamSchedule,
   useTeams,
   useTiers,
 } from '../../api/queries';
@@ -198,6 +199,9 @@ function Builder({
   const teams = useTeams();
   const rules = overtimeRules(useSettings().data);
   const openShifts = useOpenShifts();
+  // Everyone's published shifts, for overtime worked on other schedules. (The
+  // team schedule's days are the viewer's: a day either side covers the edges.)
+  const team = useTeamSchedule(addDays(data.from, -1), addDays(data.to, 1));
   const days = useMemo(() => eachDay(data.from, data.to), [data.from, data.to]);
   const compact = days.length > 14;
   const holidays = useHolidays(data.from, data.to);
@@ -247,6 +251,15 @@ function Builder({
     () => timeOffByUserDay(data.timeOff, days, tz),
     [data.timeOff, days, tz],
   );
+  const onOtherSchedules = useMemo(() => {
+    const byUser = new Map<string, { startTime: string; endTime: string }[]>();
+    for (const s of team.data?.shifts ?? []) {
+      const d = localDate(s.startTime, tz);
+      if (s.scheduleId === schedule.id || d < data.from || d > data.to) continue;
+      byUser.set(s.userId, [...(byUser.get(s.userId) ?? []), s]);
+    }
+    return byUser;
+  }, [team.data, schedule.id, tz, data.from, data.to]);
   const labelsById = new Map(data.labels.map((l) => [l.id, l]));
   const tierColor = new Map(tierList.map((t) => [t.id, t.color]));
   const colorFor = (s: BuilderShift, person?: PersonRow) =>
@@ -662,14 +675,20 @@ function Builder({
         }}
         renderPerson={(person) => {
           const personShifts = shifts.filter((s) => s.userId === person.id);
+          const other = onOtherSchedules.get(person.id) ?? [];
           const overtime = overtimeIn(
-            personShifts,
+            [...personShifts, ...other],
             data.from,
             data.to,
             tz,
             org.weekStartsOn,
             rules,
           );
+          if (other.length) {
+            overtime.reasons.push(
+              `Counting ${other.length} published shift${other.length === 1 ? '' : 's'} on other schedules`,
+            );
+          }
           return (
             <div className="flex items-center gap-2.5">
               <Avatar name={person.name} size="sm" className="hidden sm:inline-flex" />

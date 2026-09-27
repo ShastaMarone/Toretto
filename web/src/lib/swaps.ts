@@ -19,6 +19,7 @@ export function swapStatus(
     denied: { label: 'Declined by an admin', tone: 'red' },
     cancelled: { label: 'Withdrawn', tone: 'gray' },
     expired: { label: 'Expired', tone: 'gray' },
+    changed: { label: 'Schedule changed', tone: 'gray' },
   };
   return labels[swap.status];
 }

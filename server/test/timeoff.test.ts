@@ -313,6 +313,14 @@ describe('time off for part of a day', () => {
       {},
     ];
     for (const body of bad) expect((await request(body)).status).toBe(400);
+    // The database holds to it too: a start needs an end.
+    await expect(
+      ctx.db.query(
+        `INSERT INTO time_off_requests (user_id, type_id, start_date, end_date, start_time)
+         VALUES ($1, $2, $3, $3, $4)`,
+        [kaiId, typeId(), day(16), at(16, '09:00')],
+      ),
+    ).rejects.toThrow(/time_off_requests_hours_pair_check/);
   });
 
   it('shows the hours on the team schedule once approved', async () => {

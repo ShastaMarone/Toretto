@@ -33,11 +33,17 @@ const OPEN_SHIFT_SQL = `
     LEFT JOIN users cu ON cu.id = o.claimed_by
     LEFT JOIN users rb ON rb.id = o.reviewed_by`;
 
-/** Open shifts that started before anyone got them can't be picked up any more. */
+/**
+ * Open shifts that started before anyone got them can't be picked up any
+ * more. Rows another request is working on are left for next time.
+ */
 async function expireStarted(db: Queryable): Promise<void> {
   await db.query(
     `UPDATE open_shifts SET status = 'expired'
-      WHERE status IN ('open', 'claimed') AND start_time <= now()`,
+      WHERE id IN (SELECT id FROM open_shifts
+                    WHERE status IN ('open', 'claimed') AND start_time <= now()
+                    ORDER BY id
+                      FOR UPDATE SKIP LOCKED)`,
   );
 }
 
@@ -72,11 +78,13 @@ export async function openShiftsFor(db: Queryable, user: AuthUser): Promise<Open
     [user.tierId, user.id],
   );
   if (!rows.length) return [];
+  // What they can see themselves: published shifts and time off, never drafts.
   const busy = await busyBetween(
     db,
     [user.id],
     rows[0]!.startTime,
     new Date(Math.max(...rows.map((o) => Date.parse(o.endTime)))).toISOString(),
+    { drafts: false },
   );
   return rows.map((o) => ({
     ...o,
@@ -198,6 +206,7 @@ export async function postOpenShift(
   return getOpenShift(db, id);
 }
 
+/** Lock an open shift's row. One that has started counts as expired. */
 async function lockOpenShift(db: Queryable, id: string) {
   await expireStarted(db);
   const { rows } = await db.query<{
@@ -208,7 +217,10 @@ async function lockOpenShift(db: Queryable, id: string) {
     claimedBy: string | null;
     declinedIds: string[];
   }>(
-    `SELECT id, status, tier_id AS "tierId", schedule_id AS "scheduleId",
+    `SELECT id,
+            CASE WHEN status IN ('open', 'claimed') AND start_time <= now() THEN 'expired'
+                 ELSE status END AS status,
+            tier_id AS "tierId", schedule_id AS "scheduleId",
             claimed_by AS "claimedBy", declined_ids AS "declinedIds"
        FROM open_shifts WHERE id = $1 FOR UPDATE`,
     [id],
@@ -218,13 +230,22 @@ async function lockOpenShift(db: Queryable, id: string) {
 }
 
 /**
- * Someone is free for it: no other shift or time off then (with the
- * builder's per-person lock). `name` is null when it's the reader.
+ * Someone is free for it: no other shift or time off then. `name` is null
+ * when it's the reader. Team members only hear about published shifts; an
+ * admin approving also counts drafts, under the builder's per-person lock.
  */
-async function assertFree(db: Queryable, userId: string, name: string | null, o: OpenShift) {
-  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${userId}`]);
+async function assertFree(
+  db: Queryable,
+  userId: string,
+  name: string | null,
+  o: OpenShift,
+  opts: { admin: boolean },
+) {
+  if (opts.admin) {
+    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${userId}`]);
+  }
   const busy = busyReason(
-    await busyBetween(db, [userId], o.startTime, o.endTime),
+    await busyBetween(db, [userId], o.startTime, o.endTime, { drafts: opts.admin }),
     userId,
     o.startTime,
     o.endTime,
@@ -244,7 +265,9 @@ const unavailable = (status: OpenShiftStatus) =>
   conflict(
     status === 'claimed'
       ? 'Someone already picked this shift up'
-      : `This open shift is ${status === 'filled' ? 'taken' : status}`,
+      : status === 'open'
+        ? 'Nobody has this shift picked up any more'
+        : `This open shift is ${status === 'filled' ? 'taken' : status}`,
     'OPEN_SHIFT_TAKEN',
   );
 
@@ -263,7 +286,7 @@ export async function claimOpenShift(
       throw conflict('An admin already said no to you for this one', 'OPEN_SHIFT_DECLINED');
     }
     const openShift = await getOpenShift(client, id);
-    await assertFree(client, user.id, null, openShift);
+    await assertFree(client, user.id, null, openShift, { admin: false });
     await client.query(
       `UPDATE open_shifts SET status = 'claimed', claimed_by = $2, claimed_at = now()
         WHERE id = $1`,
@@ -329,6 +352,15 @@ export async function reviewOpenShift(
   note: string | null,
 ): Promise<OpenShift> {
   await withTransaction(db, async (client) => {
+    if (decision === 'approved') {
+      // Locks in the builder's order: the schedule, then this, then the person.
+      const { rows } = await client.query<{ scheduleId: string }>(
+        'SELECT schedule_id AS "scheduleId" FROM open_shifts WHERE id = $1',
+        [id],
+      );
+      if (!rows[0]) throw notFound('Open shift');
+      await lockSchedule(client, rows[0].scheduleId);
+    }
     const locked = await lockOpenShift(client, id);
     if (locked.status !== 'claimed' || !locked.claimedBy) throw unavailable(locked.status);
     const openShift = await getOpenShift(client, id);
@@ -344,8 +376,7 @@ export async function reviewOpenShift(
           'OPEN_SHIFT_INELIGIBLE',
         );
       }
-      await lockSchedule(client, locked.scheduleId);
-      await assertFree(client, claimer.id, claimer.name, openShift);
+      await assertFree(client, claimer.id, claimer.name, openShift, { admin: true });
       const { rows: created } = await client.query<{ id: string }>(
         `INSERT INTO shifts (schedule_id, user_id, label_id, start_time, end_time, notes,
                              status, confirmed_at, published_at, published_user_id,

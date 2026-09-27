@@ -22,6 +22,7 @@ describe('migrations', () => {
         '007_overtime.sql',
         '008_shift_swaps.sql',
         '009_open_shifts.sql',
+        '010_swap_and_claim_rules.sql',
       ]);
       // Exactly one instance did the work.
       expect(results.filter((r) => r.length > 0)).toHaveLength(1);
@@ -37,6 +38,7 @@ describe('migrations', () => {
         '007_overtime.sql',
         '008_shift_swaps.sql',
         '009_open_shifts.sql',
+        '010_swap_and_claim_rules.sql',
       ]);
     } finally {
       await db.end();

@@ -300,7 +300,9 @@ export type SwapStatus =
   | 'denied'
   | 'cancelled'
   /** A shift started before it was settled. */
-  | 'expired';
+  | 'expired'
+  /** A shift was republished differently (or reassigned) before it was settled. */
+  | 'changed';
 
 /** A shift in a swap, as published. */
 export interface SwapShift {

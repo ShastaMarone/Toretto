@@ -11,20 +11,29 @@ export interface Busy {
   kind: 'shift' | 'time_off';
 }
 
-/** What these people have on between from and to. */
+/**
+ * What these people have on between from and to. Drafts (unpublished
+ * changes) are only for admins: telling a team member "Working then" about a
+ * shift they can't see yet would give it away.
+ */
 export async function busyBetween(
   db: Queryable,
   userIds: string[],
   from: string,
   to: string,
+  { drafts }: { drafts: boolean },
 ): Promise<Busy[]> {
+  const draftShifts = drafts
+    ? `SELECT s.user_id AS "userId", s.id AS "shiftId", s.start_time AS "from", s.end_time AS "to",
+              'shift' AS kind
+         FROM shifts s
+        WHERE s.user_id = ANY($1) AND s.deleted_at IS NULL AND s.start_time < $3 AND s.end_time > $2
+       UNION ALL`
+    : '';
   const { rows } = await db.query<Busy>(
-    `SELECT s.user_id AS "userId", s.id AS "shiftId", s.start_time AS "from", s.end_time AS "to",
-            'shift' AS kind
-       FROM shifts s
-      WHERE s.user_id = ANY($1) AND s.deleted_at IS NULL AND s.start_time < $3 AND s.end_time > $2
-     UNION ALL
-     SELECT s.published_user_id, s.id, s.published_start_time, s.published_end_time, 'shift'
+    `${draftShifts}
+     SELECT s.published_user_id AS "userId", s.id AS "shiftId",
+            s.published_start_time AS "from", s.published_end_time AS "to", 'shift' AS kind
        FROM shifts s
       WHERE s.published_at IS NOT NULL AND s.published_user_id = ANY($1)
         AND s.published_start_time < $3 AND s.published_end_time > $2

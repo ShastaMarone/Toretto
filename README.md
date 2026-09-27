@@ -55,7 +55,7 @@ neon dark theme.
 - **Edit after publishing**. The team keeps seeing the published version until you publish again. Then only the people affected get an email ("new", "changed" with the old time struck through, "cancelled"). Changed shifts need to be confirmed again. You can **Discard** unpublished changes to go back to the published version.
 - **Confirmation tracking**: every shift shows ◷ pending or ✓ confirmed. The dashboard shows confirmations week by week and who hasn't confirmed, and an automatic reminder email goes out after 24 hours (configurable).
 - **Admin emails** when someone requests (or cancels) time off, when someone confirms shifts, and when a swap needs approval. Each admin can turn any of them off in their profile.
-- **Hours**: each person's published hours by week (1, 2 or 4 weeks at a time), grouped by tier, with **overtime** flagged past 8 hours a day or 40 a week (the Canada Labour Code's standard hours; change either in **Settings**). Hours already over the daily limit aren't counted again toward the week. The schedule builder flags overtime in drafts too, next to each person's name.
+- **Hours**: each person's published hours by week (1, 2 or 4 weeks at a time), grouped by tier, with **overtime** flagged past 8 hours a day or 40 a week (the Canada Labour Code's standard hours; change either in **Settings**). Hours already over the daily limit aren't counted again toward the week. The schedule builder flags overtime in drafts too, next to each person's name, counting their published shifts on other schedules.
 - **Open shifts**: post a shift nobody has yet for everyone in a tier (**Swaps & open shifts → Open shifts**); they're all emailed. The first person to pick it up gets it once you approve, already confirmed; declining opens it up for the rest of the tier again. The builder lists the open shifts in the days you're looking at.
 - **Time-off approvals**: approve or decline, with a warning when the request overlaps scheduled shifts. You can also record time off for someone directly.
 - **Canadian statutory holidays** on every calendar, including the weekday a weekend holiday is observed. The default is the federal list (Canada Labour Code); pick a province or territory, or turn holidays off, in **Settings**.
@@ -70,7 +70,7 @@ neon dark theme.
 - **Request time off** by clicking any day. Pick a type (Paid Holiday, Personal Day, Vacation, Sick Day, Unpaid Leave — admins can edit the list) and either whole days or **part of a day** (from and to times, e.g. 1–3 PM for an appointment). You're warned if you're scheduled during that time, and part-day time off only counts shifts during those hours.
 - **Team Schedule**: everyone's published shifts across every tier (week, 2 weeks or month), filterable by tier, team and schedule. Coworkers see that someone is off, not why.
 - **Google Calendar**: **Add to calendar** on My Schedule (or **Calendar** in your profile) creates a private link to your published shifts and approved time off, and **Add to Google Calendar** subscribes to it. Outlook, Apple Calendar and other apps can subscribe to the same link. Google Calendar checks for changes every few hours, so an update can take up to a day to show there. **Get a new link** replaces a link that was shared by mistake. See [Calendar feeds](#calendar-feeds).
-- **Shift swaps**: offer one of your upcoming shifts to a coworker in your tier from its details on My Schedule, optionally taking one of their shifts in return. It shows who's free then. They accept or decline, then an admin approves on the **Swaps & open shifts** page, and the shifts change hands in the published schedule right away (already confirmed). Nothing changes if either person would be double-booked or off, and an admin has to publish or discard edits to those shifts first. Everyone involved is emailed at each step.
+- **Shift swaps**: offer one of your upcoming shifts to a coworker in your tier from its details on My Schedule, optionally taking one of their shifts in return. It shows who's free then (going by the published schedule, so nobody learns about unpublished shifts). They accept or decline, then an admin approves on the **Swaps & open shifts** page, and the shifts change hands in the published schedule right away (already confirmed). Nothing changes if either person would be double-booked or off, and an admin has to publish or discard edits to those shifts first. If an admin reschedules or reassigns one of the shifts before then, the swap lapses (**Schedule changed**) and the shift can be offered again. Everyone involved is emailed at each step.
 - **Open shifts**: pick up an open shift in your tier from **My Schedule**. It's yours once an admin approves; until then you can let it go.
 - **Light, dark or system theme**, with frosted-glass panels and neon glows in the dark theme. Saved per device.
 - Works on phones. The calendars switch to a compact dot view and a day-by-day agenda.
@@ -356,15 +356,15 @@ Calendar** to work:
 
 ## Decisions on the playbook's open questions
 
-| Question                          | Decision                                                                                                               |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Labels global or per tier?        | **Both.** Each label belongs to one tier (only for its people) or to everyone.                                         |
-| Reminders for unconfirmed shifts? | **Yes.** One reminder per shift after 24 h (Settings: off / 12 h / 24 h / 2 days / 3 days).                            |
-| Shift swaps/trades?               | **Out of scope for v1.** People contact their admin, who edits and re-publishes. Only the affected people are emailed. |
-| Multiple time zones?              | **Supported.** Schedules are built in the organization's zone; each person sees their own.                             |
-| One schedule per tier?            | **No.** One calendar for every tier, with extra schedules only when you want a separate roster.                        |
-| Repeating shifts as a series?     | **No.** Repeating creates separate shifts, so any one day can change without "this or all?" questions.                 |
-| Statutory holidays?               | **Canadian**, federal by default or any province/territory. Shown on calendars; they don't block scheduling.           |
+| Question                          | Decision                                                                                                                          |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Labels global or per tier?        | **Both.** Each label belongs to one tier (only for its people) or to everyone.                                                    |
+| Reminders for unconfirmed shifts? | **Yes.** One reminder per shift after 24 h (Settings: off / 12 h / 24 h / 2 days / 3 days).                                       |
+| Shift swaps/trades?               | **Yes, within a tier.** The coworker accepts, then an admin approves. Open shifts go to the first to pick them up, once approved. |
+| Multiple time zones?              | **Supported.** Schedules are built in the organization's zone; each person sees their own.                                        |
+| One schedule per tier?            | **No.** One calendar for every tier, with extra schedules only when you want a separate roster.                                   |
+| Repeating shifts as a series?     | **No.** Repeating creates separate shifts, so any one day can change without "this or all?" questions.                            |
+| Statutory holidays?               | **Canadian**, federal by default or any province/territory. Shown on calendars; they don't block scheduling.                      |
 
 Other choices worth knowing:
 
@@ -419,8 +419,6 @@ e2e/               Playwright end-to-end test
 
 ## Ideas for later
 
-- Shift swaps and open shifts that people can pick up
 - SMS or push notifications
-- Partial-day time off and time-off balances
+- Time-off balances
 - Shift templates and availability preferences
-- Reporting on hours per person

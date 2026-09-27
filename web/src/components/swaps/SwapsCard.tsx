@@ -29,7 +29,11 @@ export function SwapsCard({ tz }: { tz: string }) {
             : 'Request withdrawn',
       );
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => {
+      toast.error(e.message);
+      // It may have lapsed meanwhile: show how it stands now.
+      void queryClient.invalidateQueries({ queryKey: keys.mySwaps });
+    },
   });
 
   const list = swaps.data ?? [];

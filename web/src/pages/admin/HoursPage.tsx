@@ -64,7 +64,10 @@ export default function HoursPage() {
   const to = addDays(from, weekCount * 7 - 1);
   const tierFilter = params.get('tiers')?.split(',').filter(Boolean) ?? [];
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const schedule = useTeamSchedule(from, to);
+  // The team schedule's days are the viewer's, which can be a few hours off
+  // the organization's: a day either side catches the shifts at the edges
+  // (weeks outside the range are dropped below).
+  const schedule = useTeamSchedule(addDays(from, -1), addDays(to, 1));
   const tiers = useTiers();
   const settings = useSettings();
   const rules = overtimeRules(settings.data);

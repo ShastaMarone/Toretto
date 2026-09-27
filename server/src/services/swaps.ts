@@ -14,6 +14,7 @@ import { badRequest, conflict, notFound } from '../errors';
 import { audit } from './audit';
 import { busyBetween, busyReason } from './availability';
 import { notifyAdmins, notifyPerson } from './notify';
+import { lockSchedule } from './schedules';
 
 /** How far ahead a coworker's shifts are offered for a trade. */
 const TRADE_DAYS = 60;
@@ -104,14 +105,42 @@ function toSwap(r: SwapRow): ShiftSwap {
   };
 }
 
-/** Open swaps can't happen once one of their shifts has started. */
-async function expireStarted(db: Queryable): Promise<void> {
+/** A swap `w` whose shifts are still the published versions it's about, with the same owners. */
+const CURRENT = `
+  EXISTS (SELECT 1 FROM shifts a
+           WHERE a.id = w.shift_id AND a.published_at IS NOT NULL
+             AND a.published_user_id = w.requester_id
+             AND (w.shift_version IS NULL OR a.published_at = w.shift_version))
+  AND (w.return_shift_id IS NULL OR EXISTS (
+         SELECT 1 FROM shifts b
+          WHERE b.id = w.return_shift_id AND b.published_at IS NOT NULL
+            AND b.published_user_id = w.recipient_id
+            AND (w.return_version IS NULL OR b.published_at = w.return_version)))`;
+
+/**
+ * Open swaps lapse: 'expired' once one of their shifts starts, 'changed' once
+ * one is republished with a different person, time or label (its published_at
+ * moves on). Rows another request is working on are left for next time.
+ */
+async function settleOpenSwaps(db: Queryable): Promise<void> {
   await db.query(
-    `UPDATE shift_swaps w SET status = 'expired'
-      WHERE w.status IN ('pending', 'accepted')
-        AND EXISTS (SELECT 1 FROM shifts s
-                     WHERE s.id IN (w.shift_id, w.return_shift_id)
-                       AND s.published_start_time <= now())`,
+    `UPDATE shift_swaps SET status = 'expired'
+      WHERE id IN (
+        SELECT w.id FROM shift_swaps w
+         WHERE w.status IN ('pending', 'accepted')
+           AND EXISTS (SELECT 1 FROM shifts s
+                        WHERE s.id IN (w.shift_id, w.return_shift_id)
+                          AND s.published_start_time <= now())
+         ORDER BY w.id
+           FOR UPDATE SKIP LOCKED)`,
+  );
+  await db.query(
+    `UPDATE shift_swaps SET status = 'changed'
+      WHERE id IN (
+        SELECT w.id FROM shift_swaps w
+         WHERE w.status IN ('pending', 'accepted') AND NOT (${CURRENT})
+         ORDER BY w.id
+           FOR UPDATE SKIP LOCKED)`,
   );
 }
 
@@ -123,7 +152,7 @@ export async function getSwap(db: Queryable, id: string): Promise<ShiftSwap> {
 
 /** Swaps someone offered or was asked to take: open ones, and the last month's others. */
 export async function listMySwaps(db: Queryable, userId: string): Promise<ShiftSwap[]> {
-  await expireStarted(db);
+  await settleOpenSwaps(db);
   const { rows } = await db.query<SwapRow>(
     `${SWAP_SQL}
       WHERE (w.requester_id = $1 OR w.recipient_id = $1)
@@ -137,7 +166,7 @@ export async function listMySwaps(db: Queryable, userId: string): Promise<ShiftS
 
 /** For admins: waiting for approval first, then waiting for the coworker, then the rest. */
 export async function listSwaps(db: Queryable): Promise<ShiftSwap[]> {
-  await expireStarted(db);
+  await settleOpenSwaps(db);
   const { rows } = await db.query<SwapRow>(
     `${SWAP_SQL}
       ORDER BY (w.status = 'accepted') DESC, (w.status = 'pending') DESC, w.created_at DESC
@@ -146,58 +175,80 @@ export async function listSwaps(db: Queryable): Promise<ShiftSwap[]> {
   return rows.map(toSwap);
 }
 
-interface LockedShift {
+interface PublishedShift {
   id: string;
-  userId: string | null;
-  startTime: string | null;
-  endTime: string | null;
+  scheduleId: string;
+  userId: string;
+  startTime: string;
+  endTime: string;
   labelName: string | null;
   color: string | null;
   notes: string | null;
+  /** Its published_at as text, which keeps the microseconds a Date would drop. */
+  version: string;
+  /** Removed in the builder, but not published yet. */
   deleted: boolean;
   /** The admin's working copy differs from what's published. */
   changed: boolean;
 }
 
-async function lockShift(db: Queryable, id: string): Promise<LockedShift | undefined> {
-  const { rows } = await db.query<LockedShift>(
-    `SELECT s.id, s.published_user_id AS "userId", s.published_start_time AS "startTime",
-            s.published_end_time AS "endTime", l.name AS "labelName",
-            COALESCE(l.color, t.color) AS color, s.published_notes AS notes,
+/**
+ * Published shifts by id. With `lock`, their rows are locked in the same
+ * order as publishing (start time), after their schedules.
+ */
+async function publishedShifts(
+  db: Queryable,
+  ids: string[],
+  lock = false,
+): Promise<Map<string, PublishedShift>> {
+  if (lock) {
+    const { rows } = await db.query<{ id: string }>(
+      'SELECT DISTINCT schedule_id AS id FROM shifts WHERE id = ANY($1) ORDER BY 1',
+      [ids],
+    );
+    for (const schedule of rows) await lockSchedule(db, schedule.id);
+  }
+  const { rows } = await db.query<PublishedShift>(
+    `SELECT s.id, s.schedule_id AS "scheduleId", s.published_user_id AS "userId",
+            s.published_start_time AS "startTime", s.published_end_time AS "endTime",
+            l.name AS "labelName", COALESCE(l.color, t.color) AS color,
+            s.published_notes AS notes, s.published_at::text AS version,
             (s.deleted_at IS NOT NULL) AS deleted,
-            (s.published_at IS NOT NULL AND (
-               s.user_id <> s.published_user_id OR s.start_time <> s.published_start_time
-               OR s.end_time <> s.published_end_time
-               OR s.label_id IS DISTINCT FROM s.published_label_id
-               OR s.notes IS DISTINCT FROM s.published_notes)) AS changed
+            (s.user_id <> s.published_user_id OR s.start_time <> s.published_start_time
+             OR s.end_time <> s.published_end_time
+             OR s.label_id IS DISTINCT FROM s.published_label_id
+             OR s.notes IS DISTINCT FROM s.published_notes) AS changed
        FROM shifts s
        LEFT JOIN labels l ON l.id = s.published_label_id
        LEFT JOIN users u ON u.id = s.published_user_id
        LEFT JOIN tiers t ON t.id = u.tier_id
-      WHERE s.id = $1 AND s.published_at IS NOT NULL
-      FOR UPDATE OF s`,
-    [id],
+      WHERE s.id = ANY($1) AND s.published_at IS NOT NULL
+      ORDER BY s.start_time
+      ${lock ? 'FOR UPDATE OF s' : ''}`,
+    [ids],
   );
-  return rows[0];
+  return new Map(rows.map((row) => [row.id, row]));
 }
 
-/** Someone's published shift that hasn't started, locked; "not found" otherwise. */
-async function upcomingShiftOf(db: Queryable, id: string, userId: string) {
-  const shift = await lockShift(db, id);
-  if (!shift || shift.userId !== userId || shift.deleted) throw notFound('Shift');
-  if (Date.parse(shift.startTime!) <= Date.now()) {
+/**
+ * Someone's published shift that hasn't started; "not found" otherwise. (An
+ * unpublished removal isn't given away: approving waits for it instead.)
+ */
+function upcoming(shift: PublishedShift | undefined, ownerId: string): PublishedShift {
+  if (!shift || shift.userId !== ownerId) throw notFound('Shift');
+  if (Date.parse(shift.startTime) <= Date.now()) {
     throw badRequest('That shift has already started');
   }
-  return shift as LockedShift & { startTime: string; endTime: string };
+  return shift;
 }
 
-async function assertNotInOpenSwap(db: Queryable, shiftIds: string[], exceptSwapId?: string) {
+async function assertNotInOpenSwap(db: Queryable, shiftIds: string[]) {
   const { rows } = await db.query(
     `SELECT 1 FROM shift_swaps
-      WHERE status IN ('pending', 'accepted') AND id IS DISTINCT FROM $2
+      WHERE status IN ('pending', 'accepted')
         AND (shift_id = ANY($1) OR return_shift_id = ANY($1))
       LIMIT 1`,
-    [shiftIds, exceptSwapId ?? null],
+    [shiftIds],
   );
   if (rows.length) {
     throw conflict('One of these shifts is already part of a swap', 'SWAP_EXISTS');
@@ -228,23 +279,29 @@ async function loadPeople(db: Queryable, ids: string[]): Promise<Map<string, Per
 
 /**
  * Both people can work their new shift: the coworker the offered one, and in
- * a trade the requester the coworker's (leaving out the shifts changing hands).
+ * a trade the requester the coworker's (leaving out the shifts changing
+ * hands). Team members only hear about published shifts; admins approving
+ * also count drafts, under the builder's per-person locks.
  */
 async function assertBothFree(
   db: Queryable,
   requester: Person,
   recipient: Person,
-  shift: { id: string; startTime: string; endTime: string },
-  returnShift: { id: string; startTime: string; endTime: string } | null,
+  shift: PublishedShift,
+  returnShift: PublishedShift | null,
+  opts: { admin: boolean },
 ): Promise<void> {
-  // The same per-person locks as the builder, so nobody is double-booked meanwhile.
-  for (const id of [requester.id, recipient.id].sort()) {
-    await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${id}`]);
+  if (opts.admin) {
+    for (const id of [requester.id, recipient.id].sort()) {
+      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`shifts:${id}`]);
+    }
   }
   const times = [shift, ...(returnShift ? [returnShift] : [])];
   const from = new Date(Math.min(...times.map((s) => Date.parse(s.startTime)))).toISOString();
   const to = new Date(Math.max(...times.map((s) => Date.parse(s.endTime)))).toISOString();
-  const busy = await busyBetween(db, [requester.id, recipient.id], from, to);
+  const busy = await busyBetween(db, [requester.id, recipient.id], from, to, {
+    drafts: opts.admin,
+  });
   const ignore = times.map((s) => s.id);
   const theirs = busyReason(busy, recipient.id, shift.startTime, shift.endTime, ignore);
   if (theirs) {
@@ -297,7 +354,7 @@ export async function swapOptions(
   user: AuthUser,
   shiftId: string,
 ): Promise<SwapOption[]> {
-  const shift = await upcomingShiftOf(db, shiftId, user.id);
+  const shift = upcoming((await publishedShifts(db, [shiftId])).get(shiftId), user.id);
   if (!user.tierId) return [];
   const { rows: people } = await db.query<{ id: string; name: string }>(
     `SELECT id, name FROM users
@@ -319,8 +376,7 @@ export async function swapOptions(
        JOIN users u ON u.id = s.published_user_id
        LEFT JOIN tiers t ON t.id = u.tier_id
        LEFT JOIN labels l ON l.id = s.published_label_id
-      WHERE s.published_at IS NOT NULL AND s.deleted_at IS NULL
-        AND s.published_user_id = ANY($1)
+      WHERE s.published_at IS NOT NULL AND s.published_user_id = ANY($1)
         AND s.published_start_time > $2 AND s.published_start_time < $3
         AND NOT EXISTS (SELECT 1 FROM shift_swaps w
                          WHERE w.status IN ('pending', 'accepted')
@@ -328,11 +384,13 @@ export async function swapOptions(
       ORDER BY s.published_start_time`,
     [ids, now, horizon],
   );
+  // What the team can see: published shifts and time off, never drafts.
   const busy = await busyBetween(
     db,
     [user.id, ...ids],
     now,
     new Date(Math.max(Date.parse(horizon), Date.parse(shift.endTime))).toISOString(),
+    { drafts: false },
   );
   return people.map((p) => ({
     id: p.id,
@@ -362,27 +420,39 @@ export async function requestSwap(
 ): Promise<ShiftSwap> {
   const id = await withTransaction(db, async (client) => {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('swaps'))");
-    await expireStarted(client);
-    const shift = await upcomingShiftOf(client, input.shiftId, user.id);
+    await settleOpenSwaps(client);
+    const ids = [input.shiftId, ...(input.returnShiftId ? [input.returnShiftId] : [])];
+    const shifts = await publishedShifts(client, ids);
+    const shift = upcoming(shifts.get(input.shiftId), user.id);
     const people = await loadPeople(client, [user.id, input.recipientId]);
     const requester = people.get(user.id)!;
     const recipient = people.get(input.recipientId);
     if (!recipient || recipient.id === user.id) throw notFound('Person');
     assertSameTier(requester, recipient);
     const returnShift = input.returnShiftId
-      ? await upcomingShiftOf(client, input.returnShiftId, recipient.id)
+      ? upcoming(shifts.get(input.returnShiftId), recipient.id)
       : null;
-    await assertNotInOpenSwap(client, [shift.id, ...(returnShift ? [returnShift.id] : [])]);
-    await assertBothFree(client, requester, recipient, shift, returnShift);
+    await assertNotInOpenSwap(client, ids);
+    await assertBothFree(client, requester, recipient, shift, returnShift, { admin: false });
     const { rows } = await client.query<{ id: string }>(
-      `INSERT INTO shift_swaps (shift_id, requester_id, recipient_id, return_shift_id, note)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [shift.id, user.id, recipient.id, returnShift?.id ?? null, input.note],
+      `INSERT INTO shift_swaps
+         (shift_id, requester_id, recipient_id, return_shift_id, note, shift_version, return_version)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id`,
+      [
+        shift.id,
+        user.id,
+        recipient.id,
+        returnShift?.id ?? null,
+        input.note,
+        shift.version,
+        returnShift?.version ?? null,
+      ],
     );
     const swapId = rows[0]!.id;
     await notifyPerson(client, config, recipient, {
       kind: 'swap_requested',
-      shiftIds: [shift.id, ...(returnShift ? [returnShift.id] : [])],
+      shiftIds: ids,
       render: (ctx, prefs) =>
         swapRequestedTemplate(ctx, {
           recipientName: recipient.name,
@@ -410,9 +480,8 @@ export async function requestSwap(
   return getSwap(db, id);
 }
 
-/** Lock an open swap and its people and shifts, checking who may act on it. */
+/** Lock a swap's row and load its two people. */
 async function lockSwap(db: Queryable, id: string) {
-  await expireStarted(db);
   const { rows } = await db.query<{
     id: string;
     status: SwapStatus;
@@ -420,10 +489,12 @@ async function lockSwap(db: Queryable, id: string) {
     recipientId: string;
     shiftId: string;
     returnShiftId: string | null;
-    note: string | null;
+    shiftVersion: string | null;
+    returnVersion: string | null;
   }>(
     `SELECT id, status, requester_id AS "requesterId", recipient_id AS "recipientId",
-            shift_id AS "shiftId", return_shift_id AS "returnShiftId", note
+            shift_id AS "shiftId", return_shift_id AS "returnShiftId",
+            shift_version::text AS "shiftVersion", return_version::text AS "returnVersion"
        FROM shift_swaps WHERE id = $1 FOR UPDATE`,
     [id],
   );
@@ -432,15 +503,46 @@ async function lockSwap(db: Queryable, id: string) {
   const people = await loadPeople(db, [swap.requesterId, swap.recipientId]);
   return {
     ...swap,
+    shiftIds: [swap.shiftId, ...(swap.returnShiftId ? [swap.returnShiftId] : [])],
     requester: people.get(swap.requesterId)!,
     recipient: people.get(swap.recipientId)!,
   };
 }
 
+const LAPSED: Partial<Record<SwapStatus, string>> = {
+  expired: 'This swap expired: the shift has already started',
+  changed: 'The schedule has changed since, so this swap no longer applies',
+};
+
 function assertStatus(status: SwapStatus, allowed: SwapStatus[]): void {
   if (!allowed.includes(status)) {
-    throw conflict(`This swap is already ${status}`, 'INVALID_STATUS');
+    throw conflict(LAPSED[status] ?? `This swap is already ${status}`, 'INVALID_STATUS');
   }
+}
+
+/**
+ * The swap's shifts as published now, provided they're still the versions it's
+ * about, with the same owners, and haven't started. (Settling marks the others
+ * lapsed, but may have left this one to a request that was busy with it.)
+ */
+function stillCurrent(
+  swap: Awaited<ReturnType<typeof lockSwap>>,
+  shifts: Map<string, PublishedShift>,
+): { shift: PublishedShift; returnShift: PublishedShift | null } {
+  const current = (id: string, ownerId: string, version: string | null) => {
+    const s = shifts.get(id);
+    if (!s || s.userId !== ownerId || (version !== null && s.version !== version)) {
+      throw conflict(LAPSED.changed!, 'SWAP_STALE');
+    }
+    if (Date.parse(s.startTime) <= Date.now()) throw conflict(LAPSED.expired!, 'SWAP_STALE');
+    return s;
+  };
+  return {
+    shift: current(swap.shiftId, swap.requesterId, swap.shiftVersion),
+    returnShift: swap.returnShiftId
+      ? current(swap.returnShiftId, swap.recipientId, swap.returnVersion)
+      : null,
+  };
 }
 
 /** The coworker says yes (admins are asked to approve) or no. */
@@ -453,16 +555,15 @@ export async function respondToSwap(
 ): Promise<ShiftSwap> {
   await withTransaction(db, async (client) => {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('swaps'))");
+    await settleOpenSwaps(client);
     const swap = await lockSwap(client, swapId);
     if (swap.recipientId !== user.id) throw notFound('Swap');
     assertStatus(swap.status, ['pending']);
-    const shift = await upcomingShiftOf(client, swap.shiftId, swap.requesterId);
-    const returnShift = swap.returnShiftId
-      ? await upcomingShiftOf(client, swap.returnShiftId, swap.recipientId)
-      : null;
-    const shiftIds = [shift.id, ...(returnShift ? [returnShift.id] : [])];
+    const { shift, returnShift } = stillCurrent(swap, await publishedShifts(client, swap.shiftIds));
     if (answer === 'accept') {
-      await assertBothFree(client, swap.requester, swap.recipient, shift, returnShift);
+      await assertBothFree(client, swap.requester, swap.recipient, shift, returnShift, {
+        admin: false,
+      });
     }
     await client.query('UPDATE shift_swaps SET status = $2, responded_at = now() WHERE id = $1', [
       swapId,
@@ -473,7 +574,7 @@ export async function respondToSwap(
         topic: 'swaps',
         exceptUserId: user.id,
         kind: 'swap_accepted',
-        shiftIds,
+        shiftIds: swap.shiftIds,
         render: (ctx, admin) =>
           swapAcceptedTemplate(ctx, {
             recipientName: admin.name,
@@ -488,7 +589,7 @@ export async function respondToSwap(
     } else {
       await notifyPerson(client, config, swap.requester, {
         kind: 'swap_declined',
-        shiftIds: shiftIds,
+        shiftIds: swap.shiftIds,
         render: (ctx, prefs) =>
           swapDeclinedTemplate(ctx, {
             recipientName: swap.requester.name,
@@ -519,6 +620,7 @@ export async function cancelSwap(
 ): Promise<ShiftSwap> {
   await withTransaction(db, async (client) => {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('swaps'))");
+    await settleOpenSwaps(client);
     const swap = await lockSwap(client, swapId);
     if (swap.requesterId !== user.id) throw notFound('Swap');
     assertStatus(swap.status, ['pending', 'accepted']);
@@ -554,7 +656,8 @@ export async function cancelSwap(
 /**
  * An admin approves (the shifts change hands in the published schedule right
  * away, already confirmed) or declines. Approving needs the coworker to have
- * accepted, both people to be free, and no unpublished edits to the shifts.
+ * accepted, the shifts to be as they were then, both people to be free, and
+ * no unpublished edits to the shifts.
  */
 export async function reviewSwap(
   db: Db,
@@ -566,36 +669,29 @@ export async function reviewSwap(
 ): Promise<ShiftSwap> {
   await withTransaction(db, async (client) => {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('swaps'))");
+    const { rows: about } = await client.query<{ shiftId: string; returnShiftId: string | null }>(
+      'SELECT shift_id AS "shiftId", return_shift_id AS "returnShiftId" FROM shift_swaps WHERE id = $1',
+      [swapId],
+    );
+    if (!about[0]) throw notFound('Swap');
+    const ids = [about[0].shiftId, ...(about[0].returnShiftId ? [about[0].returnShiftId] : [])];
+    // Locks in the builder's order: schedules, shifts, then the swap, then people.
+    const shifts = await publishedShifts(client, ids, decision === 'approved');
+    await settleOpenSwaps(client);
     const swap = await lockSwap(client, swapId);
     assertStatus(swap.status, decision === 'approved' ? ['accepted'] : ['pending', 'accepted']);
     const { requester, recipient } = swap;
-    // The shifts may have changed hands or times since; check again.
-    const shift = await lockShift(client, swap.shiftId);
-    const returnShift = swap.returnShiftId ? await lockShift(client, swap.returnShiftId) : null;
     if (decision === 'approved') {
-      for (const [s, owner] of [
-        [shift, requester],
-        [returnShift, recipient],
-      ] as const) {
-        if (s === null) continue;
-        if (!s || s.deleted || s.userId !== owner.id) {
-          throw conflict(
-            "One of the shifts has changed hands or been removed since, so this swap can't go ahead",
-            'SWAP_STALE',
-          );
-        }
-        if (s.changed) {
-          throw conflict(
-            'One of the shifts has unpublished changes. Publish or discard them first.',
-            'SWAP_UNPUBLISHED',
-          );
-        }
+      const { shift, returnShift } = stillCurrent(swap, shifts);
+      if ([shift, returnShift].some((s) => s && (s.deleted || s.changed))) {
+        throw conflict(
+          'One of the shifts has unpublished changes. Publish or discard them first.',
+          'SWAP_UNPUBLISHED',
+        );
       }
       assertSameTier(requester, recipient);
       if (!requester.active) throw badRequest(`${requester.name} is deactivated`);
-      const a = shift as LockedShift & { startTime: string; endTime: string };
-      const b = returnShift as (LockedShift & { startTime: string; endTime: string }) | null;
-      await assertBothFree(client, requester, recipient, a, b);
+      await assertBothFree(client, requester, recipient, shift, returnShift, { admin: true });
       const move = (id: string, to: string) =>
         client.query(
           `UPDATE shifts
@@ -604,8 +700,8 @@ export async function reviewSwap(
             WHERE id = $1`,
           [id, to],
         );
-      await move(a.id, recipient.id);
-      if (b) await move(b.id, requester.id);
+      await move(shift.id, recipient.id);
+      if (returnShift) await move(returnShift.id, requester.id);
     }
     await client.query(
       `UPDATE shift_swaps SET status = $2, reviewed_by = $3, reviewed_at = now(), review_note = $4
@@ -613,7 +709,6 @@ export async function reviewSwap(
       [swapId, decision, admin.id, note],
     );
     const view = await getSwap(client, swapId);
-    const shifts = [view.shift, ...(view.returnShift ? [view.returnShift] : [])];
     for (const [person, role, other] of [
       [requester, 'requester', recipient],
       [recipient, 'recipient', requester],
@@ -621,7 +716,7 @@ export async function reviewSwap(
       if (person.id === admin.id) continue;
       await notifyPerson(client, config, person, {
         kind: 'swap_reviewed',
-        shiftIds: shifts.map((s) => s.id),
+        shiftIds: swap.shiftIds,
         render: (ctx, prefs) =>
           swapReviewedTemplate(ctx, {
             recipientName: person.name,

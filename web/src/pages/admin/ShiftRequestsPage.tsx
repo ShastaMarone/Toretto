@@ -126,7 +126,11 @@ function SwapsList() {
       void queryClient.invalidateQueries({ queryKey: keys.swaps });
       refreshSchedules(queryClient);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => {
+      toast.error(e.message);
+      // It may have lapsed or moved on meanwhile: show how it stands now.
+      void queryClient.invalidateQueries({ queryKey: keys.swaps });
+    },
   });
 
   if (swaps.isPending) return <LoadingBlock />;
@@ -239,7 +243,10 @@ function OpenShiftsList({ onPost }: { onPost: () => void }) {
       void queryClient.invalidateQueries({ queryKey: keys.openShifts });
       refreshSchedules(queryClient);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => {
+      toast.error(e.message);
+      void queryClient.invalidateQueries({ queryKey: keys.openShifts });
+    },
   });
 
   if (openShifts.isPending) return <LoadingBlock />;
