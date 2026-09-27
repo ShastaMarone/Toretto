@@ -227,7 +227,7 @@ export default function MySchedulePage() {
         </Card>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
             <h2 className="text-base font-semibold text-slate-900">
@@ -280,7 +280,7 @@ export default function MySchedulePage() {
           </p>
         </Card>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <SwapsCard tz={tz} />
           <OpenShiftsCard tz={tz} />
           <Card>
