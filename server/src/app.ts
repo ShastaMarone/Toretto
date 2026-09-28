@@ -72,6 +72,8 @@ export function createApp(deps: AppDeps): express.Express {
       allowedDomains: settings.allowedDomains,
       devMailbox: config.devMailbox,
       emailConfigured: config.email.transport !== 'console',
+      signIn: 'password',
+      calendarFeed: true,
     };
     res.json(body);
   });

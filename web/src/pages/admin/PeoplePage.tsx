@@ -415,6 +415,7 @@ function InviteDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const { signIn } = useBootstrapData();
   const [mode, setMode] = useState<'one' | 'many'>('one');
   const [form, setForm] = useState({
     name: '',
@@ -457,7 +458,11 @@ function InviteDialog({
   return (
     <Modal
       title="Invite people"
-      description="They'll get an email to set a password. Their address is confirmed when they accept."
+      description={
+        signIn === 'google'
+          ? "They'll get an email with a link to the schedule, and sign in with their Google account."
+          : "They'll get an email to set a password. Their address is confirmed when they accept."
+      }
       onClose={onClose}
       onSubmit={() => invite.mutate()}
       size="lg"

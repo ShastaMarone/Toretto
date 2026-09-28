@@ -4,3 +4,5 @@ playwright-report
 test-results
 package-lock.json
 .vercel
+apps-script/build
+apps-script/.client-build

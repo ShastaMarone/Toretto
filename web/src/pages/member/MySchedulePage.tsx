@@ -94,7 +94,7 @@ function useConfirmShifts() {
 }
 
 export default function MySchedulePage() {
-  const { org } = useBootstrapData();
+  const { org, calendarFeed } = useBootstrapData();
   const me = useCurrentUser();
   const tz = useViewerZone();
   const timeFormat = useTimeFormat();
@@ -154,12 +154,14 @@ export default function MySchedulePage() {
         description={`Times shown in ${zoneLabel(tz)}`}
         actions={
           <>
-            <Button
-              icon={<CalendarPlus className="size-4" />}
-              onClick={() => setAddingCalendar(true)}
-            >
-              Add to calendar
-            </Button>
+            {calendarFeed && (
+              <Button
+                icon={<CalendarPlus className="size-4" />}
+                onClick={() => setAddingCalendar(true)}
+              >
+                Add to calendar
+              </Button>
+            )}
             <Button
               variant="primary"
               icon={<Plane className="size-4" />}

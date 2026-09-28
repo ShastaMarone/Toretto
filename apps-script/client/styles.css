@@ -1,0 +1,4 @@
+/* The web app's styles. This build's root is apps-script/client, so point
+   Tailwind at the screens' source to find the classes they use. */
+@import '../../web/src/styles.css';
+@source '../../web/src';

@@ -96,7 +96,7 @@ function useSwapsToApprove(): number {
 
 function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   const user = useCurrentUser();
-  const { org } = useBootstrapData();
+  const { org, signIn } = useBootstrapData();
   const setSessionUser = useSetSessionUser();
   const navigate = useNavigate();
   const isAdmin = user.role === 'admin';
@@ -153,13 +153,15 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
           </div>
           <UserRound className="size-4 text-slate-400" aria-hidden />
         </NavLink>
-        <button
-          type="button"
-          onClick={() => void signOut()}
-          className="mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100/80 hover:text-slate-900"
-        >
-          <LogOut className="size-[18px] text-slate-400" /> Sign out
-        </button>
+        {signIn === 'password' && (
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            className="mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100/80 hover:text-slate-900"
+          >
+            <LogOut className="size-[18px] text-slate-400" /> Sign out
+          </button>
+        )}
       </div>
     </div>
   );

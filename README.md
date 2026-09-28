@@ -153,6 +153,10 @@ You need PostgreSQL, plus either one long-running Node.js process (Docker,
 Render, Railway, Fly.io, any server) or Vercel. Database migrations run
 automatically on start.
 
+Or skip both: **[the Google Apps Script version](apps-script/README.md)** runs
+the same app on Google, with a Google Sheet for the data, Gmail for the emails
+and Google sign-in. You copy three files into Apps Script.
+
 ### Docker, Render, Railway, Fly.io
 
 The server is one process that serves both the API and the web app.
@@ -369,7 +373,7 @@ Calendar** to work:
 Other choices worth knowing:
 
 - Time off is requested by the member and **approved by an admin**.
-- Time off is **whole days only**.
+- Time off is **whole days or part of a day** (from and to times).
 - Team members **can't decline** a shift in the app. They confirm, or talk to
   their admin.
 
@@ -381,6 +385,9 @@ npm test             # unit + API integration tests (needs Postgres; see below)
 npm run test:e2e     # builds, then drives the whole flow in Chromium (Playwright;
                      # first time: npx playwright install chromium)
 npm run test:e2e:vercel   # the same, against the Vercel build output
+npm run build:apps-script     # the Google Apps Script files (apps-script/build)
+npm run preview:apps-script   # try them locally (http://localhost:4400)
+npm run test:e2e:apps-script  # browser test of the Apps Script version
 npm run lint         # ESLint
 npm run typecheck    # TypeScript (web + server)
 npm run format       # Prettier
@@ -415,6 +422,7 @@ web/src/
   pages/           admin/, member/, auth/ screens
   components/      schedule grid pieces, dialogs, UI kit
 e2e/               Playwright end-to-end test
+apps-script/       the Google Apps Script version (see apps-script/README.md)
 ```
 
 ## Ideas for later

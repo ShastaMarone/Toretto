@@ -195,6 +195,7 @@ function Builder({
   const timeFormat = useTimeFormat();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
   const tiers = useTiers();
   const teams = useTeams();
   const rules = overtimeRules(useSettings().data);
@@ -504,7 +505,7 @@ function Builder({
           <ScheduleSwitcher
             current={schedule}
             schedules={schedules}
-            onSelect={(sid) => navigate(`/admin/schedules/${sid}${window.location.search}`)}
+            onSelect={(sid) => navigate(`/admin/schedules/${sid}${location.search}`)}
             onCreate={() => setNaming('create')}
             onRename={() => setNaming('rename')}
             onDelete={() => setDeleting(true)}

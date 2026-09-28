@@ -23,6 +23,7 @@ import {
 } from '../../components/ui/Misc';
 import { PALETTE } from '../../lib/colors';
 import { fieldErrors, formMessage } from '../../lib/forms';
+import { useBootstrapData } from '../../lib/session';
 
 export default function SettingsPage() {
   const settings = useSettings();
@@ -43,6 +44,7 @@ export default function SettingsPage() {
 
 function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
   const queryClient = useQueryClient();
+  const { signIn } = useBootstrapData();
   const [form, setForm] = useState({ ...settings, domains: settings.allowedDomains.join(', ') });
   const save = useMutation({
     mutationFn: () =>
@@ -215,8 +217,16 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
           <Toggle
             checked={form.selfSignup}
             onChange={(selfSignup) => setForm({ ...form, selfSignup })}
-            label="Let people create their own account"
-            description="They confirm their email, then start without a tier until you assign one. Otherwise, people join by invite only."
+            label={
+              signIn === 'google'
+                ? 'Let people join by opening the app'
+                : 'Let people create their own account'
+            }
+            description={
+              signIn === 'google'
+                ? 'Anyone who opens it with an allowed Google account joins as a team member, without a tier until you assign one. Otherwise, people join by invite only.'
+                : 'They confirm their email, then start without a tier until you assign one. Otherwise, people join by invite only.'
+            }
           />
           {form.selfSignup && (
             <Field

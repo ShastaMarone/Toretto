@@ -1,0 +1,9 @@
+{
+  // The Google Apps Script server code and its tests. The page it serves is the
+  // web app (tsconfig.json), built with apps-script/client swapped in.
+  "extends": "../tsconfig.node.json",
+  "compilerOptions": {
+    "types": ["google-apps-script", "node"]
+  },
+  "include": ["src", "test", "*.ts", "*.mjs"]
+}

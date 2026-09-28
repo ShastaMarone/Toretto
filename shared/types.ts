@@ -68,6 +68,15 @@ export interface Bootstrap {
   devMailbox: boolean;
   /** An email provider is configured (otherwise emails only go to the server log). */
   emailConfigured: boolean;
+  /**
+   * How people sign in: email and password (the web server), or their Google
+   * account (the Google Apps Script version, which has no passwords or sign-out).
+   */
+  signIn: 'password' | 'google';
+  /** Calendar feed links are available (Profile, My Schedule). */
+  calendarFeed: boolean;
+  /** Google sign-in: the account in use, when it isn't on the People list. */
+  signedInAs?: string | null;
 }
 
 export interface OrgSettings {
