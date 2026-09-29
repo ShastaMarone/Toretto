@@ -177,6 +177,106 @@ export interface SentEmail {
   name?: string;
 }
 
+/** An event in the emulated Google Calendar. */
+export interface FakeEvent {
+  id: string;
+  title: string;
+  description: string;
+  guests: string[];
+  sendInvites: boolean;
+  allDay: boolean;
+  /** Timed: ISO instants. All day: local dates, the end one exclusive. */
+  start: string;
+  end: string;
+}
+
+const localDay = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** A Google Calendar with CalendarApp's methods (the ones the app uses). */
+export class FakeCalendar {
+  readonly events = new Map<string, FakeEvent>();
+  private seq = 0;
+
+  constructor(
+    private readonly emulator: Emulator,
+    readonly id: string,
+    readonly name: string,
+    readonly summary: string,
+  ) {}
+
+  getId(): string {
+    return this.id;
+  }
+
+  private add(
+    title: string,
+    when: Pick<FakeEvent, 'allDay' | 'start' | 'end'>,
+    options: { description?: string; guests?: string; sendInvites?: boolean } = {},
+  ) {
+    this.emulator.calendarCalls++;
+    const guests = (options.guests ?? '').split(',').filter(Boolean);
+    const failing = guests.find((g) => this.emulator.calendarFailFor.has(g));
+    if (failing) throw new Error(`Invalid guest: ${failing}`);
+    const id = `${this.id.split('@')[0]}-${++this.seq}@google.com`;
+    this.events.set(id, {
+      id,
+      title,
+      description: options.description ?? '',
+      guests,
+      sendInvites: options.sendInvites ?? true,
+      ...when,
+    });
+    return this.event(id)!;
+  }
+
+  createEvent(title: string, start: Date, end: Date, options?: Record<string, unknown>) {
+    return this.add(
+      title,
+      { allDay: false, start: start.toISOString(), end: end.toISOString() },
+      options,
+    );
+  }
+
+  createAllDayEvent(title: string, start: Date, end: Date, options?: Record<string, unknown>) {
+    return this.add(title, { allDay: true, start: localDay(start), end: localDay(end) }, options);
+  }
+
+  getEventById(id: string) {
+    this.emulator.calendarCalls++;
+    return this.event(id);
+  }
+
+  private event(id: string) {
+    const calls = () => this.emulator.calendarCalls++;
+    const e = this.events.get(id);
+    if (!e) return null;
+    return {
+      getId: () => e.id,
+      setTime: (start: Date, end: Date) => {
+        calls();
+        Object.assign(e, { allDay: false, start: start.toISOString(), end: end.toISOString() });
+      },
+      setAllDayDates: (start: Date, end: Date) => {
+        calls();
+        Object.assign(e, { allDay: true, start: localDay(start), end: localDay(end) });
+      },
+      setTitle: (title: string) => {
+        calls();
+        e.title = title;
+      },
+      setDescription: (description: string) => {
+        calls();
+        e.description = description;
+      },
+      deleteEvent: () => {
+        calls();
+        this.events.delete(id);
+      },
+    };
+  }
+}
+
 /** Everything a test can see and steer. */
 export interface Emulator {
   book: FakeSpreadsheet;
@@ -196,6 +296,14 @@ export interface Emulator {
   kicks: number;
   /** The project's HTML files (index: a stand-in page unless set). */
   files: Map<string, string>;
+  /** The owner's Google Calendars, by id. */
+  calendars: Map<string, FakeCalendar>;
+  /** Make adding a guest with these addresses fail. */
+  calendarFailFor: Set<string>;
+  /** Make every CalendarApp call fail with this message (e.g. no permission). */
+  calendarDown: string | null;
+  /** Calls to Google Calendar so far. */
+  calendarCalls: number;
 }
 
 let active: Emulator | null = null;
@@ -221,7 +329,16 @@ export function createEmulator(): Emulator {
     files: new Map([
       ['index', '<html><body><div id="root"></div><!--TORETTO_BOOT--></body></html>'],
     ]),
+    calendars: new Map(),
+    calendarFailFor: new Set(),
+    calendarDown: null,
+    calendarCalls: 0,
   };
+}
+
+/** Every event in the owner's calendars. */
+export function calendarEvents(emulator: Emulator): FakeEvent[] {
+  return [...emulator.calendars.values()].flatMap((c) => [...c.events.values()]);
 }
 
 /** Make the Apps Script services act on this project (tests can have several). */
@@ -273,6 +390,9 @@ export function installAppsScript(target: Record<string, unknown> = globalThis a
         setProperty: (key: string, value: string) => {
           env().properties.set(key, value);
         },
+        deleteProperty: (key: string) => {
+          env().properties.delete(key);
+        },
       }),
     },
     LockService: {
@@ -317,7 +437,26 @@ export function installAppsScript(target: Record<string, unknown> = globalThis a
         e.sent.push(message);
       },
     },
-    Utilities: { getUuid: () => randomUUID() },
+    Utilities: { getUuid: () => randomUUID(), sleep: () => undefined },
+    CalendarApp: {
+      createCalendar: (name: string, options: { summary?: string } = {}) => {
+        const e = env();
+        if (e.calendarDown) throw new Error(e.calendarDown);
+        const calendar = new FakeCalendar(
+          e,
+          `cal${e.calendars.size + 1}@group.calendar.google.com`,
+          name,
+          options.summary ?? '',
+        );
+        e.calendars.set(calendar.id, calendar);
+        return calendar;
+      },
+      getCalendarById: (id: string) => {
+        const e = env();
+        if (e.calendarDown) throw new Error(e.calendarDown);
+        return e.calendars.get(id) ?? null;
+      },
+    },
     HtmlService: {
       createHtmlOutputFromFile: (name: string) => {
         const html = env().files.get(name);

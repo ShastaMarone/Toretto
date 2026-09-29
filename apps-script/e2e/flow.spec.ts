@@ -94,3 +94,27 @@ test('Back goes to the previous screen', async ({ browser }) => {
   await admin.goBack();
   await expect(admin.getByRole('heading', { name: 'People' })).toBeVisible();
 });
+
+test('a team member puts their confirmed shifts in Google Calendar', async ({
+  browser,
+  request,
+}) => {
+  const sam = await open(browser, 'sam@example.com', '/my-schedule');
+  await sam.getByRole('button', { name: 'Add to Google Calendar' }).click();
+  await sam.getByRole('dialog').getByRole('button', { name: 'Turn on' }).click();
+  await expect(
+    sam.getByText('Your confirmed shifts will show up in Google Calendar'),
+  ).toBeVisible();
+  await expect(sam.getByRole('button', { name: 'Google Calendar', exact: true })).toBeVisible();
+
+  const onCalendar = async () =>
+    ((await (await request.get('/calendar.json')).json()) as { guests: string[] }[]).filter((e) =>
+      e.guests.includes('sam@example.com'),
+    ).length;
+  expect(await onCalendar()).toBe(0); // nothing confirmed yet
+  await sam.getByRole('button', { name: /^Confirm all/ }).click();
+  await expect.poll(onCalendar).toBeGreaterThan(0);
+
+  await sam.goto('/profile?as=sam@example.com');
+  await expect(sam.getByRole('switch', { name: 'Add my shifts to Google Calendar' })).toBeChecked();
+});

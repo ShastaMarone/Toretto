@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
 import { CalendarFeedPanel } from '../../components/CalendarFeed';
+import { CalendarSyncToggle } from '../../components/GoogleCalendarSync';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { TimezoneSelect } from '../../components/TimezoneSelect';
 import { Button } from '../../components/ui/Button';
@@ -15,7 +16,7 @@ import { zoneLabel } from '../../lib/timezones';
 
 export default function ProfilePage() {
   const user = useCurrentUser();
-  const { org, signIn, calendarFeed } = useBootstrapData();
+  const { org, signIn, calendarFeed, calendarSync } = useBootstrapData();
   const setSessionUser = useSetSessionUser();
   const [name, setName] = useState(user.name);
   const [timezone, setTimezone] = useState(user.timezone ?? '');
@@ -135,6 +136,18 @@ export default function ProfilePage() {
             />
             <div className="p-5">
               <CalendarFeedPanel />
+            </div>
+          </Card>
+        )}
+
+        {calendarSync && (
+          <Card>
+            <CardHeader
+              title="Google Calendar"
+              description="Your shifts and time off, in your own calendar."
+            />
+            <div className="p-5">
+              <CalendarSyncToggle />
             </div>
           </Card>
         )}

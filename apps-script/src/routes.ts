@@ -92,6 +92,7 @@ export function createRouter(): Router {
           notifyTimeOff: z.boolean().optional(),
           notifyConfirmations: z.boolean().optional(),
           notifySwaps: z.boolean().optional(),
+          calendarSync: z.boolean().optional(),
         }),
         req.body,
       ),

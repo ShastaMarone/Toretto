@@ -7,11 +7,12 @@ import { Db, ensureSchema, SPREADSHEET_ID } from './db/store';
 import { APP_URL, appUrl } from './env';
 import { errorResponse, splitUrl, type ApiResponse } from './http';
 import { createRouter } from './routes';
+import { calendarsInUse, syncCalendars } from './services/calendar';
 import { runHourlyJobs, sendQueuedEmails as sendEmails } from './services/jobs';
 import { nameFromEmail } from './services/people';
 
 /** Bump when a new version adds tabs or columns: the next change adds them to the Sheet. */
-export const SCHEMA_VERSION = '1';
+export const SCHEMA_VERSION = '2';
 
 /**
  * Which build this is. build.mjs stamps the same version into Code.gs and
@@ -36,7 +37,7 @@ const writes = (method: string, url: string) =>
   method !== 'GET' || splitUrl(url).path === '/bootstrap';
 
 interface Result extends ApiResponse {
-  /** Emails were queued: the page asks for them to be sent now. */
+  /** Emails were queued, or calendars may need changes: the page asks for that to happen now. */
   queued?: number;
 }
 
@@ -55,8 +56,10 @@ function run(method: string, url: string, body: unknown): Result {
     const ctx = context(db);
     const res = router.handle(method, url, body, ctx);
     // A failed request saves nothing (like a rolled-back transaction).
-    if (write && res.status < 400) db.commit();
-    return { ...res, queued: write && res.status < 400 ? ctx.queued : 0 };
+    const saved = write && res.status < 400;
+    if (saved) db.commit();
+    const calendars = saved && method !== 'GET' && calendarsInUse(db) ? 1 : 0;
+    return { ...res, queued: saved ? ctx.queued + calendars : 0 };
   } catch (err) {
     return errorResponse(err);
   } finally {
@@ -258,7 +261,16 @@ function checkTimeZones(): string {
 
 export { runHourlyJobs };
 
-/** Send queued emails now (the page calls this after a change; the timer also does). */
+/**
+ * Send queued emails and bring Google Calendars up to date (the page calls
+ * this after a change; the 5-minute timer also does).
+ */
 export function sendQueuedEmails(): number {
-  return sendEmails();
+  const sent = sendEmails();
+  try {
+    syncCalendars();
+  } catch (err) {
+    console.error(`Google Calendar: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return sent;
 }

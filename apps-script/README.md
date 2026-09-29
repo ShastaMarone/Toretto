@@ -6,6 +6,8 @@ on Google instead of a server and database:
 - a **Google Sheet** holds the data (one tab per kind of thing: people, shifts, time off, …)
 - **Gmail** sends the emails, from the Google account that sets it up
 - people **sign in with their Google account**, so there are no passwords
+- anyone can have their shifts added to their **Google Calendar** (see
+  [Google Calendar](#google-calendar))
 
 Admins and team members work exactly as in the other version. Only people an
 admin adds on the **People** page can open the schedule, and only admins can
@@ -78,9 +80,29 @@ certain email domains).
    don't, the app shows a "needs a quick fix" page instead of the schedule.
    The version is on the first line of `Code.gs`.
 2. Save, and run `setup` again. It adds anything the new version needs to the
-   Sheet.
+   Sheet. If Google asks for permission again, allow it: a new version can
+   need more (Google Calendar, for example).
 3. Click **Deploy → Manage deployments**, click the pencil, set **Version** to
    **New version**, and click **Deploy**. The link stays the same.
+
+## Google Calendar
+
+Each person can turn it on themselves: **Add to Google Calendar** on My
+Schedule, or in their profile.
+
+- Once they confirm a shift, it's added to their Google Calendar, usually
+  within a few minutes. Their approved time off is added too.
+- If an admin changes a shift and publishes, the event moves with it (and says
+  to confirm the new time in the app). If the shift is cancelled or given to
+  someone else, it comes off their calendar.
+- Turning it off takes their upcoming shifts off their calendar. Past ones stay.
+
+The events are invitations from a calendar the app makes in your Google
+account, named after your organization ("… shifts"). It holds everyone's
+events, so you may want to hide it: untick it in your calendar list. Don't
+edit or delete the events in it: change the schedule in the app. If the
+calendar itself gets deleted, the app makes a new one within the hour and
+adds everything again.
 
 ## If something's not working
 
@@ -97,6 +119,11 @@ certain email domains).
 - **Errors for someone signed in to several Google accounts**: Apps Script
   can mix up the accounts. Open the link in a window that's only signed in to
   the work account (a separate Chrome profile, or an incognito window).
+- **Shifts don't show up in someone's Google Calendar**: they're added once
+  confirmed, so check they confirmed them. In Google Calendar, **Settings →
+  Event settings → Add invitations to my calendar** shouldn't be set to only
+  invitations they've responded to. If **Executions** shows "Google Calendar"
+  errors about permission, run `setup` again and allow Google Calendar.
 - **Executions** (the list icon on the left of the Apps Script editor) lists
   every run with its log, including errors.
 - The **Test deployments** link (it ends in `/dev`) only works for people who
@@ -122,13 +149,17 @@ certain email domains).
 - **Speed**: each change takes a second or two, since the data lives in a
   Sheet. That's fine for a team's schedule. For hundreds of people, the
   Vercel version is quicker.
-- **Not in this version**: the Google Calendar feed ("Add to calendar"),
+- **Not in this version**: calendar links for other calendar apps, like
+  Outlook or Apple Calendar (Google Calendar gets invitations instead),
   passwords and email sign-in links (Google handles sign-in), and the Sign out
   button.
 - **If you move on**: the app and its timed jobs run as the person who
   deployed them. Someone else who can edit the Sheet should open
   **Extensions → Apps Script**, run `setup`, and make a new deployment as
-  themselves. Then the team needs the new link.
+  themselves. Then the team needs the new link. Google Calendar invitations
+  start coming from a new calendar in their account, with everything upcoming
+  added again. Deleting the old "… shifts" calendar from your Google Calendar
+  removes the old copies.
 
 ## Try it on your computer
 

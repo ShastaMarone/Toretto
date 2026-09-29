@@ -74,6 +74,7 @@ export function createApp(deps: AppDeps): express.Express {
       emailConfigured: config.email.transport !== 'console',
       signIn: 'password',
       calendarFeed: true,
+      calendarSync: false,
     };
     res.json(body);
   });

@@ -5,12 +5,13 @@
 //   npm run build:apps-script && npm run preview:apps-script
 //   → http://localhost:4400 (add ?as=priya@example.com to be someone else)
 //   → http://localhost:4400/mail for the emails it would have sent (/mail.json for tests)
+//   → http://localhost:4400/calendar.json for what it put in Google Calendars
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { addDays, shiftTimesFromLocal, startOfWeek, todayIn } from '@shared/time';
-import { activate, createEmulator, installAppsScript } from './test/emulator';
+import { activate, calendarEvents, createEmulator, installAppsScript } from './test/emulator';
 
 const PORT = Number(process.env.PORT ?? 4400);
 const TZ = 'America/Toronto';
@@ -124,6 +125,11 @@ createServer((req, res) => {
         res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
       }
     });
+    return;
+  }
+  if (url.pathname === '/calendar.json') {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(calendarEvents(env)));
     return;
   }
   if (url.pathname === '/mail.json') {

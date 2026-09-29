@@ -2,6 +2,7 @@ import type { OrgSettings, PersonRow, ShiftView, TimeOffEntry } from '@shared/ty
 import type { AuthUser } from '../../server/src/auth/types';
 import {
   AUDIT,
+  CALENDAR_EVENTS,
   LABELS,
   NOTIFICATIONS,
   OPEN_SHIFTS,
@@ -51,6 +52,7 @@ export const tables = (db: Db) => ({
   openShifts: db.table(OPEN_SHIFTS),
   audit: db.table(AUDIT),
   notifications: db.table(NOTIFICATIONS),
+  calendarEvents: db.table(CALENDAR_EVENTS),
 });
 
 export const ORG_ID = 'org';
@@ -101,6 +103,7 @@ export function authUser(u: UserRow): AuthUser {
     notifyTimeOff: u.notifyTimeOff,
     notifyConfirmations: u.notifyConfirmations,
     notifySwaps: u.notifySwaps,
+    calendarSync: u.calendarSync,
   };
 }
 

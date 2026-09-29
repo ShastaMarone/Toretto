@@ -67,6 +67,7 @@ export function bootstrap(ctx: Ctx): Bootstrap {
     emailConfigured: true,
     signIn: 'google',
     calendarFeed: false,
+    calendarSync: true,
     signedInAs: user ? null : ctx.email || null,
   };
 }
@@ -289,6 +290,7 @@ export function updateMe(
     notifyTimeOff?: boolean;
     notifyConfirmations?: boolean;
     notifySwaps?: boolean;
+    calendarSync?: boolean;
   },
 ): { user: SessionUser } {
   const t = tables(ctx.db);
@@ -299,6 +301,10 @@ export function updateMe(
   if (body.notifyTimeOff !== undefined) patch.notifyTimeOff = body.notifyTimeOff;
   if (body.notifyConfirmations !== undefined) patch.notifyConfirmations = body.notifyConfirmations;
   if (body.notifySwaps !== undefined) patch.notifySwaps = body.notifySwaps;
+  if (body.calendarSync !== undefined && body.calendarSync !== ctx.user!.calendarSync) {
+    patch.calendarSync = body.calendarSync;
+    ctx.queued++; // add (or remove) their events right away
+  }
   const row = t.users.update(ctx.user!.id, patch);
   return { user: authUser(row) };
 }

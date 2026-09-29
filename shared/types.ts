@@ -42,6 +42,8 @@ export interface SessionUser {
   notifyConfirmations: boolean;
   /** Admins: email me about shift swaps and open shifts to approve. */
   notifySwaps: boolean;
+  /** Google Apps Script version: my confirmed shifts go in my Google Calendar. */
+  calendarSync?: boolean;
 }
 
 /** Someone's calendar feed link, or null while it's turned off. */
@@ -75,6 +77,11 @@ export interface Bootstrap {
   signIn: 'password' | 'google';
   /** Calendar feed links are available (Profile, My Schedule). */
   calendarFeed: boolean;
+  /**
+   * People can have their confirmed shifts added to their Google Calendar
+   * (the Google Apps Script version).
+   */
+  calendarSync: boolean;
   /** Google sign-in: the account in use, when it isn't on the People list. */
   signedInAs?: string | null;
 }

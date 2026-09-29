@@ -4,6 +4,7 @@ import { getSettings, iso, ms, tables, timeFormatFor, zoneFor, type Ctx } from '
 import { TABLES } from '../db/schema';
 import { Db } from '../db/store';
 import { appUrl } from '../env';
+import { checkAppCalendar, forgetOldCalendarEvents, syncCalendars } from './calendar';
 import { emailContext, enqueueEmail } from './mail';
 import { settleOpenShifts } from './openShifts';
 import { settleSwaps } from './swaps';
@@ -206,10 +207,17 @@ export function runHourlyJobs(): void {
     settleOpenShifts(ctx);
     queueReminders(ctx);
     deleteOldEmails(ctx);
+    forgetOldCalendarEvents(db);
+    checkAppCalendar(db);
     db.commit();
     compactTables(new Db());
   } finally {
     lock.releaseLock();
   }
   sendQueuedEmails();
+  try {
+    syncCalendars();
+  } catch (err) {
+    console.error(`Google Calendar: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }

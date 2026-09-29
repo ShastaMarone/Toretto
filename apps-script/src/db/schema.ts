@@ -63,6 +63,8 @@ export interface UserRow {
   notifyTimeOff: boolean;
   notifyConfirmations: boolean;
   notifySwaps: boolean;
+  /** Put my confirmed shifts and approved time off in my Google Calendar. */
+  calendarSync: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -156,6 +158,31 @@ export interface NotificationRow {
   lockedAt: string | null;
   sentAt: string | null;
   createdAt: string;
+}
+
+/**
+ * One event in someone's Google Calendar: an invitation from the app's
+ * calendar for a shift or approved time off (see services/calendar.ts).
+ */
+export interface CalendarEventRow {
+  id: string;
+  /** What it's for: shift:<id> or time-off:<id>. */
+  key: string;
+  /** Whose calendar it's on (the guest), and the address it was sent to. */
+  userId: string;
+  email: string;
+  /** Google Calendar's id for the event; null until it has been created. */
+  eventId: string | null;
+  /** A hash of what the event says, to tell when it needs updating. */
+  signature: string;
+  /** When the event ends: past events are left as they are. */
+  endsAt: string;
+  /** Failed tries in a row, and when to try again. */
+  attempts: number;
+  lastError: string | null;
+  retryAfter: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AuditRow {
@@ -272,6 +299,7 @@ export const USERS: TableDef<UserRow> = {
     notifySwaps: 'boolean',
     createdAt: 'time',
     updatedAt: 'time',
+    calendarSync: 'boolean',
   },
   defaults: {
     role: 'member',
@@ -287,6 +315,7 @@ export const USERS: TableDef<UserRow> = {
     notifyTimeOff: true,
     notifyConfirmations: true,
     notifySwaps: true,
+    calendarSync: false,
   },
 };
 
@@ -519,6 +548,25 @@ export const OPEN_SHIFTS: TableDef<OpenShiftRow> = {
 };
 
 /** Every tab, in the order they're created in a new Sheet. */
+export const CALENDAR_EVENTS: TableDef<CalendarEventRow> = {
+  name: 'calendar_events',
+  columns: {
+    id: 'text',
+    key: 'text',
+    userId: 'text',
+    email: 'text',
+    eventId: 'text',
+    signature: 'text',
+    endsAt: 'time',
+    attempts: 'number',
+    lastError: 'text',
+    retryAfter: 'time',
+    createdAt: 'time',
+    updatedAt: 'time',
+  },
+  defaults: { eventId: null, attempts: 0, lastError: null, retryAfter: null },
+};
+
 export const TABLES = [
   ORG_SETTINGS,
   USERS,
@@ -533,4 +581,5 @@ export const TABLES = [
   OPEN_SHIFTS,
   AUDIT,
   NOTIFICATIONS,
+  CALENDAR_EVENTS,
 ] as const;
