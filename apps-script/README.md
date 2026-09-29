@@ -56,11 +56,14 @@ pasting takes a few seconds.
    Click **Deploy** and copy the **Web app URL** (it ends in `/exec`). That's
    the link for your team.
 
-9. **Open the link yourself** once. That's how the app learns its address for
-   the links in emails. You'll land on the admin dashboard.
+9. **Open the link yourself** once, before you invite anyone. That's how the
+   app learns the address to put in emails (until then, their links could
+   point at the test link, which only you can open). You'll land on the admin
+   dashboard: it's the same data as the test link, and you're already an
+   admin.
 10. **Add your team** on the **People** page. Each person gets an email with the
-    link and signs in with their Google account. To make someone else an
-    admin, set their role to Admin.
+    link and signs in with their Google account, with no password to set up.
+    To make someone else an admin, set their role to Admin.
 
 In **Settings** you can rename the organization (it's also the name emails
 come from), change the time zone (Toronto by default), and choose the
@@ -88,6 +91,12 @@ certain email domains).
   message to whoever maintains the app.
 - **"This schedule app needs a quick fix"**: `Code.gs` and `index.html` come
   from different versions. Copy both again.
+- **An invite link doesn't open for someone**: it may point at the test link.
+  Open the `/exec` link yourself once, then choose **Resend invite** in their
+  **⋯** menu on the **People** page.
+- **Errors for someone signed in to several Google accounts**: Apps Script
+  can mix up the accounts. Open the link in a window that's only signed in to
+  the work account (a separate Chrome profile, or an incognito window).
 - **Executions** (the list icon on the left of the Apps Script editor) lists
   every run with its log, including errors.
 - The **Test deployments** link (it ends in `/dev`) only works for people who
