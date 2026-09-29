@@ -3,8 +3,9 @@
 import vm from 'node:vm';
 import { addDays } from '@shared/time';
 import type { ShiftSwap } from '@shared/types';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildServer } from '../build.mjs';
+import { errorResponse } from '../src/http';
 import * as main from '../src/main';
 import { activate, createEmulator, installAppsScript } from './emulator';
 import {
@@ -288,6 +289,40 @@ describe('the web page', () => {
     ).toBe(401);
   });
 
+  it('asks for setup first, instead of failing', () => {
+    const fresh = createEmulator();
+    activate(fresh);
+    try {
+      fresh.activeUser = 'robin@example.com';
+      const page = main.doGet({
+        pathInfo: '',
+        queryString: '',
+        parameter: {},
+      } as unknown as GoogleAppsScript.Events.DoGet) as unknown as { getContent(): string };
+      expect(page.getContent()).toContain('Almost there: run setup');
+      expect(page.getContent()).not.toContain('window.__TORETTO__');
+      const res = JSON.parse(main.api('GET', '/bootstrap', null));
+      expect(res).toMatchObject({ status: 503, body: { error: { code: 'NOT_SET_UP' } } });
+      expect(res.body.error.message).toContain('Run setup in the Apps Script editor');
+    } finally {
+      activate(ctx.env);
+    }
+  });
+
+  it('says what went wrong when something unexpected fails', () => {
+    vi.spyOn(console, 'error').mockImplementationOnce(() => undefined);
+    const res = errorResponse(new TypeError('runs.at is not a function'));
+    expect(res).toMatchObject({
+      status: 500,
+      body: {
+        error: {
+          code: 'INTERNAL',
+          message: 'Something went wrong (TypeError: runs.at is not a function). Please try again.',
+        },
+      },
+    });
+  });
+
   it('answers a batch of reads in one call', async () => {
     activate(ctx.env);
     ctx.env.activeUser = people.admin.email;
@@ -339,5 +374,45 @@ describe('the built Code.gs', () => {
     const mismatch = open('ffff0000');
     expect(mismatch).not.toContain('window.__TORETTO__');
     expect(mismatch).toContain('Code.gs is version 0123abcd, but index.html is version ffff0000');
+  });
+
+  it('runs on an Apps Script engine without newer JavaScript methods', async () => {
+    const code = await buildServer('0123abcd');
+    const sandbox = vm.createContext({ console });
+    const js = (source: string) => vm.runInContext(source, sandbox);
+    js(
+      'delete Array.prototype.at; delete String.prototype.at; delete String.prototype.replaceAll;' +
+        'delete Object.hasOwn; delete Array.prototype.findLast; delete Array.prototype.findLastIndex;',
+    );
+    expect(js('typeof [].at')).toBe('undefined');
+    installAppsScript(sandbox);
+    const project = createEmulator();
+    activate(project);
+    vm.runInContext(code, sandbox, { filename: 'Code.gs' });
+
+    expect(js('[1, 2, 3].at(-1)')).toBe(3);
+    expect(js("'abc'.at(0)")).toBe('a');
+    expect(js("'a.b.c'.replaceAll('.', '-')")).toBe('a-b-c');
+    expect(js("'a+b'.replaceAll('+', '$&$&')")).toBe('a++b');
+    expect(js("Object.hasOwn({ a: 1 }, 'a') && !Object.hasOwn({}, 'toString')")).toBe(true);
+    expect(js('[1, 2, 3].findLast((n) => n < 3)')).toBe(2);
+    expect(js('[1, 2, 3].findLastIndex((n) => n > 5)')).toBe(-1);
+
+    // Saving changes to rows already in the Sheet, and summing up drafts, use .at().
+    expect(sandbox.setup()).toContain('Time zones check out');
+    project.activeUser = project.owner;
+    const api = (method: string, url: string, body?: unknown) =>
+      JSON.parse(sandbox.api(method, url, body === undefined ? null : JSON.stringify(body)));
+    const me = api('GET', '/bootstrap').body.user;
+    expect(me).toMatchObject({ role: 'admin' });
+    const [schedule] = api('GET', '/schedules').body;
+    const shift = { userId: me.id, ...shiftOn(nextMonday()) };
+    expect(api('POST', `/schedules/${schedule.id}/shifts`, shift).status).toBe(201);
+    expect(api('GET', '/schedules').body[0]).toMatchObject({
+      pendingChanges: 1,
+      firstChangeDate: nextMonday(),
+      lastChangeDate: nextMonday(),
+    });
+    expect(api('PATCH', '/admin/settings', { orgName: 'Night crew' }).status).toBe(200);
   });
 });

@@ -122,7 +122,14 @@ export function errorResponse(err: unknown): ApiResponse {
     error = new HttpError(400, 'VALIDATION_ERROR', err.issues[0]?.message ?? 'Invalid input');
   } else {
     console.error(err instanceof Error ? (err.stack ?? err.message) : String(err));
-    error = new HttpError(500, 'INTERNAL', 'Something went wrong. Please try again.');
+    // Unlike the web server, say what it was: Apps Script shows the page
+    // anything a script throws anyway, and a screenshot is then enough to go on.
+    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    error = new HttpError(
+      500,
+      'INTERNAL',
+      `Something went wrong (${detail.slice(0, 300)}). Please try again.`,
+    );
   }
   return {
     status: error.status,

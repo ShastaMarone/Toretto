@@ -1,5 +1,6 @@
 // Entry points Apps Script calls: the web page (doGet), the page's API calls
 // (api, apiBatch), setup() from the editor, and the timed jobs.
+import './polyfills';
 import { DEFAULT_LABELS, DEFAULT_TIERS } from '../../server/src/services/defaults';
 import { authUser, DEFAULT_SETTINGS, ORG_ID, tables, type Ctx } from './core';
 import { Db, ensureSchema, SPREADSHEET_ID } from './db/store';
@@ -113,6 +114,14 @@ export function doGet(e: GoogleAppsScript.Events.DoGet): GoogleAppsScript.HTML.H
         .join('&')
     : '';
   const path = params.page || `/${e?.pathInfo ?? ''}${rest ? `?${rest}` : ''}`;
+  if (!props.getProperty(SPREADSHEET_ID)) {
+    return notice(
+      'Almost there: run setup',
+      "This app isn't set up yet. In the Apps Script editor, pick <b>setup</b> in the " +
+        'function menu next to <b>Debug</b>, click <b>Run</b>, and allow the permissions it asks for.',
+      'Then reload this page.',
+    );
+  }
   const boot = run('GET', '/bootstrap', undefined);
   const page = HtmlService.createHtmlOutputFromFile('index').getContent();
   const pageVersion = /<meta name="toretto-version" content="([\w-]+)"/.exec(page)?.[1];
@@ -132,12 +141,21 @@ export function doGet(e: GoogleAppsScript.Events.DoGet): GoogleAppsScript.HTML.H
 /** A page from another build could call things this Code.gs doesn't have. */
 function versionMismatch(pageVersion: string | undefined): GoogleAppsScript.HTML.HtmlOutput {
   const index = pageVersion ? `version ${pageVersion}` : 'from an older version';
+  return notice(
+    'This schedule app needs a quick fix',
+    `Its files don't match: Code.gs is version ${VERSION}, but index.html is ${index}.`,
+    'Whoever set it up: copy Code.gs and index.html from the same version of ' +
+      'apps-script/build, then deploy a new version.',
+  );
+}
+
+/** A plain page for when the app can't start. */
+function notice(title: string, ...paragraphs: string[]): GoogleAppsScript.HTML.HtmlOutput {
   return HtmlService.createHtmlOutput(
     '<div style="font:16px/1.5 system-ui,sans-serif;max-width:34rem;margin:15vh auto;padding:0 16px">' +
-      '<h1 style="font-size:20px">This schedule app needs a quick fix</h1>' +
-      `<p>Its files don't match: Code.gs is version ${VERSION}, but index.html is ${index}.</p>` +
-      '<p>Whoever set it up: copy Code.gs and index.html from the same version of ' +
-      'apps-script/build, then deploy a new version.</p></div>',
+      `<h1 style="font-size:20px">${title}</h1>` +
+      paragraphs.map((p) => `<p>${p}</p>`).join('') +
+      '</div>',
   )
     .setTitle('Toretto Scheduling')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');

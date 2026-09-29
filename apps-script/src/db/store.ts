@@ -1,3 +1,4 @@
+import { HttpError } from '../../../server/src/errors';
 import type { ColumnType, TableDef } from './schema';
 import { TABLES } from './schema';
 
@@ -271,7 +272,13 @@ export class Db {
   spreadsheet(): Spreadsheet {
     if (!this.book) {
       const id = PropertiesService.getScriptProperties().getProperty(SPREADSHEET_ID);
-      if (!id) throw new Error('Not set up yet: run setup() in the Apps Script editor first');
+      if (!id) {
+        throw new HttpError(
+          503,
+          'NOT_SET_UP',
+          "This app isn't set up yet. Run setup in the Apps Script editor, then reload this page.",
+        );
+      }
       this.book = SpreadsheetApp.openById(id);
     }
     return this.book;
@@ -281,7 +288,13 @@ export class Db {
     let sheet = this.sheets.get(name);
     if (!sheet) {
       sheet = this.spreadsheet().getSheetByName(name) ?? undefined;
-      if (!sheet) throw new Error(`The Sheet has no "${name}" tab: run setup() again`);
+      if (!sheet) {
+        throw new HttpError(
+          503,
+          'NOT_SET_UP',
+          `The Sheet is missing its "${name}" tab. Run setup again in the Apps Script editor.`,
+        );
+      }
       this.sheets.set(name, sheet);
     }
     return sheet;

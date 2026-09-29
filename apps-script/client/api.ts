@@ -73,10 +73,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     res = await send(method, path, body);
   } catch (err) {
     console.error(err);
+    // Google's own reason, e.g. "Authorization is required to perform that action."
+    const reason = err instanceof Error && err.message ? ` (${err.message})` : '';
     throw new ApiError(
       0,
       'NETWORK',
-      "Can't reach Google Apps Script. Check your connection and try again.",
+      `Can't reach Google Apps Script${reason}. Check your connection and try again.`,
     );
   }
   if (res.queued) {

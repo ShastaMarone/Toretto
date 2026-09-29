@@ -79,6 +79,22 @@ certain email domains).
 3. Click **Deploy → Manage deployments**, click the pencil, set **Version** to
    **New version**, and click **Deploy**. The link stays the same.
 
+## If something's not working
+
+- **"Almost there: run setup"**: run `setup` (step 7), then reload the page.
+- **"Can't reach the scheduling server"**: the line under it says what went
+  wrong. "Authorization is required" means Google wants your permission
+  again: run `setup` and allow it. For anything else, send a screenshot of the
+  message to whoever maintains the app.
+- **"This schedule app needs a quick fix"**: `Code.gs` and `index.html` come
+  from different versions. Copy both again.
+- **Executions** (the list icon on the left of the Apps Script editor) lists
+  every run with its log, including errors.
+- The **Test deployments** link (it ends in `/dev`) only works for people who
+  can edit the script, and always runs the latest saved code, which is handy
+  for checking an update before you deploy it. Your team uses the `/exec` link
+  from step 8.
+
 ## Good to know
 
 - **Don't share the Sheet with the team.** The team only needs the web app
