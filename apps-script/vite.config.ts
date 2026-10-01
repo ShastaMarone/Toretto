@@ -4,13 +4,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, normalizePath, type Plugin } from 'vite';
 
-const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
+// Forward slashes, as Vite names files (on Windows too), so the client swap below matches.
+const here = (path: string) => normalizePath(fileURLToPath(new URL(path, import.meta.url)));
 const webClient = here('../web/src/api/client.ts');
 const appsScriptClient = here('./client/api.ts');
-const logo = `data:image/svg+xml;base64,${readFileSync(here('../web/public/favicon.svg')).toString('base64')}`;
-
+// Line endings as in git (this machine may have checked the file out with CRLF).
+const logoSvg = readFileSync(here('../web/public/favicon.svg'), 'utf8').replace(/\r+\n/g, '\n');
+const logo = `data:image/svg+xml;base64,${Buffer.from(logoSvg).toString('base64')}`;
 function appsScript(): Plugin {
   return {
     name: 'toretto-apps-script',

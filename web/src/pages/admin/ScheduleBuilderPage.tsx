@@ -39,6 +39,7 @@ import {
   useTiers,
 } from '../../api/queries';
 import { CalendarNav, TierFilter } from '../../components/schedule/CalendarBits';
+import { DayTimeline, type TimelineBar } from '../../components/schedule/DayTimeline';
 import { ScheduleGrid } from '../../components/schedule/ScheduleGrid';
 import { ScheduleSwitcher } from '../../components/schedule/ScheduleSwitcher';
 import {
@@ -81,6 +82,7 @@ type DialogState = { mode: 'create'; draft: ShiftDraft } | { mode: 'edit'; shift
 
 const VIEW_KEY = 'toretto:builder-view';
 const VIEWS: { value: CalendarView; label: string }[] = [
+  { value: 'day', label: 'Day' },
   { value: 'week', label: 'Week' },
   { value: '2weeks', label: '2 weeks' },
   { value: 'month', label: 'Month' },
@@ -89,7 +91,7 @@ const VIEWS: { value: CalendarView; label: string }[] = [
 function savedView(): CalendarView {
   try {
     const v = localStorage.getItem(VIEW_KEY);
-    return v === '2weeks' || v === 'month' ? v : 'week';
+    return v === 'day' || v === '2weeks' || v === 'month' ? v : 'week';
   } catch {
     return 'week';
   }
@@ -490,13 +492,103 @@ function Builder({
       draft: { userId, date: day, start: '09:00', end: '17:00', labelId: null, notes: '' },
     });
   const rangeLabel =
-    view === 'month'
-      ? DateTime.fromISO(data.from).toFormat('LLLL yyyy')
-      : formatDateRange(data.from, data.to);
+    view === 'day'
+      ? formatDay(data.from, 'long')
+      : view === 'month'
+        ? DateTime.fromISO(data.from).toFormat('LLLL yyyy')
+        : formatDateRange(data.from, data.to);
   const current = viewRange(view, today, org.weekStartsOn).from === data.from;
   const changes = data.changes;
   const hasChanges = changes.total > 0;
-  const periodWord = view === 'week' ? 'week' : view === '2weeks' ? '2 weeks' : 'month';
+  // "this week", "this month", "this day"
+  const periodWord =
+    view === 'day' ? 'day' : view === 'week' ? 'week' : view === '2weeks' ? '2 weeks' : 'month';
+
+  // The day view's timeline, and the people rows shared with the grid.
+  const groupHours = (group: { people: PersonRow[] }) => {
+    const ids = new Set(group.people.map((p) => p.id));
+    return formatHours(totalHours(shifts.filter((s) => ids.has(s.userId))));
+  };
+  const renderPerson = (person: PersonRow) => {
+    const personShifts = shifts.filter((s) => s.userId === person.id);
+    const other = onOtherSchedules.get(person.id) ?? [];
+    const overtime = overtimeIn(
+      [...personShifts, ...other],
+      data.from,
+      data.to,
+      tz,
+      org.weekStartsOn,
+      rules,
+    );
+    if (other.length) {
+      overtime.reasons.push(
+        `Counting ${other.length} published shift${other.length === 1 ? '' : 's'} on other schedules`,
+      );
+    }
+    return (
+      <div className="flex items-center gap-2.5">
+        <Avatar name={person.name} size="sm" className="hidden sm:inline-flex" />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-slate-900">{person.name}</p>
+          <p className="text-xs text-slate-500">
+            {personShifts.length
+              ? `${formatHours(totalHours(personShifts))} · ${personShifts.length} shift${personShifts.length === 1 ? '' : 's'}`
+              : 'No shifts'}
+            {!person.active && ' · deactivated'}
+          </p>
+          {overtime.hours > 0 && (
+            <span title={overtime.reasons.join('\n')}>
+              <Badge tone="amber" className="mt-0.5 px-1.5 py-0 text-[11px]">
+                <AlarmClock className="size-3" aria-hidden />
+                {formatHours(overtime.hours)} overtime
+              </Badge>
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+  const barsFor = (person: PersonRow): TimelineBar[] => {
+    const day = data.from;
+    const mine = (byUserDay.get(person.id)?.get(day) ?? []).map((s): TimelineBar => ({
+      id: s.id,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      color: colorFor(s, person),
+      labelName: s.labelId ? labelsById.get(s.labelId)?.name : undefined,
+      notes: s.notes,
+      status: s.published ? s.status : null,
+      change: s.changeState === 'new' || s.changeState === 'updated' ? s.changeState : null,
+      draggable: true,
+      dragging: draggingId === s.id,
+      onDragStart: onDragStart(s),
+      onDragEnd,
+      onClick: () => setDialog({ mode: 'edit', shift: s }),
+    }));
+    const gone = (ghosts.get(person.id)?.get(day) ?? []).map((g): TimelineBar =>
+      g.working.changeState === 'removed'
+        ? {
+            id: g.id,
+            startTime: g.startTime,
+            endTime: g.endTime,
+            color: colorFor(g.working, person),
+            status: null,
+            removed: true,
+            onRestore: () => restore.mutate(g.id),
+          }
+        : {
+            id: g.id,
+            startTime: g.startTime,
+            endTime: g.endTime,
+            color: colorFor(g.working, person),
+            status: null,
+            removed: true,
+            caption: `Moved to ${formatDay(localDate(g.working.startTime, tz))}`,
+            onClick: () => onDate(localDate(g.working.startTime, tz)),
+          },
+    );
+    return [...mine, ...gone];
+  };
 
   return (
     <>
@@ -546,7 +638,12 @@ function Builder({
               ...(view !== 'month'
                 ? [
                     {
-                      label: view === 'week' ? 'Copy last week here' : 'Copy the 2 weeks before',
+                      label:
+                        view === 'day'
+                          ? 'Copy the day before here'
+                          : view === 'week'
+                            ? 'Copy last week here'
+                            : 'Copy the 2 weeks before',
                       icon: <CopyPlus />,
                       onSelect: () => copyWeeks.mutate(),
                       disabled: copyWeeks.isPending,
@@ -655,151 +752,159 @@ function Builder({
         </Banner>
       )}
 
-      <ScheduleGrid
-        days={days}
-        today={today}
-        holidays={holidays}
-        compact={compact}
-        groups={groups}
-        dayWidth={[80, 128]}
-        rowHeight="h-20"
-        daySummary={(d) => {
-          const dayShifts = shifts.filter((s) => localDate(s.startTime, tz) === d);
-          if (!dayShifts.length) return '—';
-          return compact
-            ? String(dayShifts.length)
-            : `${dayShifts.length} · ${formatHours(totalHours(dayShifts))}`;
-        }}
-        groupHours={(group) => {
-          const ids = new Set(group.people.map((p) => p.id));
-          return formatHours(totalHours(shifts.filter((s) => ids.has(s.userId))));
-        }}
-        renderPerson={(person) => {
-          const personShifts = shifts.filter((s) => s.userId === person.id);
-          const other = onOtherSchedules.get(person.id) ?? [];
-          const overtime = overtimeIn(
-            [...personShifts, ...other],
-            data.from,
-            data.to,
-            tz,
-            org.weekStartsOn,
-            rules,
-          );
-          if (other.length) {
-            overtime.reasons.push(
-              `Counting ${other.length} published shift${other.length === 1 ? '' : 's'} on other schedules`,
-            );
+      {view === 'day' ? (
+        <DayTimeline
+          day={data.from}
+          today={today}
+          tz={tz}
+          timeFormat={timeFormat}
+          holidays={holidays.get(data.from)}
+          groups={groups}
+          bars={barsFor}
+          timeOff={(person) => offByUserDay.get(person.id)?.get(data.from) ?? []}
+          groupHours={groupHours}
+          renderPerson={renderPerson}
+          onAdd={(person, hour) => {
+            const pad = (h: number) => `${String(h).padStart(2, '0')}:00`;
+            setDialog({
+              mode: 'create',
+              draft: {
+                userId: person.id,
+                date: data.from,
+                start: pad(hour),
+                end: pad((hour + 8) % 24),
+                labelId: null,
+                notes: '',
+              },
+            });
+          }}
+          trackProps={(person) => ({
+            ...cellDrop(person.id, data.from),
+            className: cx(
+              dropKey === `${person.id}|${data.from}` &&
+                'bg-brand-50 ring-2 ring-inset ring-brand-400',
+            ),
+          })}
+          empty="No one matches these filters. Add people on the People page."
+          footer={
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 px-4 py-3 text-xs text-slate-500">
+              <ScheduleLegend showChanges />
+              <p>
+                Click an empty spot to add a shift · drag a shift onto someone else to give it to
+                them · hold{' '}
+                <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Alt</kbd> or{' '}
+                <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Ctrl</kbd> to copy
+                · times in {zoneLabel(tz)}
+              </p>
+            </div>
           }
-          return (
-            <div className="flex items-center gap-2.5">
-              <Avatar name={person.name} size="sm" className="hidden sm:inline-flex" />
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-slate-900">{person.name}</p>
-                <p className="text-xs text-slate-500">
-                  {personShifts.length
-                    ? `${formatHours(totalHours(personShifts))} · ${personShifts.length} shift${personShifts.length === 1 ? '' : 's'}`
-                    : 'No shifts'}
-                  {!person.active && ' · deactivated'}
-                </p>
-                {overtime.hours > 0 && (
-                  <span title={overtime.reasons.join('\n')}>
-                    <Badge tone="amber" className="mt-0.5 px-1.5 py-0 text-[11px]">
-                      <AlarmClock className="size-3" aria-hidden />
-                      {formatHours(overtime.hours)} overtime
-                    </Badge>
-                  </span>
+        />
+      ) : (
+        <ScheduleGrid
+          days={days}
+          today={today}
+          holidays={holidays}
+          compact={compact}
+          groups={groups}
+          dayWidth={[80, 128]}
+          rowHeight="h-20"
+          daySummary={(d) => {
+            const dayShifts = shifts.filter((s) => localDate(s.startTime, tz) === d);
+            if (!dayShifts.length) return '—';
+            return compact
+              ? String(dayShifts.length)
+              : `${dayShifts.length} · ${formatHours(totalHours(dayShifts))}`;
+          }}
+          groupHours={groupHours}
+          renderPerson={renderPerson}
+          cellProps={(person, day) => ({
+            ...cellDrop(person.id, day),
+            className: cx(
+              'group transition-colors',
+              dropKey === `${person.id}|${day}` && 'bg-brand-50 ring-2 ring-inset ring-brand-400',
+            ),
+          })}
+          renderCell={(person, day) => {
+            const cellShifts = byUserDay.get(person.id)?.get(day) ?? [];
+            const cellGhosts = ghosts.get(person.id)?.get(day) ?? [];
+            const off = offByUserDay.get(person.id)?.get(day) ?? [];
+            return (
+              <div className="flex min-h-[4.5rem] flex-col gap-1">
+                {off.map((entry) => (
+                  <TimeOffChip key={entry.id} entry={entry} tz={tz} compact={compact} />
+                ))}
+                {cellShifts.map((s) => (
+                  <ShiftChip
+                    key={s.id}
+                    shift={s}
+                    tz={tz}
+                    compact={compact}
+                    color={colorFor(s, person)}
+                    labelName={s.labelId ? labelsById.get(s.labelId)?.name : undefined}
+                    status={s.published ? s.status : null}
+                    change={
+                      s.changeState === 'new' || s.changeState === 'updated' ? s.changeState : null
+                    }
+                    draggable
+                    dragging={draggingId === s.id}
+                    onDragStart={onDragStart(s)}
+                    onDragEnd={onDragEnd}
+                    onClick={() => setDialog({ mode: 'edit', shift: s })}
+                  />
+                ))}
+                {cellGhosts.map((g) =>
+                  g.working.changeState === 'removed' ? (
+                    <ShiftChip
+                      key={g.id}
+                      shift={g}
+                      tz={tz}
+                      compact={compact}
+                      color={colorFor(g.working, person)}
+                      status={null}
+                      removed
+                      onRestore={() => restore.mutate(g.id)}
+                    />
+                  ) : (
+                    <ShiftChip
+                      key={g.id}
+                      shift={g}
+                      tz={tz}
+                      compact={compact}
+                      color={colorFor(g.working, person)}
+                      status={null}
+                      removed
+                      caption={`Moved to ${formatDay(localDate(g.working.startTime, tz))}`}
+                      onClick={() => onDate(localDate(g.working.startTime, tz))}
+                    />
+                  ),
+                )}
+                {person.active && (
+                  <button
+                    type="button"
+                    onClick={() => openCreate(person.id, day)}
+                    aria-label={`Add shift for ${person.name} on ${formatDay(day)}`}
+                    className="flex h-6 w-full items-center justify-center rounded-md border border-dashed border-slate-300 text-slate-400 opacity-0 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-600 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                  >
+                    <Plus className="size-3.5" />
+                  </button>
                 )}
               </div>
+            );
+          }}
+          empty="No one matches these filters. Add people on the People page."
+          footer={
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 px-4 py-3 text-xs text-slate-500">
+              <ScheduleLegend showChanges />
+              <p>
+                Drag shifts to move them · hold{' '}
+                <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Alt</kbd> or{' '}
+                <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Ctrl</kbd> to copy
+                · times in {zoneLabel(tz)}
+              </p>
             </div>
-          );
-        }}
-        cellProps={(person, day) => ({
-          ...cellDrop(person.id, day),
-          className: cx(
-            'group transition-colors',
-            dropKey === `${person.id}|${day}` && 'bg-brand-50 ring-2 ring-inset ring-brand-400',
-          ),
-        })}
-        renderCell={(person, day) => {
-          const cellShifts = byUserDay.get(person.id)?.get(day) ?? [];
-          const cellGhosts = ghosts.get(person.id)?.get(day) ?? [];
-          const off = offByUserDay.get(person.id)?.get(day) ?? [];
-          return (
-            <div className="flex min-h-[4.5rem] flex-col gap-1">
-              {off.map((entry) => (
-                <TimeOffChip key={entry.id} entry={entry} tz={tz} compact={compact} />
-              ))}
-              {cellShifts.map((s) => (
-                <ShiftChip
-                  key={s.id}
-                  shift={s}
-                  tz={tz}
-                  compact={compact}
-                  color={colorFor(s, person)}
-                  labelName={s.labelId ? labelsById.get(s.labelId)?.name : undefined}
-                  status={s.published ? s.status : null}
-                  change={
-                    s.changeState === 'new' || s.changeState === 'updated' ? s.changeState : null
-                  }
-                  draggable
-                  dragging={draggingId === s.id}
-                  onDragStart={onDragStart(s)}
-                  onDragEnd={onDragEnd}
-                  onClick={() => setDialog({ mode: 'edit', shift: s })}
-                />
-              ))}
-              {cellGhosts.map((g) =>
-                g.working.changeState === 'removed' ? (
-                  <ShiftChip
-                    key={g.id}
-                    shift={g}
-                    tz={tz}
-                    compact={compact}
-                    color={colorFor(g.working, person)}
-                    status={null}
-                    removed
-                    onRestore={() => restore.mutate(g.id)}
-                  />
-                ) : (
-                  <ShiftChip
-                    key={g.id}
-                    shift={g}
-                    tz={tz}
-                    compact={compact}
-                    color={colorFor(g.working, person)}
-                    status={null}
-                    removed
-                    caption={`Moved to ${formatDay(localDate(g.working.startTime, tz))}`}
-                    onClick={() => onDate(localDate(g.working.startTime, tz))}
-                  />
-                ),
-              )}
-              {person.active && (
-                <button
-                  type="button"
-                  onClick={() => openCreate(person.id, day)}
-                  aria-label={`Add shift for ${person.name} on ${formatDay(day)}`}
-                  className="flex h-6 w-full items-center justify-center rounded-md border border-dashed border-slate-300 text-slate-400 opacity-0 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-600 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                >
-                  <Plus className="size-3.5" />
-                </button>
-              )}
-            </div>
-          );
-        }}
-        empty="No one matches these filters. Add people on the People page."
-        footer={
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 px-4 py-3 text-xs text-slate-500">
-            <ScheduleLegend showChanges />
-            <p>
-              Drag shifts to move them · hold{' '}
-              <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Alt</kbd> or{' '}
-              <kbd className="rounded border border-slate-300 bg-slate-50 px-1">Ctrl</kbd> to copy ·
-              times in {zoneLabel(tz)}
-            </p>
-          </div>
-        }
-      />
+          }
+        />
+      )}
 
       {dialog?.mode === 'create' && (
         <ShiftDialog

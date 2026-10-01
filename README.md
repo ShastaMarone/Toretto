@@ -43,7 +43,7 @@ neon dark theme.
 
 - **Tiers** (Tier 1, 2, 3 — rename or add more). Everyone is scheduled on the same calendar, grouped by tier. Tier chips filter it down to one or more tiers.
 - **Custom labels** such as On-Call, Training and Overtime, either for one tier's people or for everyone.
-- **Schedule builder**: an open-ended calendar, with no dates to set up first. It shows a week, 2 weeks or a month as a people × days grid. Click **+** to add a shift, drag a shift to move it, and hold <kbd>Alt</kbd>/<kbd>Ctrl</kbd> while dragging to copy it. The builder:
+- **Schedule builder**: an open-ended calendar, with no dates to set up first. It shows a week, 2 weeks or a month as a people × days grid. Click **+** to add a shift, drag a shift to move it, and hold <kbd>Alt</kbd>/<kbd>Ctrl</kbd> while dragging to copy it. The **Day** view lays one day out hour by hour, with a bar for each shift and, along the bottom, how many people are working each hour, so thin spots in coverage stand out (hours with nobody between two staffed hours are highlighted). Click an empty spot in someone's row to add a shift from that hour, or drag a shift onto another person to give it to them. The builder:
   - suggests shift times already used on the schedule, and lets you type times ("3pm", "15:30") or pick them from a list that shows each shift's length
   - rejects overlapping shifts, including across schedules
   - flags anyone on time off that day

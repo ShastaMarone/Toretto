@@ -118,3 +118,22 @@ test('a team member puts their confirmed shifts in Google Calendar', async ({
   await sam.goto('/profile?as=sam@example.com');
   await expect(sam.getByRole('switch', { name: 'Add my shifts to Google Calendar' })).toBeChecked();
 });
+
+test('the schedule builder has a Day view with people working each hour', async ({ browser }) => {
+  const admin = await open(browser, ADMIN, '/admin/schedules');
+  await admin.getByRole('tab', { name: 'Day' }).click();
+  // Hours across the top, a bar per shift, and a count of who is working each hour.
+  await expect(admin.getByRole('columnheader', { name: '9am' })).toBeVisible();
+  await expect(admin.getByRole('rowheader', { name: /People working/ })).toBeVisible();
+  const bars = admin.getByRole('button', { name: /waiting for confirmation|confirmed|draft/ });
+  await expect(bars.first()).toBeVisible();
+
+  // Stepping to the next day leaves today.
+  await expect(admin.getByRole('button', { name: 'Today' })).toBeDisabled();
+  await admin.getByRole('button', { name: 'Next' }).click();
+  await expect(admin.getByRole('button', { name: 'Today' })).toBeEnabled();
+
+  // Clicking someone's empty row starts a shift for them.
+  await admin.getByRole('button', { name: 'Add shift for Riley Adams' }).click();
+  await expect(admin.getByRole('dialog').getByRole('heading', { name: 'Add shift' })).toBeVisible();
+});

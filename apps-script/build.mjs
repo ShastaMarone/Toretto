@@ -16,6 +16,8 @@ const here = (path) => fileURLToPath(new URL(path, import.meta.url));
 // pasted files don't match (see VERSION in src/main.ts).
 const VERSION = '__TORETTO_VERSION__';
 const stamp = (text, version) => text.replaceAll(VERSION, version);
+// Windows checks files out with CRLF line endings: build the same bytes everywhere.
+const normalizeLineEndings = (text) => text.replace(/\r+\n/g, '\n');
 
 // ---- Code.gs -----------------------------------------------------------------
 // One IIFE (Apps Script has no modules), lowered to syntax its V8 runs, plus
@@ -48,7 +50,7 @@ export async function buildServer(version) {
     `${strict}\n` +
     ENTRY_POINTS +
     bundle.slice(strict.length);
-  return version ? stamp(code, version) : code;
+  return version ? stamp(normalizeLineEndings(code), version) : normalizeLineEndings(code);
 }
 
 const ENTRY_POINTS = `
@@ -84,7 +86,8 @@ async function buildPage() {
     )
     .replace(
       '<!--TORETTO_THEME-->',
-      `<script>${readFileSync(here('../web/public/theme.js'), 'utf8')}</script>`,
+      // Line endings as in git, not as this machine checked the file out.
+      `<script>${normalizeLineEndings(readFileSync(here('../web/public/theme.js'), 'utf8'))}</script>`,
     );
   if (/\s(src|href)="\.\/assets\//.test(page)) {
     throw new Error('index.html still points at a separate asset file');
@@ -99,7 +102,7 @@ async function buildPage() {
     throw new Error("The web app's fetch-based API client ended up in the Apps Script page");
   }
   rmSync(built, { recursive: true, force: true });
-  return page;
+  return normalizeLineEndings(page);
 }
 
 // Run as a script (not imported by the tests): write the three files.

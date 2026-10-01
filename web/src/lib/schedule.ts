@@ -81,7 +81,7 @@ export function totalHours(shifts: { startTime: string; endTime: string }[]): nu
   return shifts.reduce((sum, s) => sum + shiftHours(s.startTime, s.endTime), 0);
 }
 
-export type CalendarView = 'week' | '2weeks' | 'month';
+export type CalendarView = 'day' | 'week' | '2weeks' | 'month';
 
 /** The days a calendar view shows around `date`. */
 export function viewRange(
@@ -89,6 +89,7 @@ export function viewRange(
   date: ISODate,
   weekStartsOn: WeekStart,
 ): { from: ISODate; to: ISODate } {
+  if (view === 'day') return { from: date, to: date };
   if (view === 'month') return { from: startOfMonth(date), to: endOfMonth(date) };
   const from = startOfWeek(date, weekStartsOn);
   return { from, to: addDays(from, view === 'week' ? 6 : 13) };
@@ -97,6 +98,7 @@ export function viewRange(
 /** Move a view one step back or forward. */
 export function stepView(view: CalendarView, date: ISODate, direction: 1 | -1): ISODate {
   if (view === 'month') return startOfMonth(addDays(startOfMonth(date), direction === 1 ? 32 : -1));
+  if (view === 'day') return addDays(date, direction);
   return addDays(date, direction * (view === 'week' ? 7 : 14));
 }
 
