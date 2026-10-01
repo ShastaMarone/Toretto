@@ -235,16 +235,21 @@ export function deleteShift(ctx: Ctx, shiftId: string): { pendingRemoval: boolea
   return { pendingRemoval: true };
 }
 
-/** Take someone off every shift: unpublished ones vanish, published ones go at the next publish. */
+/** Take someone off every shift (or those starting in a range): unpublished ones vanish, published ones go at the next publish. */
 export function removeAllShiftsFor(
   ctx: Ctx,
   userId: string,
+  range?: { from: string; to: string },
 ): { removed: number; pendingRemoval: number } {
   const t = tables(ctx.db);
   if (!t.users.get(userId)) throw notFound('Person');
+  const inRange = (startTime: string) =>
+    !range || (ms(startTime) >= ms(range.from) && ms(startTime) < ms(range.to));
   let removed = 0;
   let pendingRemoval = 0;
-  for (const s of t.shifts.where((s) => s.userId === userId && !s.deletedAt)) {
+  for (const s of t.shifts.where(
+    (s) => s.userId === userId && !s.deletedAt && inRange(s.startTime),
+  )) {
     if (deleteShift(ctx, s.id).pendingRemoval) pendingRemoval++;
     else removed++;
   }

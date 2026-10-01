@@ -1,4 +1,4 @@
-import { addDays } from '@shared/time';
+import { addDays, dayRangeToUtc } from '@shared/time';
 import type { Label, Person, Tier } from '@shared/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -169,7 +169,7 @@ describe('people', () => {
     });
   });
 
-  it('removes all of someone\'s shifts, keeping published ones until the next publish', async () => {
+  it("removes all of someone's shifts, keeping published ones until the next publish", async () => {
     const wes = await createUser(ctx.db, { name: 'Wes Wipe' });
     const main = await defaultScheduleId(ctx.db);
     const day = nextMonday();
@@ -185,6 +185,27 @@ describe('people', () => {
     ).toBe(0);
     expect((await admin.delete(`/api/shifts/${draft.body.id}`)).status).toBe(404);
     expect((await member.delete(`/api/users/${wes.id}/shifts`)).status).toBe(403);
+  });
+
+  it("can remove just one week of someone's shifts", async () => {
+    const vic = await createUser(ctx.db, { name: 'Vic Week' });
+    const main = await defaultScheduleId(ctx.db);
+    const monday = nextMonday();
+    for (const d of [monday, addDays(monday, 6), addDays(monday, 7)]) {
+      await admin
+        .post(`/api/schedules/${main}/shifts`)
+        .send({ userId: vic.id, ...shiftOn(d) })
+        .expect(201);
+    }
+    const range = dayRangeToUtc(monday, addDays(monday, 6), 'America/Toronto');
+    const half = await admin.delete(`/api/users/${vic.id}/shifts?from=${range.from}`);
+    expect(half.status).toBe(400);
+    const res = await admin.delete(
+      `/api/users/${vic.id}/shifts?${new URLSearchParams(range).toString()}`,
+    );
+    expect(res.body).toEqual({ removed: 2, pendingRemoval: 0 });
+    const left = (await admin.get('/api/users')).body.find((p: Person) => p.id === vic.id);
+    expect(left.shiftCount).toBe(1);
   });
 
   it('can fix an invite email typo, which re-sends the invite', async () => {

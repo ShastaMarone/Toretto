@@ -313,9 +313,14 @@ export function createRouter(): Router {
   r.post('/users/:id/resend-invite', 'admin', (req, ctx) =>
     people.resendInvite(ctx, id(req.params)),
   );
-  r.delete('/users/:id/shifts', 'admin', (req, ctx) =>
-    shifts.removeAllShiftsFor(ctx, id(req.params)),
-  );
+  r.delete('/users/:id/shifts', 'admin', (req, ctx) => {
+    const { from, to } = parse(
+      z.object({ from: zDateTime.optional(), to: zDateTime.optional() }),
+      req.query,
+    );
+    if (!from !== !to) throw badRequest('Send both `from` and `to`, or neither');
+    return shifts.removeAllShiftsFor(ctx, id(req.params), from && to ? { from, to } : undefined);
+  });
   r.delete('/users/:id', 'admin', (req, ctx) => {
     people.deletePerson(ctx, id(req.params));
     return noContent();
