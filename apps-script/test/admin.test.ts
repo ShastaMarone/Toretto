@@ -144,6 +144,30 @@ describe('tiers and labels', () => {
   });
 });
 
+describe('tier order', () => {
+  it('saves a new order for the tiers, which the schedule follows', async () => {
+    const first = await createTier(ctx.db, 'Order A');
+    const second = await createTier(ctx.db, 'Order B');
+    const third = await createTier(ctx.db, 'Order C');
+    const names = async () =>
+      ((await admin.get('/api/tiers')).body as Tier[])
+        .filter((t) => t.name.startsWith('Order '))
+        .map((t) => t.name);
+    expect(await names()).toEqual(['Order A', 'Order B', 'Order C']);
+    const res = await admin.post('/api/tiers/reorder').send({ ids: [third, first, second] });
+    expect(res.status).toBe(200);
+    expect(await names()).toEqual(['Order C', 'Order A', 'Order B']);
+    expect((await member.post('/api/tiers/reorder').send({ ids: [first] })).status).toBe(403);
+    // Tiers left out of the list go last rather than being lost.
+    await admin
+      .post('/api/tiers/reorder')
+      .send({ ids: [second] })
+      .expect(200);
+    expect((await names())[0]).toBe('Order B');
+    expect(await names()).toHaveLength(3);
+  });
+});
+
 describe('people', () => {
   it('invites people into a tier and team', async () => {
     const tierId = await createTier(ctx.db, 'Tier 3');

@@ -173,6 +173,9 @@ export function createRouter(): Router {
       ),
     ),
   );
+  r.post('/tiers/reorder', 'admin', (req, ctx) =>
+    catalog.reorderTiers(ctx, parse(z.object({ ids: z.array(zId).min(1).max(200) }), req.body).ids),
+  );
   r.patch('/tiers/:id', 'admin', (req, ctx) =>
     catalog.updateTier(
       ctx,

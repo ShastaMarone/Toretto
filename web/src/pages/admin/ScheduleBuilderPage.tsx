@@ -22,6 +22,7 @@ import type {
   RepeatResult,
   ScheduleRange,
   ScheduleSummary,
+  Tier,
 } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
@@ -346,6 +347,34 @@ function Builder({
     },
     onError: (e) => toast.error(e.message),
   });
+  // Dragging a tier into a new place: show it at once, save it, and put it back if that fails.
+  const reorderTiers = useMutation({
+    mutationFn: (ids: string[]) => api.post<Tier[]>('/tiers/reorder', { ids }),
+    onMutate: async (ids) => {
+      await queryClient.cancelQueries({ queryKey: keys.tiers });
+      const before = queryClient.getQueryData<Tier[]>(keys.tiers);
+      queryClient.setQueryData<Tier[]>(keys.tiers, (list) =>
+        ids
+          .map((id, i) => {
+            const tier = list?.find((t) => t.id === id);
+            return tier ? { ...tier, sortOrder: i + 1 } : null;
+          })
+          .filter((t): t is Tier => t !== null),
+      );
+      return { before };
+    },
+    onError: (e, _ids, context) => {
+      queryClient.setQueryData(keys.tiers, context?.before);
+      toast.error(e.message);
+    },
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: keys.tiers }),
+  });
+  /** `visible` is the new order of the tiers on screen; tiers filtered out keep their places. */
+  const onReorderGroups = (visible: string[]) => {
+    const all = tierList.map((t) => t.id);
+    let i = 0;
+    reorderTiers.mutate(all.map((id) => (visible.includes(id) ? visible[i++]! : id)));
+  };
   const removeWeek = useMutation({
     mutationFn: ({ shift }: { shift: BuilderShift }) => {
       const first = startOfWeek(localDate(shift.startTime, tz), org.weekStartsOn);
@@ -885,6 +914,7 @@ function Builder({
           timeFormat={timeFormat}
           holidays={holidays.get(data.from)}
           groups={groups}
+          onReorderGroups={onReorderGroups}
           bars={barsFor}
           timeOff={(person) => offByUserDay.get(person.id)?.get(data.from) ?? []}
           groupHours={groupHours}
@@ -931,6 +961,7 @@ function Builder({
           holidays={holidays}
           compact={compact}
           groups={groups}
+          onReorderGroups={onReorderGroups}
           dayWidth={[80, 128]}
           rowHeight="h-20"
           daySummary={(d) => {
