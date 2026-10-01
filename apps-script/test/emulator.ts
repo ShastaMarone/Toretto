@@ -183,7 +183,11 @@ export interface FakeEvent {
   title: string;
   description: string;
   guests: string[];
+  /** Guests were emailed about it (the app asks for none to be). */
   sendInvites: boolean;
+  /** Set if the event asked for a video call (the app never does). */
+  conferenceData?: unknown;
+  transparency?: string;
   allDay: boolean;
   /** Timed: ISO instants. All day: local dates, the end one exclusive. */
   start: string;
@@ -240,6 +244,65 @@ export class FakeCalendar {
 
   createAllDayEvent(title: string, start: Date, end: Date, options?: Record<string, unknown>) {
     return this.add(title, { allDay: true, start: localDay(start), end: localDay(end) }, options);
+  }
+
+  /** Calendar.Events.insert */
+  insertEvent(
+    resource: {
+      summary?: string;
+      description?: string;
+      start: { date?: string; dateTime?: string };
+      end: { date?: string; dateTime?: string };
+      attendees?: { email: string }[];
+      transparency?: string;
+      conferenceData?: unknown;
+    },
+    options: { sendUpdates?: string },
+  ) {
+    this.emulator.calendarCalls++;
+    const guests = (resource.attendees ?? []).map((a) => a.email);
+    const failing = guests.find((g) => this.emulator.calendarFailFor.has(g));
+    if (failing) throw new Error(`Invalid guest: ${failing}`);
+    const id = `${this.id.split('@')[0]}-${++this.seq}@google.com`;
+    const allDay = resource.start.date !== undefined;
+    this.events.set(id, {
+      id,
+      title: resource.summary ?? '',
+      description: resource.description ?? '',
+      guests,
+      sendInvites: options.sendUpdates !== 'none',
+      conferenceData: resource.conferenceData,
+      transparency: resource.transparency,
+      allDay,
+      start: (allDay ? resource.start.date : resource.start.dateTime) ?? '',
+      end: (allDay ? resource.end.date : resource.end.dateTime) ?? '',
+    });
+    return { id };
+  }
+
+  /** Calendar.Events.patch */
+  patchEvent(
+    id: string,
+    resource: {
+      summary?: string;
+      description?: string;
+      start?: { date?: string; dateTime?: string };
+      end?: { date?: string; dateTime?: string };
+      transparency?: string;
+    },
+  ) {
+    this.emulator.calendarCalls++;
+    const e = this.events.get(id);
+    if (!e) throw new Error('Not Found');
+    if (resource.summary !== undefined) e.title = resource.summary;
+    if (resource.description !== undefined) e.description = resource.description;
+    if (resource.transparency !== undefined) e.transparency = resource.transparency;
+    if (resource.start && resource.end) {
+      e.allDay = resource.start.date !== undefined;
+      e.start = (e.allDay ? resource.start.date : resource.start.dateTime) ?? '';
+      e.end = (e.allDay ? resource.end.date : resource.end.dateTime) ?? '';
+    }
+    return { id };
   }
 
   getEventById(id: string) {
@@ -438,6 +501,41 @@ export function installAppsScript(target: Record<string, unknown> = globalThis a
       },
     },
     Utilities: { getUuid: () => randomUUID(), sleep: () => undefined },
+    // The Calendar API (an advanced service) that the app makes events with.
+    Calendar: {
+      Events: {
+        insert: (
+          resource: Parameters<FakeCalendar['insertEvent']>[0],
+          calendarId: string,
+          options: { sendUpdates?: string } = {},
+        ) => {
+          const e = env();
+          if (e.calendarDown) throw new Error(e.calendarDown);
+          const calendar = e.calendars.get(calendarId);
+          if (!calendar) throw new Error('Not Found');
+          return calendar.insertEvent(resource, options);
+        },
+        patch: (
+          resource: Parameters<FakeCalendar['patchEvent']>[1],
+          calendarId: string,
+          eventId: string,
+        ) => {
+          const e = env();
+          if (e.calendarDown) throw new Error(e.calendarDown);
+          const calendar = e.calendars.get(calendarId);
+          if (!calendar) throw new Error('Not Found');
+          return calendar.patchEvent(eventId, resource);
+        },
+        remove: (calendarId: string, eventId: string) => {
+          const e = env();
+          if (e.calendarDown) throw new Error(e.calendarDown);
+          e.calendarCalls++;
+          if (!e.calendars.get(calendarId)?.events.delete(eventId)) {
+            throw new Error('Resource has been deleted');
+          }
+        },
+      },
+    },
     CalendarApp: {
       createCalendar: (name: string, options: { summary?: string } = {}) => {
         const e = env();

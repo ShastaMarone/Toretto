@@ -104,6 +104,12 @@ edit or delete the events in it: change the schedule in the app. If the
 calendar itself gets deleted, the app makes a new one within the hour and
 adds everything again.
 
+They are plain events: no Meet video call, and nobody is emailed about them
+(time off shows as free). Earlier versions made them with
+Google's simpler calendar service, which could add a Meet link; events made
+then keep theirs. To replace them, turn **Add to Google Calendar** off and on
+again in your profile (people can do the same for theirs).
+
 ## If something's not working
 
 - **"Almost there: run setup"**: run `setup` (step 7), then reload the page.

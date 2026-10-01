@@ -182,30 +182,70 @@ function appCalendar(orgName: string): {
   return { calendar, isNew: true };
 }
 
-/** 'YYYY-MM-DD' as a date in the script's time zone, for all-day events. */
-function day(date: string): Date {
-  const [y, m, d] = date.split('-').map(Number);
-  return new Date(y!, m! - 1, d!);
+/** The part of Google's Calendar API (an "advanced service", see appsscript.json) used here. */
+interface CalendarEvent {
+  id?: string;
+  summary?: string;
+  description?: string;
+  start?: { date?: string; dateTime?: string };
+  end?: { date?: string; dateTime?: string };
+  attendees?: { email: string }[];
+  transparency?: 'opaque' | 'transparent';
+  status?: string;
+}
+declare const Calendar: {
+  Events: {
+    insert(event: CalendarEvent, calendarId: string, options?: object): CalendarEvent;
+    patch(
+      event: CalendarEvent,
+      calendarId: string,
+      eventId: string,
+      options?: object,
+    ): CalendarEvent;
+    remove(calendarId: string, eventId: string, options?: object): void;
+  };
+};
+
+/** Nobody is emailed about these: the events just appear on calendars. */
+const QUIET = { sendUpdates: 'none' };
+
+/**
+ * An event as Google's Calendar API takes it. Made this way, rather than with
+ * CalendarApp, so no Meet video call gets added to every shift (that depends
+ * on the account's settings for CalendarApp; the API adds one only if asked).
+ * Time off shows as "free".
+ */
+function eventBody(want: Wanted): CalendarEvent {
+  const when = want.when;
+  return {
+    summary: want.title,
+    description: want.description,
+    ...('start' in when
+      ? { start: { dateTime: when.start }, end: { dateTime: when.end } }
+      : {
+          start: { date: when.firstDay },
+          end: { date: addDays(when.lastDay, 1) },
+        }),
+    transparency: want.key.startsWith('time-off:') ? 'transparent' : 'opaque',
+  };
 }
 
-function run(calendar: GoogleAppsScript.Calendar.Calendar, op: Op): Result {
-  const create = (want: Wanted) => {
-    const options = { description: want.description, guests: want.email, sendInvites: false };
-    const event =
-      'start' in want.when
-        ? calendar.createEvent(
-            want.title,
-            new Date(want.when.start),
-            new Date(want.when.end),
-            options,
-          )
-        : calendar.createAllDayEvent(
-            want.title,
-            day(want.when.firstDay),
-            day(addDays(want.when.lastDay, 1)),
-            options,
-          );
-    return event.getId();
+/** Google says the event isn't there (never made, or deleted by hand). */
+const isGone = (err: unknown) => /not found|has been deleted|gone|\b(404|410)\b/i.test(String(err));
+
+function run(calendarId: string, op: Op): Result {
+  const create = (want: Wanted) =>
+    Calendar.Events.insert(
+      { ...eventBody(want), attendees: [{ email: want.email }] },
+      calendarId,
+      QUIET,
+    ).id ?? null;
+  const remove = (eventId: string) => {
+    try {
+      Calendar.Events.remove(calendarId, eventId, QUIET);
+    } catch (err) {
+      if (!isGone(err)) throw err;
+    }
   };
   let removed = false;
   try {
@@ -215,24 +255,22 @@ function run(calendar: GoogleAppsScript.Calendar.Calendar, op: Op): Result {
       case 'create':
         return { op, eventId: create(op.want) };
       case 'delete':
-        calendar.getEventById(op.row.eventId!)?.deleteEvent();
+        remove(op.row.eventId!);
         return { op };
       case 'replace':
         // Someone else's now (or their email changed): a new invitation.
-        calendar.getEventById(op.row.eventId!)?.deleteEvent();
+        remove(op.row.eventId!);
         removed = true;
         return { op, eventId: create(op.want) };
-      case 'update': {
-        const event = calendar.getEventById(op.row.eventId!);
-        // Deleted from the app's calendar by hand: add it again.
-        if (!event) return { op, eventId: create(op.want) };
-        const { when } = op.want;
-        if ('start' in when) event.setTime(new Date(when.start), new Date(when.end));
-        else event.setAllDayDates(day(when.firstDay), day(addDays(when.lastDay, 1)));
-        event.setTitle(op.want.title);
-        event.setDescription(op.want.description);
-        return { op, eventId: op.row.eventId };
-      }
+      case 'update':
+        try {
+          Calendar.Events.patch(eventBody(op.want), calendarId, op.row.eventId!, QUIET);
+          return { op, eventId: op.row.eventId };
+        } catch (err) {
+          // Deleted from the app's calendar by hand: add it again.
+          if (!isGone(err)) throw err;
+          return { op, eventId: create(op.want) };
+        }
     }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -241,7 +279,6 @@ function run(calendar: GoogleAppsScript.Calendar.Calendar, op: Op): Result {
     return { op, error, ...(removed ? { eventId: null } : {}) };
   }
 }
-
 /** Save what happened: one row per key, with failures retried later. */
 function record(db: Db, results: Result[], calendarIsNew: boolean): void {
   const t = tables(db).calendarEvents;
@@ -334,7 +371,7 @@ export function syncCalendars(): number {
     isNew = opened?.isNew ?? false;
     results = ops.map((op, i) => {
       if (i > 0 && op.kind !== 'forget') Utilities.sleep(100);
-      return opened ? run(opened.calendar, op) : { op };
+      return opened ? run(opened.calendar.getId(), op) : { op };
     });
   } catch (err) {
     // No way into Google Calendar (e.g. its permission wasn't given): run
