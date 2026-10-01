@@ -78,7 +78,7 @@ export class Table<T extends { id: string }> {
 
   private load(): void {
     if (this.loaded) return;
-    const values = this.db.sheet(this.def.name).getDataRange().getValues();
+    const values = this.db.readValues(this.def.name);
     this.header = (values[0] ?? []).map(String);
     const at = new Map(this.header.map((name, i) => [name, i]));
     this.rows = [];
@@ -191,11 +191,11 @@ export class Table<T extends { id: string }> {
     return out;
   }
 
-  /** Write the changes: few, large Sheet calls (a call costs more than its size). */
-  commit(): void {
+  /** Write the changes: few, large Sheet calls (a call costs more than its size). True if anything was written. */
+  commit(): boolean {
     if (!this.loaded || this.changed.size === 0) {
       this.loaded = false;
-      return;
+      return false;
     }
     const sheet = this.db.sheet(this.def.name);
     // Rows added and deleted in the same request are never written.
@@ -236,6 +236,7 @@ export class Table<T extends { id: string }> {
     }
     this.changed.clear();
     this.loaded = false;
+    return true;
   }
 
   /** Rewrite the rows without the blanks deletions left behind. */
@@ -254,19 +255,125 @@ export class Table<T extends { id: string }> {
     }
     sheet.getRange(values.length + 2, 1, blanks, this.header.length).clearContent();
     this.loaded = false;
+    this.db.invalidateCache();
     return blanks;
+  }
+}
+
+// ---- A cache of what's in the Sheet ----------------------------------------
+// Reading a tab from the Sheet takes a good fraction of a second; reading it
+// from CacheService takes a few hundredths. Pages only read, so reads
+// (Db.reader()) use the cache. Anything that changes the Sheet reads the Sheet
+// itself, and changes the cache's generation, which every cached tab is filed
+// under, so the old copies are never used again. Never required: if the cache
+// misbehaves, the Sheet is read instead.
+
+/** Big and rarely read by the pages (or holding whole emails): always from the Sheet. */
+const UNCACHED = new Set(['email_log', 'audit_log']);
+const GENERATION = 'CACHE_GENERATION';
+const newGeneration = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const CACHE_SECONDS = 6 * 60 * 60;
+/** A cache value may be 100 KB (in bytes: leave room for accented letters). */
+const CHUNK = 30_000;
+
+function tryCache<T>(fn: (cache: GoogleAppsScript.Cache.Cache) => T): T | null {
+  try {
+    return fn(CacheService.getScriptCache());
+  } catch {
+    return null;
   }
 }
 
 /** The Sheet, opened once per request. `now` is the request's single clock reading. */
 export class Db {
   readonly now: string;
+  private generation: string | null = null;
   private book: Spreadsheet | null = null;
   private readonly tables = new Map<string, Table<{ id: string }>>();
   private readonly sheets = new Map<string, Sheet>();
 
-  constructor(now = new Date()) {
+  constructor(
+    now = new Date(),
+    /** Read tabs from the cache when it has them: for requests that only read. */
+    private readonly cached = false,
+  ) {
     this.now = now.toISOString();
+  }
+
+  /** A Db for requests that only read. */
+  static reader(): Db {
+    return new Db(new Date(), true);
+  }
+
+  /**
+   * The generation cached copies are filed under. It lives in script properties,
+   * not the cache, so a change can't be forgotten if the cache is down just then.
+   */
+  private currentGeneration(): string | null {
+    if (this.generation) return this.generation;
+    try {
+      const props = PropertiesService.getScriptProperties();
+      let gen = props.getProperty(GENERATION);
+      if (!gen) {
+        gen = newGeneration();
+        props.setProperty(GENERATION, gen);
+      }
+      this.generation = gen;
+    } catch {
+      this.generation = null;
+    }
+    return this.generation;
+  }
+
+  /** Everything cached is out of date: the Sheet changed. */
+  invalidateCache(): void {
+    this.generation = null;
+    try {
+      PropertiesService.getScriptProperties().setProperty(GENERATION, newGeneration());
+    } catch (err) {
+      // Without this, old copies could be used: don't let the cache be used at all.
+      console.error(`Couldn't mark the cache out of date: ${String(err)}`);
+      throw err;
+    }
+  }
+
+  /** A tab's cells: from the cache if this Db may and it has them, else from the Sheet. */
+  readValues(name: string): unknown[][] {
+    const useCache = this.cached && !UNCACHED.has(name);
+    const gen = useCache ? this.currentGeneration() : null;
+    const key = `toretto:${name}:${gen}`;
+    if (gen) {
+      const hit = tryCache((cache) => {
+        const first = cache.get(`${key}:0`);
+        if (first === null) return null;
+        const bar = first.indexOf('|');
+        const count = Number(first.slice(0, bar));
+        const parts = [first.slice(bar + 1)];
+        if (count > 1) {
+          const rest = cache.getAll(Array.from({ length: count - 1 }, (_, i) => `${key}:${i + 1}`));
+          for (let i = 1; i < count; i++) {
+            const part = rest[`${key}:${i}`];
+            if (part === undefined) return null;
+            parts.push(part);
+          }
+        }
+        return JSON.parse(parts.join('')) as unknown[][];
+      });
+      if (hit) return hit;
+    }
+    const values = this.sheet(name).getDataRange().getValues();
+    if (gen) {
+      tryCache((cache) => {
+        const json = JSON.stringify(values);
+        const count = Math.max(1, Math.ceil(json.length / CHUNK));
+        const items: Record<string, string> = {};
+        for (let i = 0; i < count; i++) {
+          items[`${key}:${i}`] = `${i === 0 ? `${count}|` : ''}${json.slice(i * CHUNK, (i + 1) * CHUNK)}`;
+        }
+        cache.putAll(items, CACHE_SECONDS);
+      });
+    }
+    return values;
   }
 
   spreadsheet(): Spreadsheet {
@@ -311,8 +418,10 @@ export class Db {
 
   /** Save every change made through this Db. */
   commit(): void {
-    for (const table of this.tables.values()) table.commit();
+    let changed = false;
+    for (const table of this.tables.values()) changed = table.commit() || changed;
     SpreadsheetApp.flush();
+    if (changed) this.invalidateCache();
   }
 }
 

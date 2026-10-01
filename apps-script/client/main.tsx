@@ -16,10 +16,15 @@ const boot = window.__TORETTO__;
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
+      // Every refresh is a trip to Google and a read of the Sheet. Changes made here
+      // refresh what they touch straight away, so only look again after a couple of minutes.
+      staleTime: 120_000,
       refetchOnWindowFocus: true,
       retry: (count, error) =>
-        !(error instanceof ApiError && error.status >= 400 && error.status < 500) && count < 2,
+        !(
+          error instanceof ApiError &&
+          ((error.status >= 400 && error.status < 500) || error.code === 'TIMEOUT')
+        ) && count < 2,
     },
   },
 });

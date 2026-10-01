@@ -143,6 +143,8 @@ describe('sending email through Gmail', () => {
           runAfter: hoursAgo(1),
         }).id,
     );
+    // A run that stopped left the emails-waiting flag set, as it always is while any are.
+    ctx.env.properties.set('EMAILS_WAITING', '1');
     ctx.env.quota = 0;
     expect(sendNow()).toBe(0);
     expect(ctx.db.read((t) => t.notifications.get(stuck)!.status)).toBe('queued');

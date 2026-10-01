@@ -154,7 +154,14 @@ again in your profile (people can do the same for theirs).
   hourly. **Activity → Email log** shows every email and whether it was sent.
 - **Speed**: each change takes a second or two, since the data lives in a
   Sheet. That's fine for a team's schedule. For hundreds of people, the
-  Vercel version is quicker.
+  Vercel version is quicker. Screens read from a cache, so they open faster
+  after the first time; it's refreshed whenever anything is saved. If you edit
+  the Sheet by hand (don't, if you can help it), the app may take up to an
+  hour to notice, or run `setup` to make it look straight away.
+- **Slow or stuck screens**: after 40 seconds a screen gives up and says so
+  instead of spinning; reload and it usually works. **Executions** in the
+  Apps Script editor lists slow requests ("Slow: …"), which helps work out
+  why.
 - **Not in this version**: calendar links for other calendar apps, like
   Outlook or Apple Calendar (Google Calendar gets invitations instead),
   passwords and email sign-in links (Google handles sign-in), and the Sign out

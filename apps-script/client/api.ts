@@ -67,12 +67,33 @@ function send(method: string, path: string, body?: unknown): Promise<Result> {
   });
 }
 
+/** Reads that take this long are given up on (Google may be busy; a save is never given up on). */
+const READ_TIMEOUT_MS = 40_000;
+
+function within<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), ms);
+    promise.then(
+      (value) => (clearTimeout(timer), resolve(value)),
+      (error) => (clearTimeout(timer), reject(error)),
+    );
+  });
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Result;
   try {
-    res = await send(method, path, body);
+    const sending = send(method, path, body);
+    res = await (method === 'GET' ? within(sending, READ_TIMEOUT_MS) : sending);
   } catch (err) {
     console.error(err);
+    if (err instanceof Error && err.message === 'timeout') {
+      throw new ApiError(
+        0,
+        'TIMEOUT',
+        'This is taking longer than it should. Google may be busy: try again in a moment.',
+      );
+    }
     // Google's own reason, e.g. "Authorization is required to perform that action."
     const reason = err instanceof Error && err.message ? ` (${err.message})` : '';
     throw new ApiError(

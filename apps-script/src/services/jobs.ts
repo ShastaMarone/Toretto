@@ -16,6 +16,18 @@ const STUCK_AFTER_MINUTES = 10;
 /** Emails per run: sending takes about a second each, and a run can last six minutes. */
 const BATCH = 40;
 
+/**
+ * Set while emails are queued or being sent. Reading the email log means
+ * reading every email ever kept, bodies included, so when nothing is waiting
+ * the timers and pages skip it. (Set under the lock by whatever queues an
+ * email; the hourly job sets it too, in case it was ever lost.)
+ */
+export const EMAILS_WAITING = 'EMAILS_WAITING';
+
+export function markEmailsWaiting(): void {
+  PropertiesService.getScriptProperties().setProperty(EMAILS_WAITING, '1');
+}
+
 export function jobContext(db: Db): Ctx {
   return { db, now: db.now, user: null, email: '', appUrl: appUrl(), queued: 0 };
 }
@@ -26,6 +38,8 @@ export function jobContext(db: Db): Ctx {
  * Returns how many were sent.
  */
 export function sendQueuedEmails(): number {
+  const props = PropertiesService.getScriptProperties();
+  if (!props.getProperty(EMAILS_WAITING)) return 0;
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10_000)) return 0;
   let claimed: { id: string; to: string; subject: string; html: string; text: string }[];
@@ -62,7 +76,10 @@ export function sendQueuedEmails(): number {
       text: n.text,
     }));
     senderName = getSettings(db).orgName;
+    const stillWaiting = t.notifications.find((n) => n.status === 'queued' || n.status === 'sending');
     db.commit();
+    // Nothing queued, nothing being sent: no need to look again until there is.
+    if (!stillWaiting) props.deleteProperty(EMAILS_WAITING);
   } finally {
     lock.releaseLock();
   }
@@ -109,7 +126,9 @@ export function sendQueuedEmails(): number {
         runAfter: iso(ms(db.now) + delay * 60_000),
       });
     }
+    const stillWaiting = t.notifications.find((n) => n.status === 'queued' || n.status === 'sending');
     db.commit();
+    if (!stillWaiting) props.deleteProperty(EMAILS_WAITING);
   } finally {
     lock.releaseLock();
   }
@@ -202,6 +221,10 @@ export function runHourlyJobs(): void {
   if (!lock.tryLock(30_000)) return;
   try {
     const db = new Db();
+    // Look at the email queue this hour whatever the flag says, and drop
+    // cached copies of the Sheet (someone may have edited it by hand).
+    markEmailsWaiting();
+    db.invalidateCache();
     const ctx = jobContext(db);
     settleSwaps(ctx);
     settleOpenShifts(ctx);

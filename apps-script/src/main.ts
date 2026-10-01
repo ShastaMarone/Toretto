@@ -8,7 +8,7 @@ import { APP_URL, appUrl } from './env';
 import { errorResponse, splitUrl, type ApiResponse } from './http';
 import { createRouter } from './routes';
 import { calendarsInUse, syncCalendars } from './services/calendar';
-import { runHourlyJobs, sendQueuedEmails as sendEmails } from './services/jobs';
+import { markEmailsWaiting, runHourlyJobs, sendQueuedEmails as sendEmails } from './services/jobs';
 import { nameFromEmail } from './services/people';
 
 /** Bump when a new version adds tabs or columns: the next change adds them to the Sheet. */
@@ -41,7 +41,18 @@ interface Result extends ApiResponse {
   queued?: number;
 }
 
+/** Slower than this is worth a line in Executions (the Apps Script editor's log). */
+const SLOW_MS = 4000;
+
 function run(method: string, url: string, body: unknown): Result {
+  const started = Date.now();
+  const res = runTimed(method, url, body);
+  const took = Date.now() - started;
+  if (took > SLOW_MS) console.warn(`Slow: ${method} ${url} took ${took} ms (status ${res.status})`);
+  return res;
+}
+
+function runTimed(method: string, url: string, body: unknown): Result {
   const write = writes(method, url);
   const lock = write ? LockService.getScriptLock() : null;
   if (lock && !lock.tryLock(30_000)) {
@@ -51,7 +62,8 @@ function run(method: string, url: string, body: unknown): Result {
     };
   }
   try {
-    const db = new Db();
+    // Reads come from the cache; anything that may change the Sheet reads the Sheet itself.
+    const db = write ? new Db() : Db.reader();
     if (write) migrateIfNeeded(db);
     const ctx = context(db);
     const res = router.handle(method, url, body, ctx);
@@ -59,6 +71,8 @@ function run(method: string, url: string, body: unknown): Result {
     const saved = write && res.status < 400;
     if (saved) db.commit();
     const calendars = saved && method !== 'GET' && calendarsInUse(db) ? 1 : 0;
+    // Still under the lock: emails are waiting to be sent (see sendQueuedEmails).
+    if (saved && ctx.queued > 0) markEmailsWaiting();
     return { ...res, queued: saved ? ctx.queued + calendars : 0 };
   } catch (err) {
     return errorResponse(err);
@@ -82,20 +96,27 @@ export function api(method: string, url: string, bodyJson: string | null): strin
 
 /** Several reads at once (the page batches the ones it makes together): one round trip. */
 export function apiBatch(callsJson: string): string {
+  const started = Date.now();
   const calls = JSON.parse(callsJson) as [string, string][];
-  if (calls.some(([method, url]) => writes(method, url))) {
-    return JSON.stringify(calls.map(([method, url]) => run(method, url, undefined)));
-  }
-  const db = new Db();
+  const results: ApiResponse[] = new Array(calls.length);
+  // Anything that may change the Sheet (like /bootstrap) goes first, on its own.
+  calls.forEach(([method, url], i) => {
+    if (writes(method, url)) results[i] = run(method, url, undefined);
+  });
+  // The reads share one connection to the Sheet and read each tab once.
+  const db = Db.reader();
   let ctx: Ctx | null = null;
-  const results = calls.map(([method, url]) => {
+  calls.forEach(([method, url], i) => {
+    if (results[i]) return;
     try {
       ctx ??= context(db);
-      return router.handle(method, url, undefined, ctx);
+      results[i] = router.handle(method, url, undefined, ctx);
     } catch (err) {
-      return errorResponse(err);
+      results[i] = errorResponse(err);
     }
   });
+  const took = Date.now() - started;
+  if (took > SLOW_MS) console.warn(`Slow: batch of ${calls.length} reads took ${took} ms`);
   return JSON.stringify(results);
 }
 
@@ -186,6 +207,7 @@ export function setup(): string {
     report.push(...ensureSchema(book));
     props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
     const db = new Db();
+    db.invalidateCache(); // setup also makes the app look at the Sheet afresh
     const t = tables(db);
     if (!t.settings.get(ORG_ID)) {
       t.settings.insert({

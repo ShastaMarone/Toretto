@@ -20,6 +20,8 @@ export class FakeRange {
   }
 
   getValues(): Cell[][] {
+    this.sheet.book.reads++;
+    this.sheet.reads++;
     return Array.from({ length: this.rows }, (_, r) =>
       Array.from({ length: this.cols }, (_, c) => this.sheet.cell(this.row + r, this.col + c)),
     );
@@ -60,6 +62,8 @@ export class FakeSheet {
   readonly cells = new Map<string, Cell>();
   maxRows = 1000;
   maxCols = 26;
+  /** getValues calls on this tab. */
+  reads = 0;
 
   constructor(
     readonly book: FakeSpreadsheet,
@@ -150,6 +154,8 @@ export class FakeSpreadsheet {
   readonly sheets = new Map<string, FakeSheet>();
   /** setValues/clearContent calls, to keep an eye on how chatty a request is. */
   writes = 0;
+  /** getValues calls so far: what the cache is there to save. */
+  reads = 0;
 
   constructor(readonly id: string) {}
 
@@ -359,6 +365,10 @@ export interface Emulator {
   kicks: number;
   /** The project's HTML files (index: a stand-in page unless set). */
   files: Map<string, string>;
+  /** CacheService's contents. */
+  cache: Map<string, string>;
+  /** Make CacheService fail (it may, at any time). */
+  cacheDown: boolean;
   /** The owner's Google Calendars, by id. */
   calendars: Map<string, FakeCalendar>;
   /** Make adding a guest with these addresses fail. */
@@ -392,6 +402,8 @@ export function createEmulator(): Emulator {
     files: new Map([
       ['index', '<html><body><div id="root"></div><!--TORETTO_BOOT--></body></html>'],
     ]),
+    cache: new Map(),
+    cacheDown: false,
     calendars: new Map(),
     calendarFailFor: new Set(),
     calendarDown: null,
@@ -498,6 +510,33 @@ export function installAppsScript(target: Record<string, unknown> = globalThis a
         if (e.quota <= 0) throw new Error('Quota exceeded');
         e.quota--;
         e.sent.push(message);
+      },
+    },
+    CacheService: {
+      getScriptCache: () => {
+        const check = (value: string) => {
+          if (env().cacheDown) throw new Error('Service error: Cache');
+          // CacheService refuses values over 100 KB (bytes, not characters).
+          if (Buffer.byteLength(value) > 100 * 1024) throw new Error('Argument too large: value');
+        };
+        const down = () => {
+          if (env().cacheDown) throw new Error('Service error: Cache');
+        };
+        return {
+          get: (key: string) => (down(), env().cache.get(key) ?? null),
+          getAll: (keys: string[]) => {
+            down();
+            return Object.fromEntries(
+              keys.flatMap((k) => (env().cache.has(k) ? [[k, env().cache.get(k)!]] : [])),
+            );
+          },
+          put: (key: string, value: string) => (check(value), void env().cache.set(key, value)),
+          putAll: (items: Record<string, string>) => {
+            for (const value of Object.values(items)) check(value);
+            for (const [k, v] of Object.entries(items)) env().cache.set(k, v);
+          },
+          remove: (key: string) => (down(), void env().cache.delete(key)),
+        };
       },
     },
     Utilities: { getUuid: () => randomUUID(), sleep: () => undefined },
