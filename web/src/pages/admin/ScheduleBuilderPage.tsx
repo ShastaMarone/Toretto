@@ -1,5 +1,6 @@
 import {
   addDays,
+  dayRangeToUtc,
   diffDays,
   eachDay,
   formatDateRange,
@@ -9,6 +10,7 @@ import {
   formatTimestamp,
   localDate,
   moveShiftToDate,
+  startOfWeek,
   todayIn,
   type ISODate,
 } from '@shared/time';
@@ -217,6 +219,7 @@ function Builder({
   const [discarding, setDiscarding] = useState(false);
   const [naming, setNaming] = useState<null | 'create' | 'rename'>(null);
   const [deleting, setDeleting] = useState(false);
+  const [clearingWeek, setClearingWeek] = useState<BuilderShift | null>(null);
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['schedule', schedule.id] });
@@ -335,6 +338,26 @@ function Builder({
         toast('Shift will be removed when you publish', {
           description: 'The team still sees it until then.',
         });
+      refresh();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const removeWeek = useMutation({
+    mutationFn: ({ shift }: { shift: BuilderShift }) => {
+      const first = startOfWeek(localDate(shift.startTime, tz), org.weekStartsOn);
+      const range = new URLSearchParams(dayRangeToUtc(first, addDays(first, 6), tz));
+      return api.delete<{ removed: number; pendingRemoval: number }>(
+        `/users/${shift.userId}/shifts?${range}`,
+      );
+    },
+    onSuccess: (r) => {
+      setDialog(null);
+      setClearingWeek(null);
+      if (r.pendingRemoval)
+        toast('Shifts will be removed when you publish', {
+          description: 'The team still sees the published ones until then.',
+        });
+      else toast.success('Shifts removed');
       refresh();
     },
     onError: (e) => toast.error(e.message),
@@ -944,6 +967,7 @@ function Builder({
           error={edit.error}
           onSave={(payload) => edit.mutate({ shiftId: dialog.shift.id, payload })}
           onDelete={() => remove.mutate(dialog.shift.id)}
+          onDeleteWeek={() => setClearingWeek(dialog.shift)}
           onDuplicate={(draft) => {
             edit.reset();
             setDialog({ mode: 'create', draft: { ...draft, date: addDays(draft.date, 1) } });
@@ -953,6 +977,21 @@ function Builder({
             edit.reset();
           }}
         />
+      )}
+      {clearingWeek && (
+        <ConfirmDialog
+          title={`Remove all of ${data.people.find((p) => p.id === clearingWeek.userId)?.name ?? 'their'} shifts that week?`}
+          confirmLabel="Remove their week"
+          danger
+          loading={removeWeek.isPending}
+          onConfirm={() => removeWeek.mutate({ shift: clearingWeek })}
+          onClose={() => setClearingWeek(null)}
+        >
+          {(() => {
+            const first = startOfWeek(localDate(clearingWeek.startTime, tz), org.weekStartsOn);
+            return `Every shift they have in the week of ${formatDateRange(first, addDays(first, 6))}, on any schedule. Shifts the team can already see stay until you publish.`;
+          })()}
+        </ConfirmDialog>
       )}
       {publishing && (
         <PublishDialog
