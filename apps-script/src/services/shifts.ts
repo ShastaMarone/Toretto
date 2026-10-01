@@ -2,7 +2,7 @@ import { formatShiftWhen } from '@shared/time';
 import type { BuilderShift, RepeatResult } from '@shared/types';
 import type { AuthUser } from '../../../server/src/auth/types';
 import { badRequest, conflict, notFound } from '../../../server/src/errors';
-import { getSettings, iso, ms, tables, type Ctx } from '../core';
+import { audit, getSettings, iso, ms, tables, type Ctx } from '../core';
 import { approvedTimeOffBetween } from './timeOff';
 import { getBuilderShift, requireSchedule } from './schedules';
 
@@ -233,6 +233,29 @@ export function deleteShift(ctx: Ctx, shiftId: string): { pendingRemoval: boolea
   }
   if (!shift.deletedAt) t.shifts.update(shiftId, { deletedAt: ctx.now });
   return { pendingRemoval: true };
+}
+
+/** Take someone off every shift: unpublished ones vanish, published ones go at the next publish. */
+export function removeAllShiftsFor(
+  ctx: Ctx,
+  userId: string,
+): { removed: number; pendingRemoval: number } {
+  const t = tables(ctx.db);
+  if (!t.users.get(userId)) throw notFound('Person');
+  let removed = 0;
+  let pendingRemoval = 0;
+  for (const s of t.shifts.where((s) => s.userId === userId && !s.deletedAt)) {
+    if (deleteShift(ctx, s.id).pendingRemoval) pendingRemoval++;
+    else removed++;
+  }
+  audit(
+    ctx,
+    ctx.user!.id,
+    'user.shifts_removed',
+    { type: 'user', id: userId },
+    { removed, pendingRemoval },
+  );
+  return { removed, pendingRemoval };
 }
 
 /** Delete a shift row and what hangs off it (its swaps; an open shift's link to it). */

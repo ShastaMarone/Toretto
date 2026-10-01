@@ -2,6 +2,7 @@ import { formatRelative } from '@shared/time';
 import type { Person, Role, Team, Tier, UserStatus } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  CalendarX,
   Ellipsis,
   MailPlus,
   Pencil,
@@ -47,6 +48,7 @@ const STATUS: Record<UserStatus, { label: string; tone: Tone }> = {
 type Pending =
   | { kind: 'edit'; person: Person }
   | { kind: 'deactivate'; person: Person }
+  | { kind: 'clear'; person: Person }
   | { kind: 'delete'; person: Person };
 
 export default function PeoplePage() {
@@ -85,6 +87,20 @@ export default function PeoplePage() {
   const resend = useMutation({
     mutationFn: (p: Person) => api.post<Person>(`/users/${p.id}/resend-invite`),
     onSuccess: (p) => toast.success(`New invite sent to ${p.email}`),
+    onError: (e) => toast.error(e.message),
+  });
+  const clearShifts = useMutation({
+    mutationFn: (p: Person) =>
+      api.delete<{ removed: number; pendingRemoval: number }>(`/users/${p.id}/shifts`),
+    onSuccess: (r, p) => {
+      toast.success(
+        r.pendingRemoval
+          ? `${p.name} is off all shifts. Publish to tell the team.`
+          : `${p.name} is off all shifts`,
+      );
+      setPending(null);
+      refresh();
+    },
     onError: (e) => toast.error(e.message),
   });
   const remove = useMutation({
@@ -243,6 +259,16 @@ export default function PeoplePage() {
                             disabled: p.id === me.id,
                             onSelect: () => setPending({ kind: 'deactivate', person: p }),
                           },
+                      ...(p.shiftCount > 0
+                        ? [
+                            {
+                              label: 'Remove all shifts',
+                              icon: <CalendarX />,
+                              danger: true,
+                              onSelect: () => setPending({ kind: 'clear', person: p }),
+                            },
+                          ]
+                        : []),
                       ...(p.shiftCount === 0 && p.id !== me.id
                         ? [
                             {
@@ -291,6 +317,19 @@ export default function PeoplePage() {
         >
           They'll be signed out and can't sign in. Their past shifts stay on the schedule, and you
           can reactivate them later.
+        </ConfirmDialog>
+      )}
+      {pending?.kind === 'clear' && (
+        <ConfirmDialog
+          title={`Remove all shifts for ${pending.person.name}?`}
+          confirmLabel="Remove all shifts"
+          danger
+          loading={clearShifts.isPending}
+          onConfirm={() => clearShifts.mutate(pending.person)}
+          onClose={() => setPending(null)}
+        >
+          They'll come off all {pending.person.shiftCount} of their shifts, past and future. Shifts
+          the team can already see stay until you publish the change.
         </ConfirmDialog>
       )}
       {pending?.kind === 'delete' && (

@@ -253,6 +253,35 @@ export function userRoutes({ db, config, kick }: AppDeps): Router {
     res.json(person);
   });
 
+  /** Take someone off every shift: unpublished ones vanish, published ones go at the next publish. */
+  r.delete('/:id/shifts', async (req, res) => {
+    const { id } = parse(zIdParam, req.params);
+    const result = await withTransaction(db, async (client) => {
+      const { rows } = await client.query<{ name: string }>(
+        'SELECT name FROM users WHERE id = $1',
+        [id],
+      );
+      if (!rows[0]) throw notFound('Person');
+      const { rows: gone } = await client.query(
+        'DELETE FROM shifts WHERE user_id = $1 AND published_at IS NULL RETURNING id',
+        [id],
+      );
+      const { rows: marked } = await client.query(
+        'UPDATE shifts SET deleted_at = now() WHERE user_id = $1 AND deleted_at IS NULL RETURNING id',
+        [id],
+      );
+      await audit(
+        client,
+        req.user!.id,
+        'user.shifts_removed',
+        { type: 'user', id },
+        { name: rows[0].name, removed: gone.length, pendingRemoval: marked.length },
+      );
+      return { removed: gone.length, pendingRemoval: marked.length };
+    });
+    res.json(result);
+  });
+
   r.delete('/:id', async (req, res) => {
     const { id } = parse(zIdParam, req.params);
     if (id === req.user!.id) throw forbidden("You can't delete your own account.");

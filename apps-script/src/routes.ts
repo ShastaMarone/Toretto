@@ -313,6 +313,9 @@ export function createRouter(): Router {
   r.post('/users/:id/resend-invite', 'admin', (req, ctx) =>
     people.resendInvite(ctx, id(req.params)),
   );
+  r.delete('/users/:id/shifts', 'admin', (req, ctx) =>
+    shifts.removeAllShiftsFor(ctx, id(req.params)),
+  );
   r.delete('/users/:id', 'admin', (req, ctx) => {
     people.deletePerson(ctx, id(req.params));
     return noContent();

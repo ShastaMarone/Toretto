@@ -124,7 +124,7 @@ export function apiBatch(callsJson: string): string {
 /** A value as JSON that's safe inside a <script> block. */
 const scriptJson = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
 
-/** The web page. Links in emails open a screen: …/exec/my-schedule, …/exec/confirm-shift/<id>. */
+/** The web page. Links in emails open a screen: …/exec?page=/my-schedule, …?page=/confirm-shift/<id>. */
 export function doGet(e: GoogleAppsScript.Events.DoGet): GoogleAppsScript.HTML.HtmlOutput {
   const url = ScriptApp.getService().getUrl();
   const props = PropertiesService.getScriptProperties();

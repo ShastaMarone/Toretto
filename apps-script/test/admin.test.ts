@@ -169,6 +169,24 @@ describe('people', () => {
     });
   });
 
+  it('removes all of someone\'s shifts, keeping published ones until the next publish', async () => {
+    const wes = await createUser(ctx.db, { name: 'Wes Wipe' });
+    const main = await defaultScheduleId(ctx.db);
+    const day = nextMonday();
+    const draft = await admin
+      .post(`/api/schedules/${main}/shifts`)
+      .send({ userId: wes.id, ...shiftOn(day) })
+      .expect(201);
+    const res = await admin.delete(`/api/users/${wes.id}/shifts`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ removed: 1, pendingRemoval: 0 });
+    expect(
+      (await admin.get('/api/users')).body.find((p: Person) => p.id === wes.id).shiftCount,
+    ).toBe(0);
+    expect((await admin.delete(`/api/shifts/${draft.body.id}`)).status).toBe(404);
+    expect((await member.delete(`/api/users/${wes.id}/shifts`)).status).toBe(403);
+  });
+
   it('can fix an invite email typo, which re-sends the invite', async () => {
     const { body: person } = await admin
       .post('/api/users')
