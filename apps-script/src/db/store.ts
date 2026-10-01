@@ -174,6 +174,23 @@ export class Table<T extends { id: string }> {
     this.changed.add(i);
   }
 
+  /** Changes waiting to be written. */
+  hasChanges(): boolean {
+    return this.loaded && this.changed.size > 0;
+  }
+
+  /**
+   * Read from the cache, but the Sheet now has more or fewer rows than that
+   * copy: someone edited it by hand. Writing now could overwrite their rows.
+   */
+  isStale(): boolean {
+    return (
+      this.loaded &&
+      this.db.servedFromCache(this.def.name) &&
+      this.db.sheet(this.def.name).getLastRow() !== this.readCount + 1
+    );
+  }
+
   /** Blank rows left by deletions, which compact() reclaims. */
   blankRows(): number {
     this.load();
@@ -270,7 +287,21 @@ export class Table<T extends { id: string }> {
 
 /** Big and rarely read by the pages (or holding whole emails): always from the Sheet. */
 const UNCACHED = new Set(['email_log', 'audit_log']);
-const GENERATION = 'CACHE_GENERATION';
+/** Script property: {"*": a generation for everything, "<tab>": a newer one for just that tab}. */
+const GENERATIONS = 'CACHE_GENERATIONS';
+type Generations = Record<string, string>;
+
+function parseGenerations(text: string | null): Generations | null {
+  try {
+    const value = text ? (JSON.parse(text) as unknown) : null;
+    return value && typeof value === 'object' && typeof (value as Generations)['*'] === 'string'
+      ? (value as Generations)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 const newGeneration = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const CACHE_SECONDS = 6 * 60 * 60;
 /** A cache value may be 100 KB (in bytes: leave room for accented letters). */
@@ -284,10 +315,18 @@ function tryCache<T>(fn: (cache: GoogleAppsScript.Cache.Cache) => T): T | null {
   }
 }
 
+/** A cached copy was out of date: nothing was written; run again reading the Sheet. */
+export class StaleCacheError extends Error {
+  constructor() {
+    super('The Sheet changed since it was cached');
+  }
+}
+
 /** The Sheet, opened once per request. `now` is the request's single clock reading. */
 export class Db {
   readonly now: string;
-  private generation: string | null = null;
+  private generations: Generations | null = null;
+  private readonly fromCache = new Set<string>();
   private book: Spreadsheet | null = null;
   private readonly tables = new Map<string, Table<{ id: string }>>();
   private readonly sheets = new Map<string, Sheet>();
@@ -306,30 +345,58 @@ export class Db {
   }
 
   /**
-   * The generation cached copies are filed under. It lives in script properties,
-   * not the cache, so a change can't be forgotten if the cache is down just then.
+   * A Db for requests that change things; they read the cache too. They hold
+   * the lock, and every save changes the generations of the tabs it wrote, so
+   * the copies are current. commit() checks the Sheet wasn't edited by hand.
    */
-  private currentGeneration(): string | null {
-    if (this.generation) return this.generation;
-    try {
-      const props = PropertiesService.getScriptProperties();
-      let gen = props.getProperty(GENERATION);
-      if (!gen) {
-        gen = newGeneration();
-        props.setProperty(GENERATION, gen);
-      }
-      this.generation = gen;
-    } catch {
-      this.generation = null;
-    }
-    return this.generation;
+  static writer(): Db {
+    return new Db(new Date(), true);
   }
 
-  /** Everything cached is out of date: the Sheet changed. */
-  invalidateCache(): void {
-    this.generation = null;
+  /**
+   * The generations cached copies are filed under. They live in script
+   * properties, not the cache, so a change can't be forgotten if the cache is
+   * down just then.
+   */
+  private currentGenerations(): Generations | null {
+    if (this.generations) return this.generations;
     try {
-      PropertiesService.getScriptProperties().setProperty(GENERATION, newGeneration());
+      const props = PropertiesService.getScriptProperties();
+      let gens = parseGenerations(props.getProperty(GENERATIONS));
+      if (!gens) {
+        gens = { '*': newGeneration() };
+        props.setProperty(GENERATIONS, JSON.stringify(gens));
+      }
+      this.generations = gens;
+    } catch {
+      this.generations = null;
+    }
+    return this.generations;
+  }
+
+  /** Everything cached is out of date: the Sheet changed in ways we can't pin to tabs. */
+  invalidateCache(): void {
+    this.setGenerations({ '*': newGeneration() });
+  }
+
+  /** These tabs were written: only their cached copies are out of date. */
+  invalidateTabs(names: string[]): void {
+    if (!names.length) return;
+    let gens: Generations | null = null;
+    try {
+      gens = parseGenerations(PropertiesService.getScriptProperties().getProperty(GENERATIONS));
+    } catch {
+      // start over below
+    }
+    gens ??= { '*': newGeneration() };
+    for (const name of names) gens[name] = newGeneration();
+    this.setGenerations(gens);
+  }
+
+  private setGenerations(gens: Generations): void {
+    this.generations = null;
+    try {
+      PropertiesService.getScriptProperties().setProperty(GENERATIONS, JSON.stringify(gens));
     } catch (err) {
       // Without this, old copies could be used: don't let the cache be used at all.
       console.error(`Couldn't mark the cache out of date: ${String(err)}`);
@@ -337,10 +404,16 @@ export class Db {
     }
   }
 
+  /** Whether this tab's cells came from the cache rather than the Sheet. */
+  servedFromCache(name: string): boolean {
+    return this.fromCache.has(name);
+  }
+
   /** A tab's cells: from the cache if this Db may and it has them, else from the Sheet. */
   readValues(name: string): unknown[][] {
     const useCache = this.cached && !UNCACHED.has(name);
-    const gen = useCache ? this.currentGeneration() : null;
+    const gens = useCache ? this.currentGenerations() : null;
+    const gen = gens ? `${gens['*']}.${gens[name] ?? ''}` : null;
     const key = `toretto:${name}:${gen}`;
     if (gen) {
       const hit = tryCache((cache) => {
@@ -359,7 +432,10 @@ export class Db {
         }
         return JSON.parse(parts.join('')) as unknown[][];
       });
-      if (hit) return hit;
+      if (hit) {
+        this.fromCache.add(name);
+        return hit;
+      }
     }
     const values = this.sheet(name).getDataRange().getValues();
     if (gen) {
@@ -419,10 +495,20 @@ export class Db {
 
   /** Save every change made through this Db. */
   commit(): void {
-    let changed = false;
-    for (const table of this.tables.values()) changed = table.commit() || changed;
+    // Check before writing anything: a copy from the cache may be out of date.
+    for (const table of this.tables.values()) {
+      if (table.hasChanges() && table.isStale()) {
+        this.invalidateCache();
+        throw new StaleCacheError();
+      }
+    }
+    const written: string[] = [];
+    for (const table of this.tables.values()) {
+      if (table.commit()) written.push(table.def.name);
+    }
+    if (!written.length) return;
     SpreadsheetApp.flush();
-    if (changed) this.invalidateCache();
+    this.invalidateTabs(written);
   }
 }
 

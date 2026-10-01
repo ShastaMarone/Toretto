@@ -56,6 +56,42 @@ describe('reads from the cache', () => {
     expect(reads()).toBe(again); // and that's cached again
   });
 
+  it('a save only clears the tabs it wrote', async () => {
+    await get('/tiers');
+    await get('/teams');
+    await admin.post('/api/tiers').send({ name: 'Only tiers', color: '#4f46e5' }).expect(201);
+    const teams = ctx.env.book.sheets.get('teams')!.reads;
+    await get('/teams');
+    expect(ctx.env.book.sheets.get('teams')!.reads).toBe(teams);
+  });
+
+  it('a save reads from the cache too, not the Sheet', async () => {
+    await get('/tiers');
+    const tiers = ctx.env.book.sheets.get('tiers')!;
+    const before = tiers.reads;
+    await admin.post('/api/tiers').send({ name: 'No re-read', color: '#4f46e5' }).expect(201);
+    expect(tiers.reads).toBe(before);
+    expect(names((await get('/tiers')).body)).toContain('No re-read');
+  });
+
+  it('does not overwrite a row someone added to the Sheet by hand', async () => {
+    await get('/tiers'); // cached
+    const sheet = ctx.env.book.sheets.get('tiers')!;
+    const column = (name: string) => {
+      for (let c = 1; c <= sheet.getLastColumn(); c++) if (sheet.cell(1, c) === name) return c;
+      throw new Error(`no ${name} column`);
+    };
+    const row = sheet.getLastRow() + 1;
+    sheet.set(row, column('id'), 'added-by-hand');
+    sheet.set(row, column('name'), 'Added by hand');
+    sheet.set(row, column('color'), '#111111');
+    sheet.set(row, column('sort_order'), '98');
+    await admin.post('/api/tiers').send({ name: 'Added by app', color: '#4f46e5' }).expect(201);
+    const found = names((await get('/tiers')).body);
+    expect(found).toContain('Added by hand');
+    expect(found).toContain('Added by app');
+  });
+
   it('sees a change made by another run of the script', async () => {
     await get('/tiers');
     // Another person using the app adds a tier: it changes the Sheet and its generation.

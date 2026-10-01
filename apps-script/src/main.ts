@@ -4,7 +4,7 @@ import './polyfills';
 import { DEFAULT_LABELS, DEFAULT_TIERS } from '../../server/src/services/defaults';
 import { diagnose as runDiagnose } from './diagnose';
 import { authUser, DEFAULT_SETTINGS, ORG_ID, tables, type Ctx } from './core';
-import { Db, ensureSchema, SPREADSHEET_ID } from './db/store';
+import { Db, ensureSchema, SPREADSHEET_ID, StaleCacheError } from './db/store';
 import { APP_URL, appUrl } from './env';
 import { errorResponse, splitUrl, type ApiResponse } from './http';
 import { createRouter } from './routes';
@@ -63,23 +63,32 @@ function runTimed(method: string, url: string, body: unknown): Result {
     };
   }
   try {
-    // Reads come from the cache; anything that may change the Sheet reads the Sheet itself.
-    const db = write ? new Db() : Db.reader();
-    if (write) migrateIfNeeded(db);
-    const ctx = context(db);
-    const res = router.handle(method, url, body, ctx);
-    // A failed request saves nothing (like a rolled-back transaction).
-    const saved = write && res.status < 400;
-    if (saved) db.commit();
-    const calendars = saved && method !== 'GET' && calendarsInUse(db) ? 1 : 0;
-    // Still under the lock: emails are waiting to be sent (see sendQueuedEmails).
-    if (saved && ctx.queued > 0) markEmailsWaiting();
-    return { ...res, queued: saved ? ctx.queued + calendars : 0 };
+    try {
+      return attempt(method, url, body, write, write ? Db.writer() : Db.reader());
+    } catch (err) {
+      // The Sheet was edited by hand since the cache was filled: nothing was
+      // saved, so run it again reading the Sheet itself.
+      if (!(err instanceof StaleCacheError)) throw err;
+      return attempt(method, url, body, write, new Db());
+    }
   } catch (err) {
     return errorResponse(err);
   } finally {
     lock?.releaseLock();
   }
+}
+
+function attempt(method: string, url: string, body: unknown, write: boolean, db: Db): Result {
+  if (write) migrateIfNeeded(db);
+  const ctx = context(db);
+  const res = router.handle(method, url, body, ctx);
+  // A failed request saves nothing (like a rolled-back transaction).
+  const saved = write && res.status < 400;
+  if (saved) db.commit();
+  const calendars = saved && method !== 'GET' && calendarsInUse(db) ? 1 : 0;
+  // Still under the lock: emails are waiting to be sent (see sendQueuedEmails).
+  if (saved && ctx.queued > 0) markEmailsWaiting();
+  return { ...res, queued: saved ? ctx.queued + calendars : 0 };
 }
 
 function migrateIfNeeded(db: Db): void {
