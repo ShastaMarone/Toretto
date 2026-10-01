@@ -60,7 +60,7 @@ export const ORG_ID = 'org';
 export const DEFAULT_SETTINGS: Omit<OrgSettingsRow, 'id' | 'updatedAt'> = {
   orgName: 'My Team',
   timezone: 'America/Toronto',
-  weekStartsOn: 1,
+  weekStartsOn: 0,
   reminderHours: 24,
   selfSignup: false,
   allowedDomains: [],
@@ -77,7 +77,7 @@ export function getSettings(db: Db): OrgSettings {
   return {
     orgName: s.orgName,
     timezone: s.timezone,
-    weekStartsOn: s.weekStartsOn === 0 ? 0 : 1,
+    weekStartsOn: s.weekStartsOn === 1 ? 1 : 0,
     reminderHours: s.reminderHours,
     selfSignup: s.selfSignup,
     allowedDomains: s.allowedDomains ?? [],
