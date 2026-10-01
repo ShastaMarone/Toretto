@@ -1,4 +1,4 @@
-import {
+﻿import {
   addDays,
   dayRangeToUtc,
   diffDays,
@@ -42,6 +42,7 @@ import {
 } from '../../api/queries';
 import { CalendarNav, TierFilter } from '../../components/schedule/CalendarBits';
 import { DayTimeline, type TimelineBar } from '../../components/schedule/DayTimeline';
+import { ScheduleAgenda } from '../../components/schedule/ScheduleAgenda';
 import { ScheduleGrid } from '../../components/schedule/ScheduleGrid';
 import { ScheduleSwitcher } from '../../components/schedule/ScheduleSwitcher';
 import {
@@ -78,6 +79,7 @@ import {
   type CalendarView,
 } from '../../lib/schedule';
 import { useBootstrapData, useTimeFormat } from '../../lib/session';
+import { useMediaQuery } from '../../lib/useMediaQuery';
 import { zoneLabel } from '../../lib/timezones';
 
 type DialogState = { mode: 'create'; draft: ShiftDraft } | { mode: 'edit'; shift: BuilderShift };
@@ -209,6 +211,8 @@ function Builder({
   const team = useTeamSchedule(addDays(data.from, -1), addDays(data.to, 1));
   const days = useMemo(() => eachDay(data.from, data.to), [data.from, data.to]);
   const compact = days.length > 14;
+  // On a phone the people × days grid means scrolling sideways: show a list of days instead.
+  const phone = useMediaQuery('(max-width: 639px)');
   const holidays = useHolidays(data.from, data.to);
   const queryKey = keys.schedule(schedule.id, data.from, data.to);
 
@@ -613,6 +617,72 @@ function Builder({
     return [...mine, ...gone];
   };
 
+  const renderShiftCell = (person: PersonRow, day: ISODate, list = false) => {
+    const cellShifts = byUserDay.get(person.id)?.get(day) ?? [];
+    const cellGhosts = ghosts.get(person.id)?.get(day) ?? [];
+    const off = offByUserDay.get(person.id)?.get(day) ?? [];
+    return (
+      <div className={cx('flex flex-col gap-1', !list && 'min-h-[4.5rem]')}>
+        {off.map((entry) => (
+          <TimeOffChip key={entry.id} entry={entry} tz={tz} compact={compact} />
+        ))}
+        {cellShifts.map((s) => (
+          <ShiftChip
+            key={s.id}
+            shift={s}
+            tz={tz}
+            compact={compact}
+            color={colorFor(s, person)}
+            labelName={s.labelId ? labelsById.get(s.labelId)?.name : undefined}
+            status={s.published ? s.status : null}
+            change={s.changeState === 'new' || s.changeState === 'updated' ? s.changeState : null}
+            draggable
+            dragging={draggingId === s.id}
+            onDragStart={onDragStart(s)}
+            onDragEnd={onDragEnd}
+            onClick={() => setDialog({ mode: 'edit', shift: s })}
+          />
+        ))}
+        {cellGhosts.map((g) =>
+          g.working.changeState === 'removed' ? (
+            <ShiftChip
+              key={g.id}
+              shift={g}
+              tz={tz}
+              compact={compact}
+              color={colorFor(g.working, person)}
+              status={null}
+              removed
+              onRestore={() => restore.mutate(g.id)}
+            />
+          ) : (
+            <ShiftChip
+              key={g.id}
+              shift={g}
+              tz={tz}
+              compact={compact}
+              color={colorFor(g.working, person)}
+              status={null}
+              removed
+              caption={`Moved to ${formatDay(localDate(g.working.startTime, tz))}`}
+              onClick={() => onDate(localDate(g.working.startTime, tz))}
+            />
+          ),
+        )}
+        {person.active && (
+          <button
+            type="button"
+            onClick={() => openCreate(person.id, day)}
+            aria-label={`Add shift for ${person.name} on ${formatDay(day)}`}
+            className="flex h-6 w-full items-center justify-center rounded-md border border-dashed border-slate-300 text-slate-400 opacity-0 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-600 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
@@ -775,7 +845,39 @@ function Builder({
         </Banner>
       )}
 
-      {view === 'day' ? (
+      {phone && view !== 'month' ? (
+        <ScheduleAgenda
+          days={days}
+          today={today}
+          holidays={holidays}
+          groups={groups}
+          hasContent={(person, day) =>
+            !!(
+              byUserDay.get(person.id)?.get(day)?.length ||
+              ghosts.get(person.id)?.get(day)?.length ||
+              offByUserDay.get(person.id)?.get(day)?.length
+            )
+          }
+          daySummary={(d) => {
+            const dayShifts = shifts.filter((s) => localDate(s.startTime, tz) === d);
+            return dayShifts.length
+              ? `${dayShifts.length} · ${formatHours(totalHours(dayShifts))}`
+              : '—';
+          }}
+          renderPerson={renderPerson}
+          renderCell={(person, day) => renderShiftCell(person, day, true)}
+          onAddDay={
+            groups[0]?.people[0] ? (day) => openCreate(groups[0]!.people[0]!.id, day) : undefined
+          }
+          empty="No one matches these filters. Add people on the People page."
+          footer={
+            <div className="space-y-1 px-1 pt-1 pb-3 text-xs text-slate-500">
+              <ScheduleLegend showChanges />
+              <p>Tap a shift to edit it · times in {zoneLabel(tz)}</p>
+            </div>
+          }
+        />
+      ) : view === 'day' ? (
         <DayTimeline
           day={data.from}
           today={today}
@@ -847,73 +949,7 @@ function Builder({
               dropKey === `${person.id}|${day}` && 'bg-brand-50 ring-2 ring-inset ring-brand-400',
             ),
           })}
-          renderCell={(person, day) => {
-            const cellShifts = byUserDay.get(person.id)?.get(day) ?? [];
-            const cellGhosts = ghosts.get(person.id)?.get(day) ?? [];
-            const off = offByUserDay.get(person.id)?.get(day) ?? [];
-            return (
-              <div className="flex min-h-[4.5rem] flex-col gap-1">
-                {off.map((entry) => (
-                  <TimeOffChip key={entry.id} entry={entry} tz={tz} compact={compact} />
-                ))}
-                {cellShifts.map((s) => (
-                  <ShiftChip
-                    key={s.id}
-                    shift={s}
-                    tz={tz}
-                    compact={compact}
-                    color={colorFor(s, person)}
-                    labelName={s.labelId ? labelsById.get(s.labelId)?.name : undefined}
-                    status={s.published ? s.status : null}
-                    change={
-                      s.changeState === 'new' || s.changeState === 'updated' ? s.changeState : null
-                    }
-                    draggable
-                    dragging={draggingId === s.id}
-                    onDragStart={onDragStart(s)}
-                    onDragEnd={onDragEnd}
-                    onClick={() => setDialog({ mode: 'edit', shift: s })}
-                  />
-                ))}
-                {cellGhosts.map((g) =>
-                  g.working.changeState === 'removed' ? (
-                    <ShiftChip
-                      key={g.id}
-                      shift={g}
-                      tz={tz}
-                      compact={compact}
-                      color={colorFor(g.working, person)}
-                      status={null}
-                      removed
-                      onRestore={() => restore.mutate(g.id)}
-                    />
-                  ) : (
-                    <ShiftChip
-                      key={g.id}
-                      shift={g}
-                      tz={tz}
-                      compact={compact}
-                      color={colorFor(g.working, person)}
-                      status={null}
-                      removed
-                      caption={`Moved to ${formatDay(localDate(g.working.startTime, tz))}`}
-                      onClick={() => onDate(localDate(g.working.startTime, tz))}
-                    />
-                  ),
-                )}
-                {person.active && (
-                  <button
-                    type="button"
-                    onClick={() => openCreate(person.id, day)}
-                    aria-label={`Add shift for ${person.name} on ${formatDay(day)}`}
-                    className="flex h-6 w-full items-center justify-center rounded-md border border-dashed border-slate-300 text-slate-400 opacity-0 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-600 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                  >
-                    <Plus className="size-3.5" />
-                  </button>
-                )}
-              </div>
-            );
-          }}
+          renderCell={renderShiftCell}
           empty="No one matches these filters. Add people on the People page."
           footer={
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 px-4 py-3 text-xs text-slate-500">
