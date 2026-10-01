@@ -191,3 +191,16 @@ describe('the email log', () => {
     ctx.env.failFor.clear();
   });
 });
+
+describe('diagnose', () => {
+  it('times each step the Scheduler page takes, from the editor', () => {
+    activate(ctx.env);
+    ctx.env.activeUser = boss.email;
+    const report = main.diagnose();
+    expect(report).toMatch(/lock \(get and release\)/);
+    expect(report).toMatch(/read tab shifts {2}\d+ rows/);
+    expect(report).toMatch(/\[again\] the schedule for two weeks {2}status 200/);
+    expect(report).toMatch(/TOTAL/);
+    expect(report).not.toMatch(/FAILED|COULD NOT/);
+  });
+});

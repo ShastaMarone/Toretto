@@ -2,6 +2,7 @@
 // (api, apiBatch), setup() from the editor, and the timed jobs.
 import './polyfills';
 import { DEFAULT_LABELS, DEFAULT_TIERS } from '../../server/src/services/defaults';
+import { diagnose as runDiagnose } from './diagnose';
 import { authUser, DEFAULT_SETTINGS, ORG_ID, tables, type Ctx } from './core';
 import { Db, ensureSchema, SPREADSHEET_ID } from './db/store';
 import { APP_URL, appUrl } from './env';
@@ -183,6 +184,11 @@ function notice(title: string, ...paragraphs: string[]): GoogleAppsScript.HTML.H
   )
     .setTitle('Toretto Scheduling')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/** Run from the editor to time what the Scheduler page does, on your real Sheet. */
+export function diagnose(): string {
+  return runDiagnose(api);
 }
 
 /**

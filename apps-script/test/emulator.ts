@@ -159,6 +159,10 @@ export class FakeSpreadsheet {
 
   constructor(readonly id: string) {}
 
+  getName(): string {
+    return this.id;
+  }
+
   getId(): string {
     return this.id;
   }
@@ -465,6 +469,7 @@ export function installAppsScript(target: Record<string, unknown> = globalThis a
         setProperty: (key: string, value: string) => {
           env().properties.set(key, value);
         },
+        getProperties: () => Object.fromEntries(env().properties),
         deleteProperty: (key: string) => {
           env().properties.delete(key);
         },

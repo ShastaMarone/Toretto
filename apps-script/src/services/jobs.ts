@@ -76,7 +76,9 @@ export function sendQueuedEmails(): number {
       text: n.text,
     }));
     senderName = getSettings(db).orgName;
-    const stillWaiting = t.notifications.find((n) => n.status === 'queued' || n.status === 'sending');
+    const stillWaiting = t.notifications.find(
+      (n) => n.status === 'queued' || n.status === 'sending',
+    );
     db.commit();
     // Nothing queued, nothing being sent: no need to look again until there is.
     if (!stillWaiting) props.deleteProperty(EMAILS_WAITING);
@@ -126,7 +128,9 @@ export function sendQueuedEmails(): number {
         runAfter: iso(ms(db.now) + delay * 60_000),
       });
     }
-    const stillWaiting = t.notifications.find((n) => n.status === 'queued' || n.status === 'sending');
+    const stillWaiting = t.notifications.find(
+      (n) => n.status === 'queued' || n.status === 'sending',
+    );
     db.commit();
     if (!stillWaiting) props.deleteProperty(EMAILS_WAITING);
   } finally {

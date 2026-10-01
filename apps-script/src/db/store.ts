@@ -368,7 +368,8 @@ export class Db {
         const count = Math.max(1, Math.ceil(json.length / CHUNK));
         const items: Record<string, string> = {};
         for (let i = 0; i < count; i++) {
-          items[`${key}:${i}`] = `${i === 0 ? `${count}|` : ''}${json.slice(i * CHUNK, (i + 1) * CHUNK)}`;
+          items[`${key}:${i}`] =
+            `${i === 0 ? `${count}|` : ''}${json.slice(i * CHUNK, (i + 1) * CHUNK)}`;
         }
         cache.putAll(items, CACHE_SECONDS);
       });

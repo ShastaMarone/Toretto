@@ -56,6 +56,8 @@ export async function buildServer(version) {
 const ENTRY_POINTS = `
 /** Run once after pasting this file, and again after each update. */
 function setup() { return Toretto.setup(); }
+/** If screens are slow or stuck: run this and read the log (it times each step). */
+function diagnose() { return Toretto.diagnose(); }
 /** The web app (Deploy → New deployment → Web app). */
 function doGet(e) { return Toretto.doGet(e); }
 /** The page's API calls. */
