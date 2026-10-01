@@ -40,6 +40,8 @@ const writes = (method: string, url: string) =>
 interface Result extends ApiResponse {
   /** Emails were queued, or calendars may need changes: the page asks for that to happen now. */
   queued?: number;
+  /** How long the script itself took, so the page can tell its own waiting from Google's. */
+  ms?: number;
 }
 
 /** Slower than this is worth a line in Executions (the Apps Script editor's log). */
@@ -50,7 +52,7 @@ function run(method: string, url: string, body: unknown): Result {
   const res = runTimed(method, url, body);
   const took = Date.now() - started;
   if (took > SLOW_MS) console.warn(`Slow: ${method} ${url} took ${took} ms (status ${res.status})`);
-  return res;
+  return { ...res, ms: took };
 }
 
 function runTimed(method: string, url: string, body: unknown): Result {
@@ -118,7 +120,7 @@ export function apiBatch(callsJson: string): string {
   });
   const took = Date.now() - started;
   if (took > SLOW_MS) console.warn(`Slow: batch of ${calls.length} reads took ${took} ms`);
-  return JSON.stringify(results);
+  return JSON.stringify(results.map((r) => ({ ...r, ms: took })));
 }
 
 /** A value as JSON that's safe inside a <script> block. */

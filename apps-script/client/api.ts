@@ -2,6 +2,7 @@
 // exports, but calls go through google.script.run instead of fetch. Reads
 // made together (a screen's queries) share one round trip.
 import type { ApiErrorBody } from '@shared/types';
+import { toast } from 'sonner';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -21,6 +22,21 @@ interface Result {
   body?: unknown;
   /** Emails were queued: ask for them to go out now rather than at the next timer. */
   queued?: number;
+  /** How long the script itself took (the rest of the wait is Google getting it there and back). */
+  ms?: number;
+}
+
+/** Waits longer than this say where the time went, so slow Google can be told from a slow script. */
+const SLOW_WAIT_MS = 8_000;
+
+function reportSlow(method: string, path: string, started: number, scriptMs: number | undefined) {
+  const total = Date.now() - started;
+  if (total < SLOW_WAIT_MS) return;
+  const script = scriptMs === undefined ? 'unknown' : `${(scriptMs / 1000).toFixed(1)}s`;
+  console.warn(`Slow: ${method} ${path}: ${total} ms in all, ${script} in the script`);
+  toast.warning(`Slow response: ${(total / 1000).toFixed(0)}s in all`, {
+    description: `The script took ${script}; the rest was Google getting the request there and back.`,
+  });
 }
 
 interface Pending {
@@ -82,6 +98,7 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Result;
+  const started = Date.now();
   try {
     const sending = send(method, path, body);
     res = await (method === 'GET' ? within(sending, READ_TIMEOUT_MS) : sending);
@@ -102,6 +119,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       `Can't reach Google Apps Script${reason}. Check your connection and try again.`,
     );
   }
+  reportSlow(method, path, started, res.ms);
   if (res.queued) {
     google.script.run.withFailureHandler(() => undefined).sendQueuedEmails();
   }
