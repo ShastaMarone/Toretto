@@ -158,7 +158,9 @@ createServer((req, res) => {
     parameter: params,
   });
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.end(page.getContent().replace('<head>', `<head>${shim(as)}`));
+  // doGet's addMetaTag(viewport) is Google's job in real life: do it here so phones look right.
+  const viewport = '<meta name="viewport" content="width=device-width, initial-scale=1">';
+  res.end(page.getContent().replace('<head>', `<head>${viewport}${shim(as)}`));
 }).listen(PORT, () => {
   console.log(
     `Apps Script preview on http://localhost:${PORT} (as ${ADMIN}; add ?as=priya@example.com)`,
