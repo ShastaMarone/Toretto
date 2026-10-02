@@ -1,4 +1,4 @@
-﻿import { useState, type DragEvent } from 'react';
+import { useState, type DragEvent } from 'react';
 
 /** Drag a tier's header onto another's to move it: what GroupRows needs to take part. */
 export interface GroupDrag {
@@ -9,6 +9,9 @@ export interface GroupDrag {
   onDragEnd: () => void;
   onDragOver: (e: DragEvent<HTMLElement>) => void;
   onDrop: (e: DragEvent<HTMLElement>) => void;
+  /** The same change without dragging (touch screens, or browsers where dragging is fiddly). */
+  moveUp?: () => void;
+  moveDown?: () => void;
 }
 
 /**
@@ -25,7 +28,16 @@ export function useGroupReorder(keys: string[], onReorder?: (keys: string[]) => 
   };
   return (key: string): GroupDrag | undefined => {
     if (!onReorder || key === 'none') return undefined;
+    const tiers = keys.filter((k) => k !== 'none');
+    const at = tiers.indexOf(key);
+    const swapWith = (other: number) => () => {
+      const next = [...tiers];
+      [next[at], next[other]] = [next[other]!, next[at]!];
+      onReorder(keys.includes('none') ? [...next, 'none'] : next);
+    };
     return {
+      moveUp: at > 0 ? swapWith(at - 1) : undefined,
+      moveDown: at < tiers.length - 1 ? swapWith(at + 1) : undefined,
       dragging: dragging === key,
       over: over === key && dragging !== key,
       onDragStart: (e) => {
