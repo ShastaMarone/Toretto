@@ -108,6 +108,8 @@ export interface Tier {
   name: string;
   color: string;
   sortOrder: number;
+  /** Minutes of unpaid break (lunch) taken off each longer shift when hours are counted. */
+  unpaidBreakMinutes: number;
   memberCount: number;
 }
 

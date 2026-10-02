@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { overtimeReasons, weeklyHours, type OvertimeRules } from './overtime';
-import { addDays, formatDay, formatHours, shiftTimesFromLocal } from './time';
+import { addDays, formatDay, formatHours, paidHours, shiftTimesFromLocal } from './time';
 
 const TZ = 'America/Toronto';
 const LABOUR_CODE: OvertimeRules = { dailyHours: 8, weeklyHours: 40 };
@@ -8,6 +8,34 @@ const LABOUR_CODE: OvertimeRules = { dailyHours: 8, weeklyHours: 40 };
 const SUNDAY = '2026-10-04';
 const on = (day: number, start: string, end: string) =>
   shiftTimesFromLocal(addDays(SUNDAY, day), start, end, TZ);
+
+describe('unpaid breaks', () => {
+  // Helpdesk Nights: 23:30 to 08:30 is 9 hours on the clock, 8 with an hour's unpaid lunch.
+  const nights = [1, 2, 3, 4, 5].map((d) => ({
+    ...on(d, '23:30', '08:30'),
+    unpaidBreakMinutes: 60,
+  }));
+
+  it('counts five 9-hour shifts with a 60 minute break as 40 hours, with no overtime', () => {
+    const [week] = weeklyHours(nights, TZ, 0, LABOUR_CODE);
+    expect(week).toMatchObject({ hours: 40, overtime: 0, weeklyOvertime: 0 });
+  });
+
+  it('still shows the overtime when no break is taken off', () => {
+    const noBreak = nights.map(({ unpaidBreakMinutes: _unused, ...shift }) => shift);
+    const [week] = weeklyHours(noBreak, TZ, 0, LABOUR_CODE);
+    expect(week).toMatchObject({ hours: 45, overtime: 5 });
+  });
+
+  it('only takes the break off longer shifts', () => {
+    expect(paidHours(...(Object.values(on(1, '09:00', '14:00')) as [string, string]), 60)).toBe(5);
+    expect(paidHours(...(Object.values(on(1, '09:00', '14:30')) as [string, string]), 60)).toBe(
+      4.5,
+    );
+    expect(paidHours(...(Object.values(on(1, '09:00', '18:00')) as [string, string]), 60)).toBe(8);
+    expect(paidHours(...(Object.values(on(1, '09:00', '18:00')) as [string, string]))).toBe(9);
+  });
+});
 
 describe('weeklyHours', () => {
   it('has no overtime for five 8-hour days', () => {

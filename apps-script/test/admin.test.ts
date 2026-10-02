@@ -144,6 +144,30 @@ describe('tiers and labels', () => {
   });
 });
 
+describe('unpaid breaks', () => {
+  it("saves a tier's unpaid break and rejects silly ones", async () => {
+    const made = await admin.post('/api/tiers').send({ name: 'Nights', color: '#1d4ed8' });
+    expect(made.status).toBe(201);
+    expect(made.body.unpaidBreakMinutes).toBe(0);
+    const id = made.body.id as string;
+    const saved = await admin.patch(`/api/tiers/${id}`).send({ unpaidBreakMinutes: 60 });
+    expect(saved.body.unpaidBreakMinutes).toBe(60);
+    const listed = ((await admin.get('/api/tiers')).body as Tier[]).find((t) => t.id === id);
+    expect(listed?.unpaidBreakMinutes).toBe(60);
+    // A rename leaves it alone.
+    const renamed = await admin.patch(`/api/tiers/${id}`).send({ name: 'Helpdesk Nights' });
+    expect(renamed.body).toMatchObject({ name: 'Helpdesk Nights', unpaidBreakMinutes: 60 });
+    for (const bad of [-5, 241, 30.5]) {
+      expect((await admin.patch(`/api/tiers/${id}`).send({ unpaidBreakMinutes: bad })).status).toBe(
+        400,
+      );
+    }
+    expect((await member.patch(`/api/tiers/${id}`).send({ unpaidBreakMinutes: 0 })).status).toBe(
+      403,
+    );
+  });
+});
+
 describe('tier order', () => {
   it('saves a new order for the tiers, which the schedule follows', async () => {
     const first = await createTier(ctx.db, 'Order A');

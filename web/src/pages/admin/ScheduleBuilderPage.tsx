@@ -71,11 +71,13 @@ import { useHolidays } from '../../lib/holidays';
 import { overtimeIn, overtimeRules } from '../../lib/overtime';
 import {
   draftFromShift,
+  breakMinutesByUser,
   groupByTier,
   groupByUserDay,
   stepView,
   timeOffByUserDay,
   totalHours,
+  withBreaks,
   viewRange,
   type CalendarView,
 } from '../../lib/schedule';
@@ -243,7 +245,12 @@ function Builder({
   );
   const groups = groupByTier(visiblePeople, tierList);
   const visibleIds = new Set(visiblePeople.map((p) => p.id));
-  const shifts = data.shifts.filter((s) => visibleIds.has(s.userId));
+  // Hours are paid hours: each person's tier can take an unpaid break (lunch) off their shifts.
+  const breakByUser = breakMinutesByUser(data.people, tierList);
+  const shifts = withBreaks(
+    data.shifts.filter((s) => visibleIds.has(s.userId)),
+    breakByUser,
+  );
   const byUserDay = useMemo(() => groupByUserDay(data.shifts, tz), [data.shifts, tz]);
   // Published shifts going away: shown where the team still sees them.
   const ghosts = useMemo(
@@ -265,7 +272,7 @@ function Builder({
     [data.timeOff, days, tz],
   );
   const onOtherSchedules = useMemo(() => {
-    const byUser = new Map<string, { startTime: string; endTime: string }[]>();
+    const byUser = new Map<string, { userId: string; startTime: string; endTime: string }[]>();
     for (const s of team.data?.shifts ?? []) {
       const d = localDate(s.startTime, tz);
       if (s.scheduleId === schedule.id || d < data.from || d > data.to) continue;
@@ -574,7 +581,7 @@ function Builder({
   };
   const renderPerson = (person: PersonRow) => {
     const personShifts = shifts.filter((s) => s.userId === person.id);
-    const other = onOtherSchedules.get(person.id) ?? [];
+    const other = withBreaks(onOtherSchedules.get(person.id) ?? [], breakByUser);
     const overtime = overtimeIn(
       [...personShifts, ...other],
       data.from,
@@ -617,6 +624,7 @@ function Builder({
       id: s.id,
       startTime: s.startTime,
       endTime: s.endTime,
+      unpaidBreakMinutes: breakByUser.get(person.id) ?? 0,
       color: colorFor(s, person),
       labelName: s.labelId ? labelsById.get(s.labelId)?.name : undefined,
       notes: s.notes,

@@ -13,7 +13,7 @@ import { markEmailsWaiting, runHourlyJobs, sendQueuedEmails as sendEmails } from
 import { nameFromEmail } from './services/people';
 
 /** Bump when a new version adds tabs or columns: the next change adds them to the Sheet. */
-export const SCHEMA_VERSION = '2';
+export const SCHEMA_VERSION = '3';
 
 /**
  * Which build this is. build.mjs stamps the same version into Code.gs and

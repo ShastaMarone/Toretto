@@ -20,6 +20,7 @@ function toTier(ctx: Ctx, id: string): Tier {
     name: tier.name,
     color: tier.color,
     sortOrder: tier.sortOrder,
+    unpaidBreakMinutes: tier.unpaidBreakMinutes ?? 0,
     memberCount: t.users.where((u) => u.tierId === id && !u.deactivatedAt).length,
   };
 }
@@ -31,7 +32,10 @@ export function listTiers(ctx: Ctx): Tier[] {
     .map((tier) => toTier(ctx, tier.id));
 }
 
-export function createTier(ctx: Ctx, body: { name: string; color: string }): Tier {
+export function createTier(
+  ctx: Ctx,
+  body: { name: string; color: string; unpaidBreakMinutes?: number },
+): Tier {
   const t = tables(ctx.db);
   if (t.tiers.find((x) => sameName(x.name, body.name))) throw nameTaken();
   const sortOrder = Math.max(0, ...t.tiers.all().map((x) => x.sortOrder)) + 1;
@@ -43,7 +47,7 @@ export function createTier(ctx: Ctx, body: { name: string; color: string }): Tie
 export function updateTier(
   ctx: Ctx,
   id: string,
-  body: { name?: string; color?: string; sortOrder?: number },
+  body: { name?: string; color?: string; sortOrder?: number; unpaidBreakMinutes?: number },
 ): Tier {
   const t = tables(ctx.db);
   if (!t.tiers.get(id)) throw notFound('Tier');

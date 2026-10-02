@@ -169,7 +169,14 @@ export function createRouter(): Router {
     created(
       catalog.createTier(
         ctx,
-        parse(z.object({ name: zName('Tier name', 60), color: zColor }), req.body),
+        parse(
+          z.object({
+            name: zName('Tier name', 60),
+            color: zColor,
+            unpaidBreakMinutes: z.number().int().min(0).max(240).optional(),
+          }),
+          req.body,
+        ),
       ),
     ),
   );
@@ -185,6 +192,7 @@ export function createRouter(): Router {
           name: zName('Tier name', 60).optional(),
           color: zColor.optional(),
           sortOrder: z.number().int().min(0).max(1000).optional(),
+          unpaidBreakMinutes: z.number().int().min(0).max(240).optional(),
         }),
         req.body,
       ),

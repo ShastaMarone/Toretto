@@ -1,4 +1,4 @@
-import { localDate, shiftHours, startOfWeek, type ISODate } from './time';
+import { localDate, paidHours, startOfWeek, type ISODate } from './time';
 import type { WeekStart } from './types';
 
 /** Hours before overtime: in a day, and in a week (null: no limit). */
@@ -36,7 +36,7 @@ const sum = (list: number[]) => round(list.reduce((a, b) => a + b, 0));
  * limits are 8 hours of overtime, not 8 + 0 + more.
  */
 export function weeklyHours(
-  shifts: { startTime: string; endTime: string }[],
+  shifts: { startTime: string; endTime: string; unpaidBreakMinutes?: number }[],
   tz: string,
   weekStartsOn: WeekStart,
   rules: OvertimeRules,
@@ -44,7 +44,7 @@ export function weeklyHours(
   const byDay = new Map<ISODate, number>();
   for (const s of shifts) {
     const day = localDate(s.startTime, tz);
-    byDay.set(day, (byDay.get(day) ?? 0) + shiftHours(s.startTime, s.endTime));
+    byDay.set(day, (byDay.get(day) ?? 0) + paidHours(s.startTime, s.endTime, s.unpaidBreakMinutes));
   }
   const weeks = new Map<ISODate, DayTotal[]>();
   for (const [date, raw] of [...byDay].sort(([a], [b]) => a.localeCompare(b))) {
