@@ -220,7 +220,7 @@ function Builder({
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
-  const [publishing, setPublishing] = useState<null | { all: boolean }>(null);
+  const [publishing, setPublishing] = useState<null | { all: boolean; notify: boolean }>(null);
   const [discarding, setDiscarding] = useState(false);
   const [naming, setNaming] = useState<null | 'create' | 'rename'>(null);
   const [deleting, setDeleting] = useState(false);
@@ -444,20 +444,25 @@ function Builder({
     onSettled: refresh,
   });
   const publish = useMutation({
-    mutationFn: (all: boolean) =>
-      api.post<PublishResult>(
-        `/schedules/${schedule.id}/publish`,
-        all ? {} : { from: data.from, to: data.to },
-      ),
-    onSuccess: (r) => {
+    mutationFn: ({ all, notify }: { all: boolean; notify: boolean }) =>
+      api.post<PublishResult>(`/schedules/${schedule.id}/publish`, {
+        ...(all ? {} : { from: data.from, to: data.to }),
+        // Only said when quiet, so an older server still works as before.
+        ...(notify ? {} : { notify: false }),
+      }),
+    onSuccess: (r, { notify }) => {
       setPublishing(null);
       const changed = r.added + r.updated + r.removed;
       toast.success(changed ? 'Published' : 'Nothing new to publish', {
-        description: r.emailsQueued
-          ? `Emailing ${r.emailsQueued} ${r.emailsQueued === 1 ? 'person' : 'people'} so they can confirm.`
-          : changed
-            ? 'No one needed an email (all changes were in the past).'
-            : undefined,
+        description: !notify
+          ? changed
+            ? 'No emails were sent. The team can see the changes in the app.'
+            : undefined
+          : r.emailsQueued
+            ? `Emailing ${r.emailsQueued} ${r.emailsQueued === 1 ? 'person' : 'people'} so they can confirm.`
+            : changed
+              ? 'No one needed an email (all changes were in the past).'
+              : undefined,
       });
       refresh();
     },
@@ -745,7 +750,7 @@ function Builder({
             variant="primary"
             icon={<Send className="size-4" />}
             disabled={!hasChanges && elsewhere === 0}
-            onClick={() => setPublishing({ all: !hasChanges })}
+            onClick={() => setPublishing({ all: !hasChanges, notify: true })}
           >
             {hasChanges
               ? `Publish ${changes.total} change${changes.total === 1 ? '' : 's'}`
@@ -775,7 +780,7 @@ function Builder({
               {
                 label: `Publish all changes (${schedule.pendingChanges})`,
                 icon: <Send />,
-                onSelect: () => setPublishing({ all: true }),
+                onSelect: () => setPublishing({ all: true, notify: true }),
                 disabled: schedule.pendingChanges === 0,
               },
             ]}
@@ -1063,13 +1068,15 @@ function Builder({
       {publishing && (
         <PublishDialog
           all={publishing.all}
+          notify={publishing.notify}
+          onNotify={(notify) => setPublishing({ ...publishing, notify })}
           rangeLabel={rangeLabel}
           changes={changes}
           affectedPeople={affectedPeople}
           totalChanges={schedule.pendingChanges}
           loading={publish.isPending}
-          onToggleAll={(all) => setPublishing({ all })}
-          onConfirm={() => publish.mutate(publishing.all)}
+          onToggleAll={(all) => setPublishing({ ...publishing, all })}
+          onConfirm={() => publish.mutate({ all: publishing.all, notify: publishing.notify })}
           onClose={() => setPublishing(null)}
         />
       )}
@@ -1131,6 +1138,8 @@ function Banner({ tone, children }: { tone: 'slate' | 'amber'; children: ReactNo
 
 function PublishDialog({
   all,
+  notify,
+  onNotify,
   rangeLabel,
   changes,
   affectedPeople,
@@ -1141,6 +1150,9 @@ function PublishDialog({
   onClose,
 }: {
   all: boolean;
+  /** Email everyone affected (otherwise publish quietly). */
+  notify: boolean;
+  onNotify: (notify: boolean) => void;
   rangeLabel: string;
   changes: ScheduleRange['changes'];
   affectedPeople: number;
@@ -1154,7 +1166,7 @@ function PublishDialog({
   return (
     <ConfirmDialog
       title={all ? 'Publish every unpublished change?' : `Publish ${rangeLabel}?`}
-      confirmLabel="Publish & notify"
+      confirmLabel={notify ? 'Publish & notify' : 'Publish without notifying'}
       loading={loading}
       onConfirm={onConfirm}
       onClose={onClose}
@@ -1162,8 +1174,9 @@ function PublishDialog({
       {all ? (
         <p>
           All {totalChanges} unpublished change{totalChanges === 1 ? '' : 's'} on this schedule
-          become visible to the team. Everyone affected gets one email with their new, changed or
-          cancelled shifts.
+          become visible to the team.
+          {notify &&
+            ' Everyone affected gets one email with their new, changed or cancelled shifts.'}
         </p>
       ) : (
         <p>
@@ -1174,9 +1187,14 @@ function PublishDialog({
           ]
             .filter(Boolean)
             .join(', ')}{' '}
-          shift{changes.total === 1 ? '' : 's'} become visible to the team. {affectedPeople}{' '}
-          {affectedPeople === 1 ? 'person gets' : 'people get'} an email with a{' '}
-          <strong>Confirm</strong> button. Changed shifts need to be confirmed again.
+          shift{changes.total === 1 ? '' : 's'} become visible to the team.
+          {notify && (
+            <>
+              {' '}
+              {affectedPeople} {affectedPeople === 1 ? 'person gets' : 'people get'} an email with a{' '}
+              <strong>Confirm</strong> button. Changed shifts need to be confirmed again.
+            </>
+          )}
         </p>
       )}
       {others > 0 && changes.total > 0 && (
@@ -1190,6 +1208,24 @@ function PublishDialog({
           Also publish the {others} change{others === 1 ? '' : 's'} on other dates
         </label>
       )}
+      <label className="mt-3 flex items-start gap-2 text-sm text-slate-700">
+        <input
+          type="checkbox"
+          checked={notify}
+          onChange={(e) => onNotify(e.target.checked)}
+          className="mt-0.5 size-4 accent-brand-600"
+        />
+        <span>
+          Email the team about these changes
+          {!notify && (
+            <span className="mt-1 block text-slate-500">
+              No emails will be sent, now or as a reminder. The shifts still show up in the app (and
+              in Google Calendar for anyone who has that turned on), and people can confirm them
+              there.
+            </span>
+          )}
+        </span>
+      </label>
     </ConfirmDialog>
   );
 }

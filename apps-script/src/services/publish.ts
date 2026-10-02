@@ -147,6 +147,8 @@ export function publishSchedule(
   scheduleId: string,
   actor: AuthUser,
   range: DateRange | null,
+  /** False publishes quietly: no email now, and no reminder email later either. */
+  notify = true,
 ): PublishResult {
   const t = tables(ctx.db);
   const schedule = requireSchedule(ctx, scheduleId);
@@ -215,14 +217,15 @@ export function publishSchedule(
       publishedNotes: s.notes,
       status: 'pending',
       confirmedAt: null,
-      reminderSentAt: null,
+      // Quiet publishing counts as "already reminded", so no reminder email goes out later.
+      reminderSentAt: notify ? null : ctx.now,
     });
   }
   for (const s of notesOnly) t.shifts.update(s.id, { publishedNotes: s.notes });
   const changed = result.added + result.updated + result.removed;
   if (changed) t.schedules.update(scheduleId, { publishedAt: ctx.now, publishedBy: actor.id });
 
-  result.emailsQueued = notifyPeople(ctx, schedule, changes);
+  result.emailsQueued = notify ? notifyPeople(ctx, schedule, changes) : 0;
   if (changed) {
     audit(
       ctx,
@@ -236,6 +239,7 @@ export function publishSchedule(
         updated: result.updated,
         removed: result.removed,
         emails: result.emailsQueued,
+        notified: notify,
       },
     );
   }

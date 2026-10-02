@@ -351,7 +351,13 @@ export function createRouter(): Router {
     publish.deleteSchedule(ctx, id(req.params), ctx.user!),
   );
   r.post('/schedules/:id/publish', 'admin', (req, ctx) =>
-    publish.publishSchedule(ctx, id(req.params), ctx.user!, optionalRange(req.body)),
+    publish.publishSchedule(
+      ctx,
+      id(req.params),
+      ctx.user!,
+      optionalRange(req.body),
+      parse(z.object({ notify: z.boolean().default(true) }), req.body ?? {}).notify,
+    ),
   );
   r.post('/schedules/:id/discard-changes', 'admin', (req, ctx) => {
     const scheduleId = id(req.params);

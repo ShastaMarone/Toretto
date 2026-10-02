@@ -213,6 +213,8 @@ export async function publishSchedule(
   scheduleId: string,
   actor: AuthUser,
   range: DateRange | null,
+  /** False publishes quietly: no email now, and no reminder email later either. */
+  notify = true,
 ): Promise<PublishResult> {
   return withTransaction(db, async (client) => {
     const schedule = await lockSchedule(client, scheduleId);
@@ -290,9 +292,9 @@ export async function publishSchedule(
             SET published_at = now(), published_user_id = user_id, published_label_id = label_id,
                 published_start_time = start_time, published_end_time = end_time,
                 published_notes = notes, status = 'pending', confirmed_at = NULL,
-                reminder_sent_at = NULL
+                reminder_sent_at = CASE WHEN $2 THEN NULL ELSE now() END
           WHERE id = ANY($1)`,
-        [resetIds],
+        [resetIds, notify],
       );
     }
     if (notesOnlyIds.length) {
@@ -308,7 +310,7 @@ export async function publishSchedule(
       );
     }
 
-    result.emailsQueued = await notifyPeople(client, config, schedule, changes);
+    result.emailsQueued = notify ? await notifyPeople(client, config, schedule, changes) : 0;
     if (changed) {
       await audit(
         client,
@@ -322,6 +324,7 @@ export async function publishSchedule(
           updated: result.updated,
           removed: result.removed,
           emails: result.emailsQueued,
+          notified: notify,
         },
       );
     }
