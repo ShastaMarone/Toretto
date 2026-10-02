@@ -6,9 +6,14 @@ import {
   LayoutDashboard,
   LogOut,
   Menu as MenuIcon,
+  Monitor,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plane,
   Repeat,
   Settings,
+  Sun,
   Timer,
   UserRound,
   Users,
@@ -21,6 +26,7 @@ import { api } from '../../api/client';
 import { useOpenShifts, useSwaps, useTimeOffRequests } from '../../api/queries';
 import { cx } from '../../lib/cx';
 import { useBootstrapData, useCurrentUser, useSetSessionUser } from '../../lib/session';
+import { useTheme } from '../../lib/theme';
 import { ThemeToggle } from '../ThemeToggle';
 import { Avatar } from '../ui/Misc';
 
@@ -36,18 +42,24 @@ function NavSection({
   title,
   items,
   onNavigate,
+  collapsed = false,
 }: {
   title?: string;
   items: NavItem[];
   onNavigate: () => void;
+  /** Icons only (the narrow desktop menu). */
+  collapsed?: boolean;
 }) {
   return (
     <div>
-      {title && (
-        <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
-          {title}
-        </p>
-      )}
+      {title &&
+        (collapsed ? (
+          <hr className="mx-3 mb-2 border-slate-200/70" aria-hidden />
+        ) : (
+          <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            {title}
+          </p>
+        ))}
       <ul className="space-y-0.5">
         {items.map((item) => (
           <li key={item.to}>
@@ -55,9 +67,12 @@ function NavSection({
               to={item.to}
               end={item.end}
               onClick={onNavigate}
+              title={collapsed ? item.label : undefined}
+              aria-label={collapsed ? item.label : undefined}
               className={({ isActive }) =>
                 cx(
-                  'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition [&>svg]:size-[18px] [&>svg]:shrink-0',
+                  'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition [&>svg]:size-[18px] [&>svg]:shrink-0',
+                  collapsed && 'justify-center px-0',
                   isActive
                     ? 'bg-linear-to-r from-brand-500/15 to-transparent text-brand-700 shadow-[inset_3px_0_0_var(--color-brand-500)] [&>svg]:text-brand-600 dark:from-brand-500/25 dark:shadow-[inset_3px_0_0_#e040fb,0_0_22px_-8px_var(--glow)]'
                     : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 [&>svg]:text-slate-400',
@@ -65,9 +80,14 @@ function NavSection({
               }
             >
               {item.icon}
-              <span className="flex-1">{item.label}</span>
+              {!collapsed && <span className="flex-1">{item.label}</span>}
               {item.badge ? (
-                <span className="neon bg-neon rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white">
+                <span
+                  className={cx(
+                    'neon bg-neon rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white',
+                    collapsed && 'absolute top-0.5 right-1 px-1 text-[10px]',
+                  )}
+                >
                   {item.badge}
                 </span>
               ) : null}
@@ -94,7 +114,61 @@ function useSwapsToApprove(): number {
   );
 }
 
-function Sidebar({ onNavigate }: { onNavigate: () => void }) {
+const COLLAPSED_KEY = 'toretto.menuCollapsed';
+
+/** Whether the desktop menu is the narrow icon-only one: remembered on this device. */
+function useMenuCollapsed(): [boolean, (collapsed: boolean) => void] {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(COLLAPSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  return [
+    collapsed,
+    (next) => {
+      setCollapsed(next);
+      try {
+        localStorage.setItem(COLLAPSED_KEY, next ? '1' : '0');
+      } catch {
+        // Not remembered, but it still works for now.
+      }
+    },
+  ];
+}
+
+const THEME_ORDER = ['light', 'dark', 'system'] as const;
+
+/** One button that steps through light, dark and system: for the narrow menu. */
+function ThemeCycle() {
+  const { preference, setPreference } = useTheme();
+  const next = THEME_ORDER[(THEME_ORDER.indexOf(preference) + 1) % THEME_ORDER.length]!;
+  const Icon = preference === 'light' ? Sun : preference === 'dark' ? Moon : Monitor;
+  return (
+    <button
+      type="button"
+      onClick={() => setPreference(next)}
+      title={`Theme: ${preference}. Click for ${next}`}
+      aria-label={`Theme: ${preference}. Switch to ${next}`}
+      className="flex size-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100/80 hover:text-slate-800"
+    >
+      <Icon className="size-[18px]" aria-hidden />
+    </button>
+  );
+}
+
+function Sidebar({
+  onNavigate,
+  collapsed = false,
+  onToggleCollapsed,
+}: {
+  onNavigate: () => void;
+  /** Icons only. Just for the desktop menu. */
+  collapsed?: boolean;
+  /** Present on the desktop menu, which can be collapsed. */
+  onToggleCollapsed?: () => void;
+}) {
   const user = useCurrentUser();
   const { org, signIn } = useBootstrapData();
   const setSessionUser = useSetSessionUser();
@@ -113,53 +187,107 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-16 shrink-0 items-center gap-2.5 px-5">
-        <img src="/favicon.svg" alt="" className="size-8 drop-shadow-[0_4px_12px_var(--glow)]" />
-        <div className="min-w-0 leading-tight">
-          <p className="truncate text-sm font-bold text-slate-900">{org.name}</p>
-          <p className="text-neon text-xs font-semibold">Toretto Scheduling</p>
-        </div>
+      <div
+        className={cx(
+          'flex h-16 shrink-0 items-center gap-2.5',
+          collapsed ? 'justify-center px-0' : 'px-5',
+        )}
+      >
+        <img
+          src="/favicon.svg"
+          alt=""
+          className="size-8 shrink-0 drop-shadow-[0_4px_12px_var(--glow)]"
+        />
+        {!collapsed && (
+          <div className="min-w-0 leading-tight">
+            <p className="truncate text-sm font-bold text-slate-900">{org.name}</p>
+            <p className="text-neon text-xs font-semibold">Toretto Scheduling</p>
+          </div>
+        )}
       </div>
-      <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4" aria-label="Main">
+      <nav
+        className={cx('flex-1 space-y-6 overflow-y-auto py-4', collapsed ? 'px-2' : 'px-3')}
+        aria-label="Main"
+      >
         <NavSection
           title={isAdmin ? 'My work' : undefined}
           onNavigate={onNavigate}
+          collapsed={collapsed}
           items={[
             { to: '/my-schedule', label: 'My schedule', icon: <CalendarCheck /> },
             { to: '/team', label: 'Team schedule', icon: <Users /> },
           ]}
         />
-        {isAdmin && <AdminNav onNavigate={onNavigate} />}
+        {isAdmin && <AdminNav onNavigate={onNavigate} collapsed={collapsed} />}
       </nav>
-      <div className="border-t border-slate-200/70 p-3">
-        <div className="mb-2 flex items-center justify-between px-2">
-          <span className="text-xs font-medium text-slate-500">Theme</span>
-          <ThemeToggle />
-        </div>
+      <div className={cx('border-t border-slate-200/70 p-3', collapsed && 'px-2')}>
+        {collapsed ? (
+          <div className="mb-2 flex justify-center">
+            <ThemeCycle />
+          </div>
+        ) : (
+          <div className="mb-2 flex items-center justify-between px-2">
+            <span className="text-xs font-medium text-slate-500">Theme</span>
+            <ThemeToggle />
+          </div>
+        )}
         <NavLink
           to="/profile"
           onClick={onNavigate}
+          title={collapsed ? `${user.name} (profile)` : undefined}
+          aria-label={collapsed ? `${user.name}, profile` : undefined}
           className={({ isActive }) =>
             cx(
               'flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-100/80',
+              collapsed && 'justify-center px-0',
               isActive && 'bg-slate-100/80',
             )
           }
         >
           <Avatar name={user.name} />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-slate-900">{user.name}</p>
-            <p className="truncate text-xs text-slate-500">{user.email}</p>
-          </div>
-          <UserRound className="size-4 text-slate-400" aria-hidden />
+          {!collapsed && (
+            <>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-slate-900">{user.name}</p>
+                <p className="truncate text-xs text-slate-500">{user.email}</p>
+              </div>
+              <UserRound className="size-4 text-slate-400" aria-hidden />
+            </>
+          )}
         </NavLink>
         {signIn === 'password' && (
           <button
             type="button"
             onClick={() => void signOut()}
-            className="mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100/80 hover:text-slate-900"
+            title={collapsed ? 'Sign out' : undefined}
+            aria-label={collapsed ? 'Sign out' : undefined}
+            className={cx(
+              'mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100/80 hover:text-slate-900',
+              collapsed && 'justify-center px-0',
+            )}
           >
-            <LogOut className="size-[18px] text-slate-400" /> Sign out
+            <LogOut className="size-[18px] text-slate-400" /> {!collapsed && 'Sign out'}
+          </button>
+        )}
+        {onToggleCollapsed && (
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-expanded={!collapsed}
+            title={collapsed ? 'Expand menu' : 'Collapse menu'}
+            aria-label={collapsed ? 'Expand menu' : 'Collapse menu'}
+            className={cx(
+              'mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100/80 hover:text-slate-800',
+              collapsed && 'justify-center px-0',
+            )}
+          >
+            {collapsed ? (
+              <PanelLeftOpen className="size-[18px]" />
+            ) : (
+              <>
+                <PanelLeftClose className="size-[18px]" /> Collapse menu
+              </>
+            )}
           </button>
         )}
       </div>
@@ -167,13 +295,14 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
-function AdminNav({ onNavigate }: { onNavigate: () => void }) {
+function AdminNav({ onNavigate, collapsed }: { onNavigate: () => void; collapsed: boolean }) {
   const pending = usePendingTimeOffCount();
   const swaps = useSwapsToApprove();
   return (
     <NavSection
       title="Manage"
       onNavigate={onNavigate}
+      collapsed={collapsed}
       items={[
         { to: '/admin', label: 'Dashboard', icon: <LayoutDashboard />, end: true },
         { to: '/admin/schedules', label: 'Schedules', icon: <CalendarRange /> },
@@ -197,11 +326,21 @@ function AdminNav({ onNavigate }: { onNavigate: () => void }) {
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { org } = useBootstrapData();
+  const [collapsed, setCollapsed] = useMenuCollapsed();
   return (
     <div className="min-h-dvh">
-      {/* Desktop sidebar */}
-      <aside className="glass fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-slate-200/70 lg:block">
-        <Sidebar onNavigate={() => undefined} />
+      {/* Desktop sidebar: full, or just icons */}
+      <aside
+        className={cx(
+          'glass fixed inset-y-0 left-0 z-20 hidden border-r border-slate-200/70 transition-[width] duration-200 lg:block',
+          collapsed ? 'w-16' : 'w-64',
+        )}
+      >
+        <Sidebar
+          onNavigate={() => undefined}
+          collapsed={collapsed}
+          onToggleCollapsed={() => setCollapsed(!collapsed)}
+        />
       </aside>
 
       {/* Mobile top bar + drawer */}
@@ -242,7 +381,9 @@ export function AppShell() {
         </div>
       )}
 
-      <main className="lg:pl-64">
+      <main
+        className={cx('transition-[padding] duration-200', collapsed ? 'lg:pl-16' : 'lg:pl-64')}
+      >
         <div className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           <Outlet />
         </div>
