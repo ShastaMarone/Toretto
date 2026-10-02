@@ -34,6 +34,9 @@ export async function buildServer(version) {
     alias: { '@shared': here('../shared') },
     minifyWhitespace: true,
     minifySyntax: true,
+    // Wrap lines: hundreds of thousands of characters on one line is hard on the editor
+    // (and on clipboards), and an error's line number then points somewhere findable.
+    lineLimit: 400,
     legalComments: 'none',
     write: false,
     logLevel: 'warning',
