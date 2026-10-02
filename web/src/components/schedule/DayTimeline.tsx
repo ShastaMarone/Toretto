@@ -6,7 +6,6 @@ import { Plane, Plus, StickyNote, Undo2 } from 'lucide-react';
 import {
   useEffect,
   useRef,
-  useState,
   type DragEvent,
   type HTMLAttributes,
   type ReactNode,
@@ -15,6 +14,7 @@ import { alpha } from '../../lib/colors';
 import { cx } from '../../lib/cx';
 import type { PeopleGroup } from '../../lib/schedule';
 import { Card } from '../ui/Misc';
+import { useCollapsedGroups } from '../../lib/useCollapsedGroups';
 import { useGroupReorder } from '../../lib/useGroupReorder';
 import { HolidayBadge, GroupRows } from './CalendarBits';
 import { StatusIcon } from './ShiftChip';
@@ -79,6 +79,7 @@ export function DayTimeline({
   empty,
   footer,
   onReorderGroups,
+  collapseKey,
 }: {
   day: ISODate;
   today: ISODate;
@@ -99,12 +100,14 @@ export function DayTimeline({
   footer?: ReactNode;
   /** Lets tiers be dragged into a new order; gets the new order of the group keys. */
   onReorderGroups?: (keys: string[]) => void;
+  /** Where to remember which tiers are collapsed (on this device); omit to forget on leaving. */
+  collapseKey?: string;
 }) {
   const groupDrag = useGroupReorder(
     groups.map((g) => g.key),
     onReorderGroups,
   );
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [collapsed, toggle] = useCollapsedGroups(collapseKey);
   const scroller = useRef<HTMLDivElement>(null);
   const people = groups.flatMap((g) => g.people);
   const live = people.map((p) => ({
@@ -147,13 +150,6 @@ export function DayTimeline({
   }, [rangeKey]);
 
   const nowMinutes = day === today ? minutesIn(new Date().toISOString(), tz, day) : null;
-  const toggle = (key: string) =>
-    setCollapsed((c) => {
-      const next = new Set(c);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
 
   const hourGrid = (
     <div

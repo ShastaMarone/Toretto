@@ -1,11 +1,12 @@
 import type { Holiday } from '@shared/holidays';
 import { isWeekend, type ISODate } from '@shared/time';
 import type { PersonRow } from '@shared/types';
-import { useState, type ReactNode, type TdHTMLAttributes } from 'react';
+import type { ReactNode, TdHTMLAttributes } from 'react';
 import { cx } from '../../lib/cx';
 import type { PeopleGroup } from '../../lib/schedule';
 import { useScrollToToday } from '../../lib/useScrollToToday';
 import { Card } from '../ui/Misc';
+import { useCollapsedGroups } from '../../lib/useCollapsedGroups';
 import { useGroupReorder } from '../../lib/useGroupReorder';
 import { DayHeader, GroupRows } from './CalendarBits';
 
@@ -32,6 +33,7 @@ export function ScheduleGrid({
   footer,
   className,
   onReorderGroups,
+  collapseKey,
 }: {
   days: ISODate[];
   today: ISODate;
@@ -58,21 +60,16 @@ export function ScheduleGrid({
   className?: string;
   /** Lets tiers be dragged into a new order; gets the new order of the group keys. */
   onReorderGroups?: (keys: string[]) => void;
+  /** Where to remember which tiers are collapsed (on this device); omit to forget on leaving. */
+  collapseKey?: string;
 }) {
   const groupDrag = useGroupReorder(
     groups.map((g) => g.key),
     onReorderGroups,
   );
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [collapsed, toggle] = useCollapsedGroups(collapseKey);
   const scroller = useScrollToToday<HTMLDivElement>(`${days[0]}:${days.at(-1)}`);
   const count = groups.reduce((n, g) => n + g.people.length, 0);
-  const toggle = (key: string) =>
-    setCollapsed((c) => {
-      const next = new Set(c);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
 
   return (
     <Card className={cx('overflow-hidden', className)}>

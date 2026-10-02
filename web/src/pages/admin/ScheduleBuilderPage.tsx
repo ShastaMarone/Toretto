@@ -86,6 +86,8 @@ import { zoneLabel } from '../../lib/timezones';
 type DialogState = { mode: 'create'; draft: ShiftDraft } | { mode: 'edit'; shift: BuilderShift };
 
 const VIEW_KEY = 'toretto:builder-view';
+/** Where the builder remembers which tiers are collapsed (shared by the Day, Week and Month views). */
+const COLLAPSED_TIERS_KEY = 'toretto:builder-collapsed-tiers';
 const VIEWS: { value: CalendarView; label: string }[] = [
   { value: 'day', label: 'Day' },
   { value: 'week', label: 'Week' },
@@ -920,6 +922,7 @@ function Builder({
           holidays={holidays.get(data.from)}
           groups={groups}
           onReorderGroups={onReorderGroups}
+          collapseKey={COLLAPSED_TIERS_KEY}
           bars={barsFor}
           timeOff={(person) => offByUserDay.get(person.id)?.get(data.from) ?? []}
           groupHours={groupHours}
@@ -967,6 +970,7 @@ function Builder({
           compact={compact}
           groups={groups}
           onReorderGroups={onReorderGroups}
+          collapseKey={COLLAPSED_TIERS_KEY}
           dayWidth={[80, 128]}
           rowHeight="h-20"
           daySummary={(d) => {
