@@ -23,7 +23,10 @@ const queryClient = new QueryClient({
       retry: (count, error) =>
         !(
           error instanceof ApiError &&
-          ((error.status >= 400 && error.status < 500) || error.code === 'TIMEOUT')
+          // A busy or timed-out answer already waited a long time: asking again just adds to the queue.
+          ((error.status >= 400 && error.status < 500) ||
+            error.code === 'TIMEOUT' ||
+            error.code === 'BUSY')
         ) && count < 2,
     },
   },

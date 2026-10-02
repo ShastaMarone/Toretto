@@ -191,6 +191,11 @@ export class Table<T extends { id: string }> {
     return out;
   }
 
+  /** Has anything been changed (and not yet saved)? */
+  hasChanges(): boolean {
+    return this.loaded && this.changed.size > 0;
+  }
+
   /** Write the changes: few, large Sheet calls (a call costs more than its size). True if anything was written. */
   commit(): boolean {
     if (!this.loaded || this.changed.size === 0) {
@@ -415,6 +420,11 @@ export class Db {
       this.tables.set(def.name, table);
     }
     return table as unknown as Table<T>;
+  }
+
+  /** Has anything been changed through this Db and not yet saved? */
+  hasChanges(): boolean {
+    return [...this.tables.values()].some((table) => table.hasChanges());
   }
 
   /** Save every change made through this Db. */

@@ -179,6 +179,23 @@ describe('hourly jobs', () => {
     expect(await emails(ctx.db, { kind: 'shift_reminder' })).toHaveLength(1);
   });
 
+  it('opening a screen does not wait for the lock when there is nothing to save', async () => {
+    // Someone who has already signed in recently: /bootstrap has nothing to write.
+    await ana.get('/api/bootstrap').expect(200);
+    ctx.env.lockBusy = true;
+    try {
+      const again = await ana.get('/api/bootstrap');
+      expect(again.status).toBe(200);
+      expect(again.body.user?.email).toBe(people.ana.email);
+      // Changes still need the lock.
+      const blocked = await admin.post(`/api/schedules/${main_}/publish`).send({});
+      expect(blocked.status).toBe(503);
+      expect(blocked.body.error.code).toBe('BUSY');
+    } finally {
+      ctx.env.lockBusy = false;
+    }
+  });
+
   it('publishing quietly sends no email now and no reminder later', async () => {
     const res = await admin
       .post(`/api/schedules/${main_}/shifts`)

@@ -55,7 +55,31 @@ function run(method: string, url: string, body: unknown): Result {
   return { ...res, ms: took };
 }
 
+/**
+ * Opening a screen asks /bootstrap who you are. It only has something to save
+ * the first time someone signs in, or about once an hour after that, so try it
+ * without the lock first: with several tabs open, queueing for the lock on every
+ * visit could pile up for minutes. Null when it does need to save (or the Sheet
+ * needs updating first): the caller then does it properly, under the lock.
+ */
+function bootstrapWithoutLock(method: string, url: string): Result | null {
+  if (method !== 'GET' || splitUrl(url).path !== '/bootstrap') return null;
+  if (PropertiesService.getScriptProperties().getProperty('SCHEMA_VERSION') !== SCHEMA_VERSION) {
+    return null;
+  }
+  try {
+    const db = Db.reader();
+    const ctx = context(db);
+    const res = router.handle(method, url, undefined, ctx);
+    return db.hasChanges() ? null : { ...res, queued: 0 };
+  } catch {
+    return null;
+  }
+}
+
 function runTimed(method: string, url: string, body: unknown): Result {
+  const quick = bootstrapWithoutLock(method, url);
+  if (quick) return quick;
   const write = writes(method, url);
   const lock = write ? LockService.getScriptLock() : null;
   if (lock && !lock.tryLock(30_000)) {
