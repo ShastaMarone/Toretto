@@ -1,10 +1,12 @@
 import type { Holiday } from '@shared/holidays';
 import { isWeekend, type ISODate } from '@shared/time';
 import type { PersonRow } from '@shared/types';
-import type { ReactNode, TdHTMLAttributes } from 'react';
+import { useRef, type ReactNode, type TdHTMLAttributes } from 'react';
+import { createPortal } from 'react-dom';
 import { cx } from '../../lib/cx';
 import type { PeopleGroup } from '../../lib/schedule';
 import { useScrollToToday } from '../../lib/useScrollToToday';
+import { useStickyHeader } from '../../lib/useStickyHeader';
 import { Card } from '../ui/Misc';
 import { useCollapsedGroups } from '../../lib/useCollapsedGroups';
 import { useGroupReorder } from '../../lib/useGroupReorder';
@@ -71,39 +73,67 @@ export function ScheduleGrid({
   const scroller = useScrollToToday<HTMLDivElement>(`${days[0]}:${days.at(-1)}`);
   const count = groups.reduce((n, g) => n + g.people.length, 0);
 
+  const head = useRef<HTMLTableSectionElement>(null);
+  const { stuck, copy } = useStickyHeader(scroller, head);
+
+  const columns = (
+    <colgroup>
+      <col className="w-44 sm:w-52" />
+      {days.map((d) => (
+        <col key={d} />
+      ))}
+    </colgroup>
+  );
+  const headerRow = (
+    <tr className="border-b border-slate-200 bg-slate-50/70">
+      <th
+        scope="col"
+        className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left align-top text-xs font-semibold text-slate-500"
+      >
+        {count} {count === 1 ? 'person' : 'people'}
+      </th>
+      {days.map((d) => (
+        <DayHeader
+          key={d}
+          day={d}
+          today={today}
+          holidays={holidays.get(d)}
+          compact={compact}
+          summary={daySummary(d)}
+        />
+      ))}
+    </tr>
+  );
+
   return (
     <Card className={cx('overflow-hidden', className)}>
+      {/* The days, kept in view when the page scrolls past the real header (a copy outside the
+          card: the card's blur would otherwise stop it being fixed to the screen). */}
+      {stuck &&
+        createPortal(
+          <div
+            ref={copy}
+            aria-hidden="true"
+            className="fixed z-10 overflow-hidden bg-surface shadow-md"
+            style={{ top: stuck.top, left: stuck.left, width: stuck.width }}
+          >
+            <table
+              className="table-fixed border-collapse text-sm"
+              style={{ width: stuck.tableWidth }}
+            >
+              {columns}
+              <thead>{headerRow}</thead>
+            </table>
+          </div>,
+          document.body,
+        )}
       <div ref={scroller} className="overflow-x-auto scrollbar-thin">
         <table
           className="w-full table-fixed border-collapse text-sm"
           style={{ minWidth: 200 + days.length * (compact ? dayWidth[0] : dayWidth[1]) }}
         >
-          <colgroup>
-            <col className="w-44 sm:w-52" />
-            {days.map((d) => (
-              <col key={d} />
-            ))}
-          </colgroup>
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50/70">
-              <th
-                scope="col"
-                className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left align-top text-xs font-semibold text-slate-500"
-              >
-                {count} {count === 1 ? 'person' : 'people'}
-              </th>
-              {days.map((d) => (
-                <DayHeader
-                  key={d}
-                  day={d}
-                  today={today}
-                  holidays={holidays.get(d)}
-                  compact={compact}
-                  summary={daySummary(d)}
-                />
-              ))}
-            </tr>
-          </thead>
+          {columns}
+          <thead ref={head}>{headerRow}</thead>
           <tbody>
             {groups.map((group) => {
               const isCollapsed = collapsed.has(group.key);
