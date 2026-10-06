@@ -137,3 +137,38 @@ test('the schedule builder has a Day view with people working each hour', async 
   await admin.getByRole('button', { name: 'Add shift for Riley Adams' }).click();
   await expect(admin.getByRole('dialog').getByRole('heading', { name: 'Add shift' })).toBeVisible();
 });
+
+test('time off is posted from the Add shift dialog, no trip to the Time off page', async ({
+  browser,
+}) => {
+  const admin = await open(browser, ADMIN, '/admin/schedules');
+  await admin.getByRole('tab', { name: 'Day' }).click();
+  await admin.getByRole('button', { name: 'Next' }).click();
+  await admin.getByRole('button', { name: 'Add shift for Riley Adams' }).click();
+  const dialog = admin.getByRole('dialog');
+  await dialog.getByRole('tab', { name: 'Time off' }).click();
+  await expect(dialog.getByRole('heading', { name: 'Add time off' })).toBeVisible();
+  // The hours and label are for shifts only.
+  await expect(dialog.getByText('Starts', { exact: true })).toHaveCount(0);
+  await dialog.getByLabel('Type').selectOption({ label: 'Personal Day (paid)' });
+  await dialog.getByRole('button', { name: /^Add 1 day off$/ }).click();
+  await expect(admin.getByText('Added Personal Day for Riley Adams')).toBeVisible();
+  await expect(dialog).toBeHidden();
+
+  // It's the same approved time off the Time off page lists.
+  await admin.goto('/admin/time-off');
+  await admin.getByRole('tab', { name: 'Upcoming' }).click();
+  await expect(admin.getByText('Riley Adams').first()).toBeVisible();
+  await expect(admin.getByText('Personal Day').first()).toBeVisible();
+});
+
+test('a new shift shows on the grid straight away', async ({ browser }) => {
+  const admin = await open(browser, ADMIN, '/admin/schedules');
+  await admin.getByRole('tab', { name: 'Day' }).click();
+  await admin.getByRole('button', { name: 'Next' }).click();
+  await admin.getByRole('button', { name: 'Add shift for Riley Adams' }).click();
+  const dialog = admin.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Add shift', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(admin.getByRole('button', { name: /draft/ }).first()).toBeVisible();
+});

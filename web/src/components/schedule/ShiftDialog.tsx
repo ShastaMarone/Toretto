@@ -11,8 +11,15 @@ import {
   type ISODate,
   type TimeFormat,
 } from '@shared/time';
-import { timeOffOverlaps } from '@shared/timeOff';
-import type { BuilderShift, Label, PersonRow, Tier, TimeOffEntry } from '@shared/types';
+import { timeOffLength, timeOffOverlaps } from '@shared/timeOff';
+import type {
+  BuilderShift,
+  Label,
+  PersonRow,
+  Tier,
+  TimeOffEntry,
+  TimeOffType,
+} from '@shared/types';
 import { CalendarClock, Copy, Eye, Repeat, Trash2 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { alpha } from '../../lib/colors';
@@ -22,7 +29,9 @@ import { useHolidays } from '../../lib/holidays';
 import { useBootstrapData, useTimeFormat } from '../../lib/session';
 import { Button } from '../ui/Button';
 import { Field, FormError, Select, Textarea } from '../ui/Form';
-import { Badge } from '../ui/Misc';
+import { initialWhen, whenPayload, whenSpan } from '../../lib/timeOffWhen';
+import { TimeOffWhenFields } from '../TimeOffWhenFields';
+import { Badge, Tabs } from '../ui/Misc';
 import { Modal } from '../ui/Modal';
 import { DateInput, TimeInput } from '../ui/Pickers';
 
@@ -49,6 +58,17 @@ export interface RepeatPayload {
   labelId: string | null;
   notes: string | null;
   shifts: { startTime: string; endTime: string }[];
+}
+
+/** Time off posted from the schedule: approved right away, like on the Time off page. */
+export interface TimeOffPayload {
+  userId: string;
+  typeId: string;
+  note: string | null;
+  startDate?: ISODate;
+  endDate?: ISODate;
+  startTime?: string;
+  endTime?: string;
 }
 
 /** Which weekdays a new shift repeats on (0 = Sunday), and until when. */
@@ -106,12 +126,14 @@ export function ShiftDialog({
   tiers,
   labels,
   timeOff,
+  timeOffTypes = [],
   allShifts,
   saving,
   deleting,
   error,
   onSave,
   onSaveMany,
+  onSaveTimeOff,
   onDelete,
   onDuplicate,
   onClose,
@@ -125,6 +147,8 @@ export function ShiftDialog({
   tiers: Pick<Tier, 'id' | 'name'>[];
   labels: Label[];
   timeOff: TimeOffEntry[];
+  /** Time-off types to choose from when adding time off. */
+  timeOffTypes?: TimeOffType[];
   allShifts: BuilderShift[];
   saving: boolean;
   deleting?: boolean;
@@ -132,6 +156,8 @@ export function ShiftDialog({
   onSave: (payload: ShiftPayload) => void;
   /** When adding: save a repeating shift as one shift per day. */
   onSaveMany?: (payload: RepeatPayload) => void;
+  /** When adding: post it as time off (a holiday, personal day…) instead of a shift. */
+  onSaveTimeOff?: (payload: TimeOffPayload) => void;
   onDelete?: () => void;
   onDuplicate?: (draft: ShiftDraft) => void;
   onClose: () => void;
@@ -140,6 +166,11 @@ export function ShiftDialog({
   const timeFormat = useTimeFormat();
   const [draft, setDraft] = useState<ShiftDraft>(initial);
   const [repeat, setRepeat] = useState<RepeatRule | null>(null);
+  const canTimeOff = mode === 'create' && !!onSaveTimeOff && timeOffTypes.length > 0;
+  const [kind, setKind] = useState<'shift' | 'timeoff'>('shift');
+  const [typeId, setTypeId] = useState(timeOffTypes[0]?.id ?? '');
+  const [when, setWhen] = useState(() => initialWhen(initial.date));
+  const timeOffMode = canTimeOff && kind === 'timeoff';
   const presets = useMemo(() => presetsFrom(allShifts, tz), [allShifts, tz]);
   const byId = new Map(people.map((p) => [p.id, p]));
   const person = byId.get(draft.userId);
@@ -201,9 +232,28 @@ export function ShiftDialog({
       next = addDays(next, 7);
     setRepeat({ days, until: next, skipHolidays });
   };
-  const repeating = mode === 'create' && repeat !== null;
+  const repeating = mode === 'create' && repeat !== null && !timeOffMode;
+  // Shifts the person already has during the time off: adding it doesn't remove them.
+  const offSpan = whenSpan(when, tz);
+  const shiftsDuringOff = timeOffMode
+    ? allShifts.filter(
+        (s) =>
+          s.userId === draft.userId &&
+          s.changeState !== 'removed' &&
+          timeOffOverlaps(offSpan, s.startTime, s.endTime, tz),
+      ).length
+    : 0;
 
   const submit = () => {
+    if (timeOffMode) {
+      onSaveTimeOff?.({
+        userId: draft.userId,
+        typeId,
+        note: draft.notes.trim() || null,
+        ...whenPayload(when, tz),
+      });
+      return;
+    }
     const base = {
       userId: draft.userId,
       labelId: draft.labelId,
@@ -221,7 +271,7 @@ export function ShiftDialog({
 
   return (
     <Modal
-      title={mode === 'create' ? 'Add shift' : 'Edit shift'}
+      title={mode === 'create' ? (timeOffMode ? 'Add time off' : 'Add shift') : 'Edit shift'}
       description={
         mode === 'edit' && shift
           ? `${personName(shift.userId)} · ${formatShiftWhen(shift.startTime, shift.endTime, tz, timeFormat)}`
@@ -252,19 +302,48 @@ export function ShiftDialog({
             type="submit"
             variant="primary"
             loading={saving}
-            disabled={repeating && occurrences.length === 0}
+            disabled={timeOffMode ? !typeId : repeating && occurrences.length === 0}
           >
             {mode === 'edit'
               ? 'Save changes'
-              : repeating
-                ? `Add ${occurrences.length} shift${occurrences.length === 1 ? '' : 's'}`
-                : 'Add shift'}
+              : timeOffMode
+                ? `Add ${timeOffLength(offSpan)} off`
+                : repeating
+                  ? `Add ${occurrences.length} shift${occurrences.length === 1 ? '' : 's'}`
+                  : 'Add shift'}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
-        <FormError message={formMessage(error, ['userId', 'startTime', 'endTime', 'labelId'])} />
+        <FormError
+          message={formMessage(error, [
+            'userId',
+            'startTime',
+            'endTime',
+            'labelId',
+            'typeId',
+            'startDate',
+            'endDate',
+          ])}
+        />
+
+        {canTimeOff && (
+          <Tabs
+            className="w-fit"
+            value={kind}
+            onChange={(next) => {
+              setKind(next);
+              if (next === 'timeoff') {
+                setWhen((w) => ({ ...w, startDate: draft.date, endDate: draft.date }));
+              }
+            }}
+            options={[
+              { value: 'shift', label: 'Shift' },
+              { value: 'timeoff', label: 'Time off' },
+            ]}
+          />
+        )}
 
         {shift && shift.published && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
@@ -311,53 +390,84 @@ export function ShiftDialog({
               ))}
             </Select>
           </Field>
-          <Field label={repeating ? 'Starting' : 'Day'} error={errors.startTime}>
-            <DateInput value={draft.date} onChange={(date) => set({ date })} />
-          </Field>
+          {timeOffMode ? (
+            <Field label="Type" error={errors.typeId}>
+              <Select value={typeId} onChange={(e) => setTypeId(e.target.value)}>
+                {timeOffTypes.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                    {t.paid ? ' (paid)' : ' (unpaid)'}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          ) : (
+            <Field label={repeating ? 'Starting' : 'Day'} error={errors.startTime}>
+              <DateInput value={draft.date} onChange={(date) => set({ date })} />
+            </Field>
+          )}
         </div>
 
-        <div>
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Starts">
-              <TimeInput
-                value={draft.start}
-                format={timeFormat}
-                onChange={(start) => set({ start })}
-              />
-            </Field>
-            <Field
-              label="Ends"
-              error={errors.endTime}
-              hint={overnight ? 'Ends the next day' : undefined}
-            >
-              <TimeInput
-                value={draft.end}
-                format={timeFormat}
-                after={draft.start}
-                onChange={(end) => set({ end })}
-              />
-            </Field>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {presets.map(([start, end]) => (
-              <button
-                key={`${start}-${end}`}
-                type="button"
-                onClick={() => set({ start, end })}
-                className={cx(
-                  'rounded-full px-2.5 py-1 text-xs font-medium tabular-nums',
-                  draft.start === start && draft.end === end
-                    ? 'neon bg-neon text-white'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200',
-                )}
+        {timeOffMode && (
+          <>
+            <TimeOffWhenFields value={when} onChange={setWhen} errors={errors} quickPicks />
+            {shiftsDuringOff > 0 && (
+              <div className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
+                <CalendarClock className="mt-0.5 size-4 shrink-0" />
+                <p>
+                  {personName(draft.userId)} already has {shiftsDuringOff} shift
+                  {shiftsDuringOff === 1 ? '' : 's'} then. They stay on the schedule until you
+                  remove them.
+                </p>
+              </div>
+            )}
+          </>
+        )}
+
+        {!timeOffMode && (
+          <div>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Starts">
+                <TimeInput
+                  value={draft.start}
+                  format={timeFormat}
+                  onChange={(start) => set({ start })}
+                />
+              </Field>
+              <Field
+                label="Ends"
+                error={errors.endTime}
+                hint={overnight ? 'Ends the next day' : undefined}
               >
-                {presetLabel(start, end, timeFormat)}
-              </button>
-            ))}
+                <TimeInput
+                  value={draft.end}
+                  format={timeFormat}
+                  after={draft.start}
+                  onChange={(end) => set({ end })}
+                />
+              </Field>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {presets.map(([start, end]) => (
+                <button
+                  key={`${start}-${end}`}
+                  type="button"
+                  onClick={() => set({ start, end })}
+                  className={cx(
+                    'rounded-full px-2.5 py-1 text-xs font-medium tabular-nums',
+                    draft.start === start && draft.end === end
+                      ? 'neon bg-neon text-white'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200',
+                  )}
+                >
+                  {presetLabel(start, end, timeFormat)}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        {mode === 'create' && onSaveMany && (
+        {mode === 'create' && onSaveMany && !timeOffMode && (
           <RepeatSection
             kind={repeatKind}
             rule={repeat}
@@ -379,34 +489,36 @@ export function ShiftDialog({
           />
         )}
 
-        <fieldset>
-          <legend className="mb-1.5 text-sm font-medium text-slate-700">Label</legend>
-          <div className="flex flex-wrap gap-1.5">
-            <LabelOption
-              selected={draft.labelId === null}
-              color="#94a3b8"
-              onClick={() => set({ labelId: null })}
-            >
-              No label
-            </LabelOption>
-            {usable.map((l) => (
+        {!timeOffMode && (
+          <fieldset>
+            <legend className="mb-1.5 text-sm font-medium text-slate-700">Label</legend>
+            <div className="flex flex-wrap gap-1.5">
               <LabelOption
-                key={l.id}
-                selected={draft.labelId === l.id}
-                color={l.color}
-                onClick={() => set({ labelId: l.id })}
+                selected={draft.labelId === null}
+                color="#94a3b8"
+                onClick={() => set({ labelId: null })}
               >
-                {l.name}
-                {l.tierId !== null && (
-                  <span className="text-[10px] opacity-60"> · {tierName.get(l.tierId)}</span>
-                )}
+                No label
               </LabelOption>
-            ))}
-          </div>
-          {errors.labelId && <p className="mt-1.5 text-xs text-rose-600">{errors.labelId}</p>}
-        </fieldset>
+              {usable.map((l) => (
+                <LabelOption
+                  key={l.id}
+                  selected={draft.labelId === l.id}
+                  color={l.color}
+                  onClick={() => set({ labelId: l.id })}
+                >
+                  {l.name}
+                  {l.tierId !== null && (
+                    <span className="text-[10px] opacity-60"> · {tierName.get(l.tierId)}</span>
+                  )}
+                </LabelOption>
+              ))}
+            </div>
+            {errors.labelId && <p className="mt-1.5 text-xs text-rose-600">{errors.labelId}</p>}
+          </fieldset>
+        )}
 
-        {offThatDay && !repeating && (
+        {offThatDay && !repeating && !timeOffMode && (
           <div className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
             <CalendarClock className="mt-0.5 size-4 shrink-0" />
             <p>
@@ -421,7 +533,15 @@ export function ShiftDialog({
           </div>
         )}
 
-        <Field label="Note" optional hint="Shown to the person in their schedule and email.">
+        <Field
+          label="Note"
+          optional
+          hint={
+            timeOffMode
+              ? 'Included in the email to the person.'
+              : 'Shown to the person in their schedule and email.'
+          }
+        >
           <Textarea
             rows={2}
             maxLength={500}

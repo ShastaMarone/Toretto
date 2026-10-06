@@ -20,6 +20,8 @@ import type {
   RepeatResult,
   ScheduleRange,
   ScheduleSummary,
+  TimeOffEntry,
+  TimeOffRequest,
 } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
@@ -36,6 +38,7 @@ import {
   useSettings,
   useTeamSchedule,
   useTeams,
+  useTimeOffTypes,
   useTiers,
 } from '../../api/queries';
 import { CalendarNav, TierFilter } from '../../components/schedule/CalendarBits';
@@ -47,6 +50,7 @@ import {
   type RepeatPayload,
   type ShiftDraft,
   type ShiftPayload,
+  type TimeOffPayload,
 } from '../../components/schedule/ShiftDialog';
 import { ScheduleLegend, ShiftChip, TimeOffChip } from '../../components/schedule/ShiftChip';
 import { Button } from '../../components/ui/Button';
@@ -77,6 +81,10 @@ import {
 } from '../../lib/schedule';
 import { useBootstrapData, useTimeFormat } from '../../lib/session';
 import { zoneLabel } from '../../lib/timezones';
+
+/** Ids of shifts shown before the server has saved them. */
+const PENDING = 'pending-';
+const isPending = (shift: BuilderShift) => shift.id.startsWith(PENDING);
 
 type DialogState = { mode: 'create'; draft: ShiftDraft } | { mode: 'edit'; shift: BuilderShift };
 
@@ -202,6 +210,7 @@ function Builder({
   const teams = useTeams();
   const rules = overtimeRules(useSettings().data);
   const openShifts = useOpenShifts();
+  const timeOffTypes = useTimeOffTypes();
   // Everyone's published shifts, for overtime worked on other schedules. (The
   // team schedule's days are the viewer's: a day either side covers the edges.)
   const team = useTeamSchedule(addDays(data.from, -1), addDays(data.to, 1));
@@ -290,19 +299,79 @@ function Builder({
   );
 
   // ---- mutations ------------------------------------------------------------
+  // Saving to Google can take seconds, so adds and copies show on the grid at
+  // once (as a placeholder shift) and are swapped for the saved ones when the
+  // server answers. The page is only re-read after the last pending save.
+  const WRITE = ['schedule-write'] as const;
+  const settle = () => {
+    if (queryClient.isMutating({ mutationKey: WRITE }) <= 1) refresh();
+  };
+  const placeholder = (p: ShiftPayload): BuilderShift => ({
+    id: `${PENDING}${crypto.randomUUID()}`,
+    scheduleId: schedule.id,
+    userId: p.userId,
+    labelId: p.labelId,
+    startTime: p.startTime,
+    endTime: p.endTime,
+    notes: p.notes,
+    status: 'pending',
+    confirmedAt: null,
+    changeState: 'new',
+    published: null,
+  });
+  const editRange = (change: (d: ScheduleRange) => ScheduleRange) =>
+    queryClient.setQueryData<ScheduleRange>(queryKey, (d) => (d ? change(d) : d));
+  const addToRange = async (added: BuilderShift[]) => {
+    await queryClient.cancelQueries({ queryKey });
+    editRange((d) => ({ ...d, shifts: [...d.shifts, ...added] }));
+  };
+  const dropFromRange = (ids: Set<string>) =>
+    editRange((d) => ({ ...d, shifts: d.shifts.filter((s) => !ids.has(s.id)) }));
+  const swapInRange = (id: string, saved: BuilderShift) =>
+    editRange((d) => ({ ...d, shifts: d.shifts.map((s) => (s.id === id ? saved : s)) }));
+  // A shift that overlaps one the person has is refused by the server: wait for
+  // that answer and show it in the dialog instead of adding a placeholder.
+  const clashes = (p: { userId: string; startTime: string; endTime: string }) =>
+    data.shifts.some(
+      (s) =>
+        s.userId === p.userId &&
+        s.changeState !== 'removed' &&
+        s.startTime < p.endTime &&
+        s.endTime > p.startTime,
+    );
+
   const create = useMutation({
-    mutationFn: (payload: ShiftPayload) =>
+    mutationKey: WRITE,
+    mutationFn: ({ payload }: { payload: ShiftPayload; optimistic: boolean }) =>
       api.post<BuilderShift>(`/schedules/${schedule.id}/shifts`, payload),
-    onSuccess: () => {
+    onMutate: async ({ payload, optimistic }) => {
+      if (!optimistic) return { tempId: null };
+      const temp = placeholder(payload);
+      await addToRange([temp]);
       setDialog(null);
-      refresh();
+      return { tempId: temp.id };
     },
+    onSuccess: (saved, _vars, ctx) => {
+      setDialog(null);
+      if (ctx?.tempId) swapInRange(ctx.tempId, saved);
+    },
+    onError: (e, { optimistic }, ctx) => {
+      if (ctx?.tempId) dropFromRange(new Set([ctx.tempId]));
+      if (optimistic) toast.error(e.message);
+    },
+    onSettled: settle,
   });
   const createMany = useMutation({
+    mutationKey: WRITE,
     mutationFn: (payload: RepeatPayload) =>
       api.post<RepeatResult>(`/schedules/${schedule.id}/shifts/bulk`, payload),
-    onSuccess: ({ created, skipped }, payload) => {
+    onMutate: async (payload) => {
+      const temps = payload.shifts.map((t) => placeholder({ ...payload, ...t }));
+      await addToRange(temps);
       setDialog(null);
+      return { tempIds: new Set(temps.map((t) => t.id)) };
+    },
+    onSuccess: ({ created, skipped }, payload) => {
       const days = skipped.map((s) => formatDay(localDate(s.startTime, tz)));
       const name = data.people.find((p) => p.id === payload.userId)?.name ?? 'They';
       const message = created
@@ -316,8 +385,46 @@ function Builder({
             : `Skipped ${skipped.length} days from ${days[0]} to ${days.at(-1)}: ${name} already works or has time off then.`;
       if (created) toast.success(message, { description });
       else toast.warning(message, { description });
-      refresh();
     },
+    onError: (e, _payload, ctx) => {
+      if (ctx) dropFromRange(ctx.tempIds);
+      toast.error(e.message);
+    },
+    onSettled: settle,
+  });
+  const addTimeOff = useMutation({
+    mutationKey: WRITE,
+    mutationFn: (payload: TimeOffPayload) => api.post<TimeOffRequest>('/time-off', payload),
+    onMutate: async (payload) => {
+      await queryClient.cancelQueries({ queryKey });
+      const type = timeOffTypes.data?.find((t) => t.id === payload.typeId);
+      const partial = payload.startTime !== undefined && payload.endTime !== undefined;
+      const entry: TimeOffEntry = {
+        id: `${PENDING}${crypto.randomUUID()}`,
+        userId: payload.userId,
+        startDate: payload.startDate ?? localDate(payload.startTime!, tz),
+        endDate:
+          payload.endDate ??
+          localDate(new Date(Date.parse(payload.endTime!) - 1).toISOString(), tz),
+        startTime: partial ? payload.startTime! : null,
+        endTime: partial ? payload.endTime! : null,
+        status: 'approved',
+        typeName: type?.name ?? null,
+        typeColor: type?.color ?? null,
+      };
+      editRange((d) => ({ ...d, timeOff: [...d.timeOff, entry] }));
+      setDialog(null);
+      return { tempId: entry.id };
+    },
+    onSuccess: (r) => {
+      toast.success(`Added ${r.type.name} for ${r.userName}`);
+      void queryClient.invalidateQueries({ queryKey: ['time-off'] });
+    },
+    onError: (e, _payload, ctx) => {
+      if (ctx) editRange((d) => ({ ...d, timeOff: d.timeOff.filter((t) => t.id !== ctx.tempId) }));
+      toast.error(e.message);
+    },
+    onSettled: settle,
   });
   const edit = useMutation({
     mutationFn: ({ shiftId, payload }: { shiftId: string; payload: Partial<ShiftPayload> }) =>
@@ -345,6 +452,7 @@ function Builder({
     onError: (e) => toast.error(e.message),
   });
   const move = useMutation({
+    mutationKey: WRITE,
     mutationFn: ({
       shift,
       userId,
@@ -367,25 +475,34 @@ function Builder({
         : api.patch<BuilderShift>(`/shifts/${shift.id}`, { userId, ...times });
     },
     onMutate: async ({ shift, userId, day, copy }) => {
-      if (copy) return { previous: undefined };
+      const times = moveShiftToDate(shift.startTime, shift.endTime, day, tz);
+      if (copy) {
+        const temp = placeholder({
+          userId,
+          labelId: shift.labelId,
+          notes: shift.notes,
+          ...times,
+        });
+        await addToRange([temp]);
+        return { previous: undefined, tempId: temp.id };
+      }
       await queryClient.cancelQueries({ queryKey });
       const previous = queryClient.getQueryData<ScheduleRange>(queryKey);
-      const times = moveShiftToDate(shift.startTime, shift.endTime, day, tz);
-      queryClient.setQueryData<ScheduleRange>(queryKey, (d) =>
-        d
-          ? {
-              ...d,
-              shifts: d.shifts.map((s) => (s.id === shift.id ? { ...s, userId, ...times } : s)),
-            }
-          : d,
-      );
-      return { previous };
+      editRange((d) => ({
+        ...d,
+        shifts: d.shifts.map((s) => (s.id === shift.id ? { ...s, userId, ...times } : s)),
+      }));
+      return { previous, tempId: undefined };
+    },
+    onSuccess: (saved, { copy }, ctx) => {
+      if (copy && ctx?.tempId) swapInRange(ctx.tempId, saved);
     },
     onError: (e, _vars, ctx) => {
+      if (ctx?.tempId) dropFromRange(new Set([ctx.tempId]));
       if (ctx?.previous) queryClient.setQueryData(queryKey, ctx.previous);
       toast.error(e.message);
     },
-    onSettled: refresh,
+    onSettled: settle,
   });
   const publish = useMutation({
     mutationFn: (all: boolean) =>
@@ -455,6 +572,7 @@ function Builder({
 
   // ---- drag and drop ----------------------------------------------------------
   const onDragStart = (shift: BuilderShift) => (e: DragEvent<HTMLElement>) => {
+    if (isPending(shift)) return e.preventDefault();
     e.dataTransfer.setData('text/plain', shift.id);
     e.dataTransfer.effectAllowed = 'copyMove';
     setDraggingId(shift.id);
@@ -563,7 +681,7 @@ function Builder({
       dragging: draggingId === s.id,
       onDragStart: onDragStart(s),
       onDragEnd,
-      onClick: () => setDialog({ mode: 'edit', shift: s }),
+      onClick: () => !isPending(s) && setDialog({ mode: 'edit', shift: s }),
     }));
     const gone = (ghosts.get(person.id)?.get(day) ?? []).map((g): TimelineBar =>
       g.working.changeState === 'removed'
@@ -849,7 +967,7 @@ function Builder({
                     dragging={draggingId === s.id}
                     onDragStart={onDragStart(s)}
                     onDragEnd={onDragEnd}
-                    onClick={() => setDialog({ mode: 'edit', shift: s })}
+                    onClick={() => !isPending(s) && setDialog({ mode: 'edit', shift: s })}
                   />
                 ))}
                 {cellGhosts.map((g) =>
@@ -916,10 +1034,13 @@ function Builder({
           labels={data.labels}
           timeOff={data.timeOff}
           allShifts={data.shifts}
-          saving={create.isPending || createMany.isPending}
-          error={create.error ?? createMany.error}
-          onSave={(payload) => create.mutate(payload)}
+          timeOffTypes={timeOffTypes.data}
+          // Only a save the dialog is waiting on spins or shows an error here.
+          saving={create.isPending && create.variables?.optimistic === false}
+          error={create.variables?.optimistic === false ? create.error : null}
+          onSave={(payload) => create.mutate({ payload, optimistic: !clashes(payload) })}
           onSaveMany={(payload) => createMany.mutate(payload)}
+          onSaveTimeOff={(payload) => addTimeOff.mutate(payload)}
           onClose={() => {
             setDialog(null);
             create.reset();
