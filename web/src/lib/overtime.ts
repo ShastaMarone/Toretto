@@ -15,7 +15,7 @@ export function overtimeRules(settings: OrgSettings | undefined): OvertimeRules 
  * partly shown week can't say).
  */
 export function overtimeIn(
-  shifts: { startTime: string; endTime: string }[],
+  shifts: { startTime: string; endTime: string; unpaidBreakMinutes?: number }[],
   from: ISODate,
   to: ISODate,
   tz: string,

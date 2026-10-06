@@ -26,6 +26,7 @@ export function catalogRoutes({ db }: AppDeps): {
   // ---- Tiers ---------------------------------------------------------------
   const TIER_SQL = `
     SELECT t.id, t.name, t.color, t.sort_order AS "sortOrder",
+           t.unpaid_break_minutes AS "unpaidBreakMinutes",
            (SELECT count(*)::int FROM users u WHERE u.tier_id = t.id AND u.deactivated_at IS NULL) AS "memberCount"
       FROM tiers t`;
 
@@ -35,16 +36,42 @@ export function catalogRoutes({ db }: AppDeps): {
   });
 
   tiers.post('/', requireAdmin, async (req, res) => {
-    const body = parse(z.object({ name: zName('Tier name', 60), color: zColor }), req.body);
+    const body = parse(
+      z.object({
+        name: zName('Tier name', 60),
+        color: zColor,
+        unpaidBreakMinutes: z.number().int().min(0).max(240).optional(),
+      }),
+      req.body,
+    );
     const { rows } = await db.query<{ id: string }>(
-      `INSERT INTO tiers (name, color, sort_order)
-       VALUES ($1, $2, (SELECT COALESCE(max(sort_order), 0) + 1 FROM tiers)) RETURNING id`,
-      [body.name, body.color],
+      `INSERT INTO tiers (name, color, sort_order, unpaid_break_minutes)
+       VALUES ($1, $2, (SELECT COALESCE(max(sort_order), 0) + 1 FROM tiers), $3) RETURNING id`,
+      [body.name, body.color, body.unpaidBreakMinutes ?? 0],
     );
     const id = rows[0]!.id;
     await audit(db, req.user!.id, 'tier.created', { type: 'tier', id }, { name: body.name });
     const { rows: tier } = await db.query<Tier>(`${TIER_SQL} WHERE t.id = $1`, [id]);
     res.status(201).json(tier[0]);
+  });
+
+  tiers.post('/reorder', requireAdmin, async (req, res) => {
+    const { ids } = parse(z.object({ ids: z.array(zId).min(1).max(200) }), req.body);
+    await db.query(
+      `UPDATE tiers t SET sort_order = v.ord::int
+         FROM unnest($1::uuid[]) WITH ORDINALITY AS v(id, ord)
+        WHERE t.id = v.id`,
+      [[...new Set(ids)]],
+    );
+    await audit(
+      db,
+      req.user!.id,
+      'tier.reordered',
+      { type: 'tier', id: ids[0]! },
+      { count: ids.length },
+    );
+    const { rows } = await db.query<Tier>(`${TIER_SQL} ORDER BY t.sort_order, lower(t.name)`);
+    res.json(rows);
   });
 
   tiers.patch('/:id', requireAdmin, async (req, res) => {
@@ -54,14 +81,22 @@ export function catalogRoutes({ db }: AppDeps): {
         name: zName('Tier name', 60).optional(),
         color: zColor.optional(),
         sortOrder: z.number().int().min(0).max(1000).optional(),
+        unpaidBreakMinutes: z.number().int().min(0).max(240).optional(),
       }),
       req.body,
     );
     const { rowCount } = await db.query(
       `UPDATE tiers SET name = COALESCE($2, name), color = COALESCE($3, color),
-                        sort_order = COALESCE($4, sort_order)
+                        sort_order = COALESCE($4, sort_order),
+                        unpaid_break_minutes = COALESCE($5, unpaid_break_minutes)
         WHERE id = $1`,
-      [id, body.name ?? null, body.color ?? null, body.sortOrder ?? null],
+      [
+        id,
+        body.name ?? null,
+        body.color ?? null,
+        body.sortOrder ?? null,
+        body.unpaidBreakMinutes ?? null,
+      ],
     );
     if (!rowCount) throw notFound('Tier');
     await audit(db, req.user!.id, 'tier.updated', { type: 'tier', id }, body);

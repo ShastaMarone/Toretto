@@ -4,7 +4,7 @@ import {
   endOfMonth,
   localDate,
   localTime,
-  shiftHours,
+  paidHours,
   startOfMonth,
   startOfWeek,
   type ISODate,
@@ -77,8 +77,31 @@ export function shiftColor(s: Pick<ShiftView, 'label' | 'tier'>): string {
   return s.label?.color ?? s.tier?.color ?? '#a855f7';
 }
 
-export function totalHours(shifts: { startTime: string; endTime: string }[]): number {
-  return shifts.reduce((sum, s) => sum + shiftHours(s.startTime, s.endTime), 0);
+/** Paid hours: each shift's length less its unpaid break (see `withBreaks`). */
+export function totalHours(
+  shifts: { startTime: string; endTime: string; unpaidBreakMinutes?: number }[],
+): number {
+  return shifts.reduce(
+    (sum, s) => sum + paidHours(s.startTime, s.endTime, s.unpaidBreakMinutes),
+    0,
+  );
+}
+
+/** Each person's unpaid break, from their tier: minutes taken off their longer shifts. */
+export function breakMinutesByUser(
+  people: { id: string; tierId: string | null }[],
+  tiers: Pick<Tier, 'id' | 'unpaidBreakMinutes'>[],
+): Map<string, number> {
+  const byTier = new Map(tiers.map((t) => [t.id, t.unpaidBreakMinutes ?? 0]));
+  return new Map(people.map((p) => [p.id, (p.tierId && byTier.get(p.tierId)) || 0]));
+}
+
+/** Shifts with their person's unpaid break attached, so hours and overtime count paid time. */
+export function withBreaks<T extends { userId: string }>(
+  shifts: T[],
+  breaks: Map<string, number>,
+): (T & { unpaidBreakMinutes: number })[] {
+  return shifts.map((s) => ({ ...s, unpaidBreakMinutes: breaks.get(s.userId) ?? 0 }));
 }
 
 export type CalendarView = 'day' | 'week' | '2weeks' | 'month';

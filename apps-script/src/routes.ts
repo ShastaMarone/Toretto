@@ -169,9 +169,19 @@ export function createRouter(): Router {
     created(
       catalog.createTier(
         ctx,
-        parse(z.object({ name: zName('Tier name', 60), color: zColor }), req.body),
+        parse(
+          z.object({
+            name: zName('Tier name', 60),
+            color: zColor,
+            unpaidBreakMinutes: z.number().int().min(0).max(240).optional(),
+          }),
+          req.body,
+        ),
       ),
     ),
+  );
+  r.post('/tiers/reorder', 'admin', (req, ctx) =>
+    catalog.reorderTiers(ctx, parse(z.object({ ids: z.array(zId).min(1).max(200) }), req.body).ids),
   );
   r.patch('/tiers/:id', 'admin', (req, ctx) =>
     catalog.updateTier(
@@ -182,6 +192,7 @@ export function createRouter(): Router {
           name: zName('Tier name', 60).optional(),
           color: zColor.optional(),
           sortOrder: z.number().int().min(0).max(1000).optional(),
+          unpaidBreakMinutes: z.number().int().min(0).max(240).optional(),
         }),
         req.body,
       ),
@@ -313,6 +324,14 @@ export function createRouter(): Router {
   r.post('/users/:id/resend-invite', 'admin', (req, ctx) =>
     people.resendInvite(ctx, id(req.params)),
   );
+  r.delete('/users/:id/shifts', 'admin', (req, ctx) => {
+    const { from, to } = parse(
+      z.object({ from: zDateTime.optional(), to: zDateTime.optional() }),
+      req.query,
+    );
+    if (!from !== !to) throw badRequest('Send both `from` and `to`, or neither');
+    return shifts.removeAllShiftsFor(ctx, id(req.params), from && to ? { from, to } : undefined);
+  });
   r.delete('/users/:id', 'admin', (req, ctx) => {
     people.deletePerson(ctx, id(req.params));
     return noContent();
@@ -340,7 +359,13 @@ export function createRouter(): Router {
     publish.deleteSchedule(ctx, id(req.params), ctx.user!),
   );
   r.post('/schedules/:id/publish', 'admin', (req, ctx) =>
-    publish.publishSchedule(ctx, id(req.params), ctx.user!, optionalRange(req.body)),
+    publish.publishSchedule(
+      ctx,
+      id(req.params),
+      ctx.user!,
+      optionalRange(req.body),
+      parse(z.object({ notify: z.boolean().default(true) }), req.body ?? {}).notify,
+    ),
   );
   r.post('/schedules/:id/discard-changes', 'admin', (req, ctx) => {
     const scheduleId = id(req.params);

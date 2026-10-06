@@ -179,6 +179,46 @@ describe('hourly jobs', () => {
     expect(await emails(ctx.db, { kind: 'shift_reminder' })).toHaveLength(1);
   });
 
+  it('opening a screen does not wait for the lock when there is nothing to save', async () => {
+    // Someone who has already signed in recently: /bootstrap has nothing to write.
+    await ana.get('/api/bootstrap').expect(200);
+    ctx.env.lockBusy = true;
+    try {
+      const again = await ana.get('/api/bootstrap');
+      expect(again.status).toBe(200);
+      expect(again.body.user?.email).toBe(people.ana.email);
+      // Changes still need the lock.
+      const blocked = await admin.post(`/api/schedules/${main_}/publish`).send({});
+      expect(blocked.status).toBe(503);
+      expect(blocked.body.error.code).toBe('BUSY');
+    } finally {
+      ctx.env.lockBusy = false;
+    }
+  });
+
+  it('publishing quietly sends no email now and no reminder later', async () => {
+    const res = await admin
+      .post(`/api/schedules/${main_}/shifts`)
+      .send({ userId: people.bo.id, ...shiftOn(day(10)) })
+      .expect(201);
+    await clearEmails(ctx.db);
+    const published = await admin
+      .post(`/api/schedules/${main_}/publish`)
+      .send({ notify: false })
+      .expect(200);
+    expect(published.body).toMatchObject({ added: 1, emailsQueued: 0 });
+    expect(await emails(ctx.db, { to: people.bo.email })).toHaveLength(0);
+    // It is published: the team member sees it.
+    const bo = ctx.agent();
+    await login(bo, people.bo.email);
+    const seen = await bo.get(`/api/my/shifts?from=${day(10)}&to=${day(11)}`);
+    expect(seen.body.map((s: { id: string }) => s.id)).toContain(res.body.id);
+    // Long past the usual reminder delay, still nothing goes out.
+    ctx.db.write((t) => t.shifts.update(res.body.id, { publishedAt: hoursAgo(48) }));
+    runHourly();
+    expect(await emails(ctx.db, { kind: 'shift_reminder' })).toHaveLength(0);
+  });
+
   it('deletes sent and failed emails older than the setting, never ones still going out', async () => {
     ctx.db.write((t) => {
       for (const [status, days] of [

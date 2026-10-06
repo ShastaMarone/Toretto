@@ -135,6 +135,7 @@ export function ShiftDialog({
   onSaveMany,
   onSaveTimeOff,
   onDelete,
+  onDeleteWeek,
   onDuplicate,
   onClose,
 }: {
@@ -159,6 +160,8 @@ export function ShiftDialog({
   /** When adding: post it as time off (a holiday, personal day…) instead of a shift. */
   onSaveTimeOff?: (payload: TimeOffPayload) => void;
   onDelete?: () => void;
+  /** Offer to remove everything this person has that week. */
+  onDeleteWeek?: () => void;
   onDuplicate?: (draft: ShiftDraft) => void;
   onClose: () => void;
 }) {
@@ -282,15 +285,21 @@ export function ShiftDialog({
       footer={
         <>
           {mode === 'edit' && onDelete && (
-            <Button
-              variant="danger-ghost"
-              icon={<Trash2 className="size-4" />}
-              onClick={onDelete}
-              loading={deleting}
-              className="mr-auto"
-            >
-              Delete
-            </Button>
+            <div className="mr-auto flex flex-wrap gap-1">
+              <Button
+                variant="danger-ghost"
+                icon={<Trash2 className="size-4" />}
+                onClick={onDelete}
+                loading={deleting}
+              >
+                Delete
+              </Button>
+              {onDeleteWeek && (
+                <Button variant="danger-ghost" onClick={onDeleteWeek}>
+                  Remove their week…
+                </Button>
+              )}
+            </div>
           )}
           <Button onClick={onClose}>Cancel</Button>
           {mode === 'edit' && onDuplicate && (

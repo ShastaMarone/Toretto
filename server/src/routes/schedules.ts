@@ -100,7 +100,15 @@ export function scheduleRoutes({ db, config, kick }: AppDeps): Router {
 
   r.post('/:id/publish', async (req, res) => {
     const { id } = parse(zIdParam, req.params);
-    const result = await publishSchedule(db, config, id, req.user!, optionalRange(req.body));
+    const { notify } = parse(z.object({ notify: z.boolean().default(true) }), req.body ?? {});
+    const result = await publishSchedule(
+      db,
+      config,
+      id,
+      req.user!,
+      optionalRange(req.body),
+      notify,
+    );
     kick();
     res.json(result);
   });

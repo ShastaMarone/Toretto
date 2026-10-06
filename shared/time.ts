@@ -279,6 +279,19 @@ export function shiftHours(startIso: string, endIso: string): number {
   return Math.round((ms / 3_600_000) * 100) / 100;
 }
 
+/** An unpaid break is only taken off shifts longer than this (Ontario's meal-break rule: after 5 hours). */
+export const BREAK_AFTER_HOURS = 5;
+
+/**
+ * Hours that count for pay: the shift's length less its unpaid break (a lunch
+ * that isn't paid). Short shifts have no break to take off.
+ */
+export function paidHours(startIso: string, endIso: string, unpaidBreakMinutes = 0): number {
+  const hours = shiftHours(startIso, endIso);
+  if (!unpaidBreakMinutes || hours <= BREAK_AFTER_HOURS) return hours;
+  return Math.max(0, Math.round((hours - unpaidBreakMinutes / 60) * 100) / 100);
+}
+
 /** 8 -> "8h", 7.5 -> "7h 30m" */
 export function formatHours(hours: number): string {
   const totalMinutes = Math.round(hours * 60);

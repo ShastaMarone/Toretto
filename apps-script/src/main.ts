@@ -13,7 +13,7 @@ import { markEmailsWaiting, runHourlyJobs, sendQueuedEmails as sendEmails } from
 import { nameFromEmail } from './services/people';
 
 /** Bump when a new version adds tabs or columns: the next change adds them to the Sheet. */
-export const SCHEMA_VERSION = '2';
+export const SCHEMA_VERSION = '3';
 
 /**
  * Which build this is. build.mjs stamps the same version into Code.gs and
@@ -40,6 +40,8 @@ const writes = (method: string, url: string) =>
 interface Result extends ApiResponse {
   /** Emails were queued, or calendars may need changes: the page asks for that to happen now. */
   queued?: number;
+  /** How long the script itself took, so the page can tell its own waiting from Google's. */
+  ms?: number;
 }
 
 /** Slower than this is worth a line in Executions (the Apps Script editor's log). */
@@ -50,10 +52,34 @@ function run(method: string, url: string, body: unknown): Result {
   const res = runTimed(method, url, body);
   const took = Date.now() - started;
   if (took > SLOW_MS) console.warn(`Slow: ${method} ${url} took ${took} ms (status ${res.status})`);
-  return res;
+  return { ...res, ms: took };
+}
+
+/**
+ * Opening a screen asks /bootstrap who you are. It only has something to save
+ * the first time someone signs in, or about once an hour after that, so try it
+ * without the lock first: with several tabs open, queueing for the lock on every
+ * visit could pile up for minutes. Null when it does need to save (or the Sheet
+ * needs updating first): the caller then does it properly, under the lock.
+ */
+function bootstrapWithoutLock(method: string, url: string): Result | null {
+  if (method !== 'GET' || splitUrl(url).path !== '/bootstrap') return null;
+  if (PropertiesService.getScriptProperties().getProperty('SCHEMA_VERSION') !== SCHEMA_VERSION) {
+    return null;
+  }
+  try {
+    const db = Db.reader();
+    const ctx = context(db);
+    const res = router.handle(method, url, undefined, ctx);
+    return db.hasChanges() ? null : { ...res, queued: 0 };
+  } catch {
+    return null;
+  }
 }
 
 function runTimed(method: string, url: string, body: unknown): Result {
+  const quick = bootstrapWithoutLock(method, url);
+  if (quick) return quick;
   const write = writes(method, url);
   const lock = write ? LockService.getScriptLock() : null;
   if (lock && !lock.tryLock(30_000)) {
@@ -127,13 +153,13 @@ export function apiBatch(callsJson: string): string {
   });
   const took = Date.now() - started;
   if (took > SLOW_MS) console.warn(`Slow: batch of ${calls.length} reads took ${took} ms`);
-  return JSON.stringify(results);
+  return JSON.stringify(results.map((r) => ({ ...r, ms: took })));
 }
 
 /** A value as JSON that's safe inside a <script> block. */
 const scriptJson = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
 
-/** The web page. Links in emails open a screen: …/exec/my-schedule, …/exec/confirm-shift/<id>. */
+/** The web page. Links in emails open a screen: …/exec?page=/my-schedule, …?page=/confirm-shift/<id>. */
 export function doGet(e: GoogleAppsScript.Events.DoGet): GoogleAppsScript.HTML.HtmlOutput {
   const url = ScriptApp.getService().getUrl();
   const props = PropertiesService.getScriptProperties();

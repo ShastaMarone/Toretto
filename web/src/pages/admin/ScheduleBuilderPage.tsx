@@ -1,5 +1,6 @@
-import {
+﻿import {
   addDays,
+  dayRangeToUtc,
   diffDays,
   eachDay,
   formatDateRange,
@@ -9,6 +10,7 @@ import {
   formatTimestamp,
   localDate,
   moveShiftToDate,
+  startOfWeek,
   todayIn,
   type ISODate,
 } from '@shared/time';
@@ -22,6 +24,7 @@ import type {
   ScheduleSummary,
   TimeOffEntry,
   TimeOffRequest,
+  Tier,
 } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
@@ -43,6 +46,7 @@ import {
 } from '../../api/queries';
 import { CalendarNav, TierFilter } from '../../components/schedule/CalendarBits';
 import { DayTimeline, type TimelineBar } from '../../components/schedule/DayTimeline';
+import { ScheduleAgenda } from '../../components/schedule/ScheduleAgenda';
 import { ScheduleGrid } from '../../components/schedule/ScheduleGrid';
 import { ScheduleSwitcher } from '../../components/schedule/ScheduleSwitcher';
 import {
@@ -71,15 +75,18 @@ import { useHolidays } from '../../lib/holidays';
 import { overtimeIn, overtimeRules } from '../../lib/overtime';
 import {
   draftFromShift,
+  breakMinutesByUser,
   groupByTier,
   groupByUserDay,
   stepView,
   timeOffByUserDay,
   totalHours,
+  withBreaks,
   viewRange,
   type CalendarView,
 } from '../../lib/schedule';
 import { useBootstrapData, useTimeFormat } from '../../lib/session';
+import { useMediaQuery } from '../../lib/useMediaQuery';
 import { zoneLabel } from '../../lib/timezones';
 
 /** Ids of shifts shown before the server has saved them. */
@@ -89,6 +96,8 @@ const isPending = (shift: BuilderShift) => shift.id.startsWith(PENDING);
 type DialogState = { mode: 'create'; draft: ShiftDraft } | { mode: 'edit'; shift: BuilderShift };
 
 const VIEW_KEY = 'toretto:builder-view';
+/** Where the builder remembers which tiers are collapsed (shared by the Day, Week and Month views). */
+const COLLAPSED_TIERS_KEY = 'toretto:builder-collapsed-tiers';
 const VIEWS: { value: CalendarView; label: string }[] = [
   { value: 'day', label: 'Day' },
   { value: 'week', label: 'Week' },
@@ -216,16 +225,19 @@ function Builder({
   const team = useTeamSchedule(addDays(data.from, -1), addDays(data.to, 1));
   const days = useMemo(() => eachDay(data.from, data.to), [data.from, data.to]);
   const compact = days.length > 14;
+  // On a phone the people × days grid means scrolling sideways: show a list of days instead.
+  const phone = useMediaQuery('(max-width: 639px)');
   const holidays = useHolidays(data.from, data.to);
   const queryKey = keys.schedule(schedule.id, data.from, data.to);
 
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
-  const [publishing, setPublishing] = useState<null | { all: boolean }>(null);
+  const [publishing, setPublishing] = useState<null | { all: boolean; notify: boolean }>(null);
   const [discarding, setDiscarding] = useState(false);
   const [naming, setNaming] = useState<null | 'create' | 'rename'>(null);
   const [deleting, setDeleting] = useState(false);
+  const [clearingWeek, setClearingWeek] = useState<BuilderShift | null>(null);
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['schedule', schedule.id] });
@@ -242,7 +254,12 @@ function Builder({
   );
   const groups = groupByTier(visiblePeople, tierList);
   const visibleIds = new Set(visiblePeople.map((p) => p.id));
-  const shifts = data.shifts.filter((s) => visibleIds.has(s.userId));
+  // Hours are paid hours: each person's tier can take an unpaid break (lunch) off their shifts.
+  const breakByUser = breakMinutesByUser(data.people, tierList);
+  const shifts = withBreaks(
+    data.shifts.filter((s) => visibleIds.has(s.userId)),
+    breakByUser,
+  );
   const byUserDay = useMemo(() => groupByUserDay(data.shifts, tz), [data.shifts, tz]);
   // Published shifts going away: shown where the team still sees them.
   const ghosts = useMemo(
@@ -264,7 +281,7 @@ function Builder({
     [data.timeOff, days, tz],
   );
   const onOtherSchedules = useMemo(() => {
-    const byUser = new Map<string, { startTime: string; endTime: string }[]>();
+    const byUser = new Map<string, { userId: string; startTime: string; endTime: string }[]>();
     for (const s of team.data?.shifts ?? []) {
       const d = localDate(s.startTime, tz);
       if (s.scheduleId === schedule.id || d < data.from || d > data.to) continue;
@@ -446,6 +463,54 @@ function Builder({
     },
     onError: (e) => toast.error(e.message),
   });
+  // Dragging a tier into a new place: show it at once, save it, and put it back if that fails.
+  const reorderTiers = useMutation({
+    mutationFn: (ids: string[]) => api.post<Tier[]>('/tiers/reorder', { ids }),
+    onMutate: async (ids) => {
+      await queryClient.cancelQueries({ queryKey: keys.tiers });
+      const before = queryClient.getQueryData<Tier[]>(keys.tiers);
+      queryClient.setQueryData<Tier[]>(keys.tiers, (list) =>
+        ids
+          .map((id, i) => {
+            const tier = list?.find((t) => t.id === id);
+            return tier ? { ...tier, sortOrder: i + 1 } : null;
+          })
+          .filter((t): t is Tier => t !== null),
+      );
+      return { before };
+    },
+    onError: (e, _ids, context) => {
+      queryClient.setQueryData(keys.tiers, context?.before);
+      toast.error(e.message);
+    },
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: keys.tiers }),
+  });
+  /** `visible` is the new order of the tiers on screen; tiers filtered out keep their places. */
+  const onReorderGroups = (visible: string[]) => {
+    const all = tierList.map((t) => t.id);
+    let i = 0;
+    reorderTiers.mutate(all.map((id) => (visible.includes(id) ? visible[i++]! : id)));
+  };
+  const removeWeek = useMutation({
+    mutationFn: ({ shift }: { shift: BuilderShift }) => {
+      const first = startOfWeek(localDate(shift.startTime, tz), org.weekStartsOn);
+      const range = new URLSearchParams(dayRangeToUtc(first, addDays(first, 6), tz));
+      return api.delete<{ removed: number; pendingRemoval: number }>(
+        `/users/${shift.userId}/shifts?${range}`,
+      );
+    },
+    onSuccess: (r) => {
+      setDialog(null);
+      setClearingWeek(null);
+      if (r.pendingRemoval)
+        toast('Shifts will be removed when you publish', {
+          description: 'The team still sees the published ones until then.',
+        });
+      else toast.success('Shifts removed');
+      refresh();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const restore = useMutation({
     mutationFn: (shiftId: string) => api.post<BuilderShift>(`/shifts/${shiftId}/restore`),
     onSuccess: refresh,
@@ -505,20 +570,25 @@ function Builder({
     onSettled: settle,
   });
   const publish = useMutation({
-    mutationFn: (all: boolean) =>
-      api.post<PublishResult>(
-        `/schedules/${schedule.id}/publish`,
-        all ? {} : { from: data.from, to: data.to },
-      ),
-    onSuccess: (r) => {
+    mutationFn: ({ all, notify }: { all: boolean; notify: boolean }) =>
+      api.post<PublishResult>(`/schedules/${schedule.id}/publish`, {
+        ...(all ? {} : { from: data.from, to: data.to }),
+        // Only said when quiet, so an older server still works as before.
+        ...(notify ? {} : { notify: false }),
+      }),
+    onSuccess: (r, { notify }) => {
       setPublishing(null);
       const changed = r.added + r.updated + r.removed;
       toast.success(changed ? 'Published' : 'Nothing new to publish', {
-        description: r.emailsQueued
-          ? `Emailing ${r.emailsQueued} ${r.emailsQueued === 1 ? 'person' : 'people'} so they can confirm.`
-          : changed
-            ? 'No one needed an email (all changes were in the past).'
-            : undefined,
+        description: !notify
+          ? changed
+            ? 'No emails were sent. The team can see the changes in the app.'
+            : undefined
+          : r.emailsQueued
+            ? `Emailing ${r.emailsQueued} ${r.emailsQueued === 1 ? 'person' : 'people'} so they can confirm.`
+            : changed
+              ? 'No one needed an email (all changes were in the past).'
+              : undefined,
       });
       refresh();
     },
@@ -629,7 +699,7 @@ function Builder({
   };
   const renderPerson = (person: PersonRow) => {
     const personShifts = shifts.filter((s) => s.userId === person.id);
-    const other = onOtherSchedules.get(person.id) ?? [];
+    const other = withBreaks(onOtherSchedules.get(person.id) ?? [], breakByUser);
     const overtime = overtimeIn(
       [...personShifts, ...other],
       data.from,
@@ -672,6 +742,7 @@ function Builder({
       id: s.id,
       startTime: s.startTime,
       endTime: s.endTime,
+      unpaidBreakMinutes: breakByUser.get(person.id) ?? 0,
       color: colorFor(s, person),
       labelName: s.labelId ? labelsById.get(s.labelId)?.name : undefined,
       notes: s.notes,
@@ -708,6 +779,72 @@ function Builder({
     return [...mine, ...gone];
   };
 
+  const renderShiftCell = (person: PersonRow, day: ISODate, list = false) => {
+    const cellShifts = byUserDay.get(person.id)?.get(day) ?? [];
+    const cellGhosts = ghosts.get(person.id)?.get(day) ?? [];
+    const off = offByUserDay.get(person.id)?.get(day) ?? [];
+    return (
+      <div className={cx('flex flex-col gap-1', !list && 'min-h-[4.5rem]')}>
+        {off.map((entry) => (
+          <TimeOffChip key={entry.id} entry={entry} tz={tz} compact={compact} />
+        ))}
+        {cellShifts.map((s) => (
+          <ShiftChip
+            key={s.id}
+            shift={s}
+            tz={tz}
+            compact={compact}
+            color={colorFor(s, person)}
+            labelName={s.labelId ? labelsById.get(s.labelId)?.name : undefined}
+            status={s.published ? s.status : null}
+            change={s.changeState === 'new' || s.changeState === 'updated' ? s.changeState : null}
+            draggable
+            dragging={draggingId === s.id}
+            onDragStart={onDragStart(s)}
+            onDragEnd={onDragEnd}
+            onClick={() => !isPending(s) && setDialog({ mode: 'edit', shift: s })}
+          />
+        ))}
+        {cellGhosts.map((g) =>
+          g.working.changeState === 'removed' ? (
+            <ShiftChip
+              key={g.id}
+              shift={g}
+              tz={tz}
+              compact={compact}
+              color={colorFor(g.working, person)}
+              status={null}
+              removed
+              onRestore={() => restore.mutate(g.id)}
+            />
+          ) : (
+            <ShiftChip
+              key={g.id}
+              shift={g}
+              tz={tz}
+              compact={compact}
+              color={colorFor(g.working, person)}
+              status={null}
+              removed
+              caption={`Moved to ${formatDay(localDate(g.working.startTime, tz))}`}
+              onClick={() => onDate(localDate(g.working.startTime, tz))}
+            />
+          ),
+        )}
+        {person.active && (
+          <button
+            type="button"
+            onClick={() => openCreate(person.id, day)}
+            aria-label={`Add shift for ${person.name} on ${formatDay(day)}`}
+            className="flex h-6 w-full items-center justify-center rounded-md border border-dashed border-slate-300 text-slate-400 opacity-0 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-600 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
@@ -741,7 +878,7 @@ function Builder({
             variant="primary"
             icon={<Send className="size-4" />}
             disabled={!hasChanges && elsewhere === 0}
-            onClick={() => setPublishing({ all: !hasChanges })}
+            onClick={() => setPublishing({ all: !hasChanges, notify: true })}
           >
             {hasChanges
               ? `Publish ${changes.total} change${changes.total === 1 ? '' : 's'}`
@@ -771,7 +908,7 @@ function Builder({
               {
                 label: `Publish all changes (${schedule.pendingChanges})`,
                 icon: <Send />,
-                onSelect: () => setPublishing({ all: true }),
+                onSelect: () => setPublishing({ all: true, notify: true }),
                 disabled: schedule.pendingChanges === 0,
               },
             ]}
@@ -870,7 +1007,39 @@ function Builder({
         </Banner>
       )}
 
-      {view === 'day' ? (
+      {phone && view !== 'month' ? (
+        <ScheduleAgenda
+          days={days}
+          today={today}
+          holidays={holidays}
+          groups={groups}
+          hasContent={(person, day) =>
+            !!(
+              byUserDay.get(person.id)?.get(day)?.length ||
+              ghosts.get(person.id)?.get(day)?.length ||
+              offByUserDay.get(person.id)?.get(day)?.length
+            )
+          }
+          daySummary={(d) => {
+            const dayShifts = shifts.filter((s) => localDate(s.startTime, tz) === d);
+            return dayShifts.length
+              ? `${dayShifts.length} · ${formatHours(totalHours(dayShifts))}`
+              : '—';
+          }}
+          renderPerson={renderPerson}
+          renderCell={(person, day) => renderShiftCell(person, day, true)}
+          onAddDay={
+            groups[0]?.people[0] ? (day) => openCreate(groups[0]!.people[0]!.id, day) : undefined
+          }
+          empty="No one matches these filters. Add people on the People page."
+          footer={
+            <div className="space-y-1 px-1 pt-1 pb-3 text-xs text-slate-500">
+              <ScheduleLegend showChanges />
+              <p>Tap a shift to edit it · times in {zoneLabel(tz)}</p>
+            </div>
+          }
+        />
+      ) : view === 'day' ? (
         <DayTimeline
           day={data.from}
           today={today}
@@ -878,6 +1047,8 @@ function Builder({
           timeFormat={timeFormat}
           holidays={holidays.get(data.from)}
           groups={groups}
+          onReorderGroups={onReorderGroups}
+          collapseKey={COLLAPSED_TIERS_KEY}
           bars={barsFor}
           timeOff={(person) => offByUserDay.get(person.id)?.get(data.from) ?? []}
           groupHours={groupHours}
@@ -924,6 +1095,8 @@ function Builder({
           holidays={holidays}
           compact={compact}
           groups={groups}
+          onReorderGroups={onReorderGroups}
+          collapseKey={COLLAPSED_TIERS_KEY}
           dayWidth={[80, 128]}
           rowHeight="h-20"
           daySummary={(d) => {
@@ -942,73 +1115,7 @@ function Builder({
               dropKey === `${person.id}|${day}` && 'bg-brand-50 ring-2 ring-inset ring-brand-400',
             ),
           })}
-          renderCell={(person, day) => {
-            const cellShifts = byUserDay.get(person.id)?.get(day) ?? [];
-            const cellGhosts = ghosts.get(person.id)?.get(day) ?? [];
-            const off = offByUserDay.get(person.id)?.get(day) ?? [];
-            return (
-              <div className="flex min-h-[4.5rem] flex-col gap-1">
-                {off.map((entry) => (
-                  <TimeOffChip key={entry.id} entry={entry} tz={tz} compact={compact} />
-                ))}
-                {cellShifts.map((s) => (
-                  <ShiftChip
-                    key={s.id}
-                    shift={s}
-                    tz={tz}
-                    compact={compact}
-                    color={colorFor(s, person)}
-                    labelName={s.labelId ? labelsById.get(s.labelId)?.name : undefined}
-                    status={s.published ? s.status : null}
-                    change={
-                      s.changeState === 'new' || s.changeState === 'updated' ? s.changeState : null
-                    }
-                    draggable
-                    dragging={draggingId === s.id}
-                    onDragStart={onDragStart(s)}
-                    onDragEnd={onDragEnd}
-                    onClick={() => !isPending(s) && setDialog({ mode: 'edit', shift: s })}
-                  />
-                ))}
-                {cellGhosts.map((g) =>
-                  g.working.changeState === 'removed' ? (
-                    <ShiftChip
-                      key={g.id}
-                      shift={g}
-                      tz={tz}
-                      compact={compact}
-                      color={colorFor(g.working, person)}
-                      status={null}
-                      removed
-                      onRestore={() => restore.mutate(g.id)}
-                    />
-                  ) : (
-                    <ShiftChip
-                      key={g.id}
-                      shift={g}
-                      tz={tz}
-                      compact={compact}
-                      color={colorFor(g.working, person)}
-                      status={null}
-                      removed
-                      caption={`Moved to ${formatDay(localDate(g.working.startTime, tz))}`}
-                      onClick={() => onDate(localDate(g.working.startTime, tz))}
-                    />
-                  ),
-                )}
-                {person.active && (
-                  <button
-                    type="button"
-                    onClick={() => openCreate(person.id, day)}
-                    aria-label={`Add shift for ${person.name} on ${formatDay(day)}`}
-                    className="flex h-6 w-full items-center justify-center rounded-md border border-dashed border-slate-300 text-slate-400 opacity-0 transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-600 focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                  >
-                    <Plus className="size-3.5" />
-                  </button>
-                )}
-              </div>
-            );
-          }}
+          renderCell={renderShiftCell}
           empty="No one matches these filters. Add people on the People page."
           footer={
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 px-4 py-3 text-xs text-slate-500">
@@ -1065,6 +1172,7 @@ function Builder({
           error={edit.error}
           onSave={(payload) => edit.mutate({ shiftId: dialog.shift.id, payload })}
           onDelete={() => remove.mutate(dialog.shift.id)}
+          onDeleteWeek={() => setClearingWeek(dialog.shift)}
           onDuplicate={(draft) => {
             edit.reset();
             setDialog({ mode: 'create', draft: { ...draft, date: addDays(draft.date, 1) } });
@@ -1075,16 +1183,33 @@ function Builder({
           }}
         />
       )}
+      {clearingWeek && (
+        <ConfirmDialog
+          title={`Remove all of ${data.people.find((p) => p.id === clearingWeek.userId)?.name ?? 'their'} shifts that week?`}
+          confirmLabel="Remove their week"
+          danger
+          loading={removeWeek.isPending}
+          onConfirm={() => removeWeek.mutate({ shift: clearingWeek })}
+          onClose={() => setClearingWeek(null)}
+        >
+          {(() => {
+            const first = startOfWeek(localDate(clearingWeek.startTime, tz), org.weekStartsOn);
+            return `Every shift they have in the week of ${formatDateRange(first, addDays(first, 6))}, on any schedule. Shifts the team can already see stay until you publish.`;
+          })()}
+        </ConfirmDialog>
+      )}
       {publishing && (
         <PublishDialog
           all={publishing.all}
+          notify={publishing.notify}
+          onNotify={(notify) => setPublishing({ ...publishing, notify })}
           rangeLabel={rangeLabel}
           changes={changes}
           affectedPeople={affectedPeople}
           totalChanges={schedule.pendingChanges}
           loading={publish.isPending}
-          onToggleAll={(all) => setPublishing({ all })}
-          onConfirm={() => publish.mutate(publishing.all)}
+          onToggleAll={(all) => setPublishing({ ...publishing, all })}
+          onConfirm={() => publish.mutate({ all: publishing.all, notify: publishing.notify })}
           onClose={() => setPublishing(null)}
         />
       )}
@@ -1146,6 +1271,8 @@ function Banner({ tone, children }: { tone: 'slate' | 'amber'; children: ReactNo
 
 function PublishDialog({
   all,
+  notify,
+  onNotify,
   rangeLabel,
   changes,
   affectedPeople,
@@ -1156,6 +1283,9 @@ function PublishDialog({
   onClose,
 }: {
   all: boolean;
+  /** Email everyone affected (otherwise publish quietly). */
+  notify: boolean;
+  onNotify: (notify: boolean) => void;
   rangeLabel: string;
   changes: ScheduleRange['changes'];
   affectedPeople: number;
@@ -1169,7 +1299,7 @@ function PublishDialog({
   return (
     <ConfirmDialog
       title={all ? 'Publish every unpublished change?' : `Publish ${rangeLabel}?`}
-      confirmLabel="Publish & notify"
+      confirmLabel={notify ? 'Publish & notify' : 'Publish without notifying'}
       loading={loading}
       onConfirm={onConfirm}
       onClose={onClose}
@@ -1177,8 +1307,9 @@ function PublishDialog({
       {all ? (
         <p>
           All {totalChanges} unpublished change{totalChanges === 1 ? '' : 's'} on this schedule
-          become visible to the team. Everyone affected gets one email with their new, changed or
-          cancelled shifts.
+          become visible to the team.
+          {notify &&
+            ' Everyone affected gets one email with their new, changed or cancelled shifts.'}
         </p>
       ) : (
         <p>
@@ -1189,9 +1320,14 @@ function PublishDialog({
           ]
             .filter(Boolean)
             .join(', ')}{' '}
-          shift{changes.total === 1 ? '' : 's'} become visible to the team. {affectedPeople}{' '}
-          {affectedPeople === 1 ? 'person gets' : 'people get'} an email with a{' '}
-          <strong>Confirm</strong> button. Changed shifts need to be confirmed again.
+          shift{changes.total === 1 ? '' : 's'} become visible to the team.
+          {notify && (
+            <>
+              {' '}
+              {affectedPeople} {affectedPeople === 1 ? 'person gets' : 'people get'} an email with a{' '}
+              <strong>Confirm</strong> button. Changed shifts need to be confirmed again.
+            </>
+          )}
         </p>
       )}
       {others > 0 && changes.total > 0 && (
@@ -1205,6 +1341,24 @@ function PublishDialog({
           Also publish the {others} change{others === 1 ? '' : 's'} on other dates
         </label>
       )}
+      <label className="mt-3 flex items-start gap-2 text-sm text-slate-700">
+        <input
+          type="checkbox"
+          checked={notify}
+          onChange={(e) => onNotify(e.target.checked)}
+          className="mt-0.5 size-4 accent-brand-600"
+        />
+        <span>
+          Email the team about these changes
+          {!notify && (
+            <span className="mt-1 block text-slate-500">
+              No emails will be sent, now or as a reminder. The shifts still show up in the app (and
+              in Google Calendar for anyone who has that turned on), and people can confirm them
+              there.
+            </span>
+          )}
+        </span>
+      </label>
     </ConfirmDialog>
   );
 }

@@ -26,7 +26,7 @@ import {
 } from '../../components/ui/Misc';
 import { cx } from '../../lib/cx';
 import { overtimeRules } from '../../lib/overtime';
-import { groupByTier } from '../../lib/schedule';
+import { breakMinutesByUser, groupByTier, withBreaks } from '../../lib/schedule';
 import { useBootstrapData } from '../../lib/session';
 
 const PERIODS = ['1', '2', '4'] as const;
@@ -115,9 +115,14 @@ export default function HoursPage() {
   const people = (data?.people ?? []).filter(
     (p) => tierFilter.length === 0 || (p.tierId !== null && tierFilter.includes(p.tierId)),
   );
+  // Paid hours: each person's tier can take an unpaid break (lunch) off their longer shifts.
+  const breaks = breakMinutesByUser(data?.people ?? [], tiers.data ?? NO_TIERS);
   const rows = new Map<string, PersonHours>(
     people.map((person) => {
-      const shifts = (data?.shifts ?? []).filter((s) => s.userId === person.id);
+      const shifts = withBreaks(
+        (data?.shifts ?? []).filter((s) => s.userId === person.id),
+        breaks,
+      );
       const weeks = new Map(
         weeklyHours(shifts, tz, org.weekStartsOn, rules)
           // A shift that started the night before the first day belongs to the week before.

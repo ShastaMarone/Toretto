@@ -35,7 +35,7 @@ test('an admin publishes, and the team member confirms from the email', async ({
       all.find((m) => m.to === 'taylor@example.com' && m.subject.startsWith('Your schedule')),
     );
   await expect.poll(toTaylor).toBeTruthy();
-  const link = /http:\/\/localhost:4400\/exec\/confirm-shift\/[0-9a-f-]+/.exec(
+  const link = /http:\/\/localhost:4400\/exec\?page=(?:%2F|\/)confirm-shift(?:%2F|\/)[0-9a-f-]+/.exec(
     (await toTaylor())!.body,
   );
   expect(link).not.toBeNull();

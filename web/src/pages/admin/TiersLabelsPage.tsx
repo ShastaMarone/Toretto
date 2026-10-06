@@ -98,6 +98,7 @@ export default function TiersLabelsPage() {
                   <h2 className="truncate font-semibold text-slate-900">{tier.name}</h2>
                   <p className="text-xs text-slate-500">
                     {tier.memberCount} {tier.memberCount === 1 ? 'person' : 'people'}
+                    {tier.unpaidBreakMinutes > 0 && ` · ${tier.unpaidBreakMinutes}m unpaid break`}
                   </p>
                 </div>
                 <Button
@@ -248,11 +249,16 @@ function TierDialog({
 }) {
   const [name, setName] = useState(tier?.name ?? '');
   const [color, setColor] = useState(tier?.color ?? PALETTE[0]!);
+  const [unpaidBreak, setUnpaidBreak] = useState(String(tier?.unpaidBreakMinutes ?? 0));
   const save = useMutation({
-    mutationFn: () =>
-      tier
-        ? api.patch<Tier>(`/tiers/${tier.id}`, { name, color })
-        : api.post<Tier>('/tiers', { name, color }),
+    mutationFn: () => {
+      const body = {
+        name,
+        color,
+        unpaidBreakMinutes: Math.max(0, Math.min(240, Math.round(Number(unpaidBreak) || 0))),
+      };
+      return tier ? api.patch<Tier>(`/tiers/${tier.id}`, body) : api.post<Tier>('/tiers', body);
+    },
     onSuccess: () => {
       toast.success(tier ? 'Tier saved' : 'Tier created');
       onSaved();
@@ -284,6 +290,21 @@ function TierDialog({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Tier 1"
+          />
+        </Field>
+        <Field
+          label="Unpaid break (minutes)"
+          hint="Taken off each shift longer than 5 hours when counting hours and overtime. For example, 60 makes a 9-hour shift count as 8. Use 0 for none."
+          error={fieldErrors(save.error).unpaidBreakMinutes}
+        >
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={240}
+            step={5}
+            value={unpaidBreak}
+            onChange={(e) => setUnpaidBreak(e.target.value)}
           />
         </Field>
         <ColorPicker value={color} onChange={setColor} />

@@ -1,4 +1,4 @@
-import { addDays } from '@shared/time';
+import { addDays, dayRangeToUtc } from '@shared/time';
 import type { Label, Person, Tier } from '@shared/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -144,6 +144,54 @@ describe('tiers and labels', () => {
   });
 });
 
+describe('unpaid breaks', () => {
+  it("saves a tier's unpaid break and rejects silly ones", async () => {
+    const made = await admin.post('/api/tiers').send({ name: 'Nights', color: '#1d4ed8' });
+    expect(made.status).toBe(201);
+    expect(made.body.unpaidBreakMinutes).toBe(0);
+    const id = made.body.id as string;
+    const saved = await admin.patch(`/api/tiers/${id}`).send({ unpaidBreakMinutes: 60 });
+    expect(saved.body.unpaidBreakMinutes).toBe(60);
+    const listed = ((await admin.get('/api/tiers')).body as Tier[]).find((t) => t.id === id);
+    expect(listed?.unpaidBreakMinutes).toBe(60);
+    // A rename leaves it alone.
+    const renamed = await admin.patch(`/api/tiers/${id}`).send({ name: 'Helpdesk Nights' });
+    expect(renamed.body).toMatchObject({ name: 'Helpdesk Nights', unpaidBreakMinutes: 60 });
+    for (const bad of [-5, 241, 30.5]) {
+      expect((await admin.patch(`/api/tiers/${id}`).send({ unpaidBreakMinutes: bad })).status).toBe(
+        400,
+      );
+    }
+    expect((await member.patch(`/api/tiers/${id}`).send({ unpaidBreakMinutes: 0 })).status).toBe(
+      403,
+    );
+  });
+});
+
+describe('tier order', () => {
+  it('saves a new order for the tiers, which the schedule follows', async () => {
+    const first = await createTier(ctx.db, 'Order A');
+    const second = await createTier(ctx.db, 'Order B');
+    const third = await createTier(ctx.db, 'Order C');
+    const names = async () =>
+      ((await admin.get('/api/tiers')).body as Tier[])
+        .filter((t) => t.name.startsWith('Order '))
+        .map((t) => t.name);
+    expect(await names()).toEqual(['Order A', 'Order B', 'Order C']);
+    const res = await admin.post('/api/tiers/reorder').send({ ids: [third, first, second] });
+    expect(res.status).toBe(200);
+    expect(await names()).toEqual(['Order C', 'Order A', 'Order B']);
+    expect((await member.post('/api/tiers/reorder').send({ ids: [first] })).status).toBe(403);
+    // Tiers left out of the list go last rather than being lost.
+    await admin
+      .post('/api/tiers/reorder')
+      .send({ ids: [second] })
+      .expect(200);
+    expect((await names())[0]).toBe('Order B');
+    expect(await names()).toHaveLength(3);
+  });
+});
+
 describe('people', () => {
   it('invites people into a tier and team', async () => {
     const tierId = await createTier(ctx.db, 'Tier 3');
@@ -167,6 +215,45 @@ describe('people', () => {
       name: 'East',
       memberCount: 1,
     });
+  });
+
+  it("removes all of someone's shifts, keeping published ones until the next publish", async () => {
+    const wes = await createUser(ctx.db, { name: 'Wes Wipe' });
+    const main = await defaultScheduleId(ctx.db);
+    const day = nextMonday();
+    const draft = await admin
+      .post(`/api/schedules/${main}/shifts`)
+      .send({ userId: wes.id, ...shiftOn(day) })
+      .expect(201);
+    const res = await admin.delete(`/api/users/${wes.id}/shifts`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ removed: 1, pendingRemoval: 0 });
+    expect(
+      (await admin.get('/api/users')).body.find((p: Person) => p.id === wes.id).shiftCount,
+    ).toBe(0);
+    expect((await admin.delete(`/api/shifts/${draft.body.id}`)).status).toBe(404);
+    expect((await member.delete(`/api/users/${wes.id}/shifts`)).status).toBe(403);
+  });
+
+  it("can remove just one week of someone's shifts", async () => {
+    const vic = await createUser(ctx.db, { name: 'Vic Week' });
+    const main = await defaultScheduleId(ctx.db);
+    const monday = nextMonday();
+    for (const d of [monday, addDays(monday, 6), addDays(monday, 7)]) {
+      await admin
+        .post(`/api/schedules/${main}/shifts`)
+        .send({ userId: vic.id, ...shiftOn(d) })
+        .expect(201);
+    }
+    const range = dayRangeToUtc(monday, addDays(monday, 6), 'America/Toronto');
+    const half = await admin.delete(`/api/users/${vic.id}/shifts?from=${range.from}`);
+    expect(half.status).toBe(400);
+    const res = await admin.delete(
+      `/api/users/${vic.id}/shifts?${new URLSearchParams(range).toString()}`,
+    );
+    expect(res.body).toEqual({ removed: 2, pendingRemoval: 0 });
+    const left = (await admin.get('/api/users')).body.find((p: Person) => p.id === vic.id);
+    expect(left.shiftCount).toBe(1);
   });
 
   it('can fix an invite email typo, which re-sends the invite', async () => {

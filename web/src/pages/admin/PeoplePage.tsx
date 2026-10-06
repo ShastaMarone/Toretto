@@ -1,7 +1,15 @@
-import { formatRelative } from '@shared/time';
+import {
+  addDays,
+  dayRangeToUtc,
+  formatDateRange,
+  formatRelative,
+  startOfWeek,
+  todayIn,
+} from '@shared/time';
 import type { Person, Role, Team, Tier, UserStatus } from '@shared/types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  CalendarX,
   Ellipsis,
   MailPlus,
   Pencil,
@@ -47,7 +55,80 @@ const STATUS: Record<UserStatus, { label: string; tone: Tone }> = {
 type Pending =
   | { kind: 'edit'; person: Person }
   | { kind: 'deactivate'; person: Person }
+  | { kind: 'clear'; person: Person }
   | { kind: 'delete'; person: Person };
+
+/** Take someone off all their shifts, or just those in one week. */
+function ClearShiftsDialog({
+  person,
+  onClose,
+  onDone,
+}: {
+  person: Person;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { org } = useBootstrapData();
+  const [scope, setScope] = useState<'week' | 'all'>('week');
+  const [date, setDate] = useState(() => todayIn(org.timezone));
+  const weekStart = startOfWeek(date || todayIn(org.timezone), org.weekStartsOn);
+  const weekEnd = addDays(weekStart, 6);
+  const clear = useMutation({
+    mutationFn: () => {
+      const range =
+        scope === 'week'
+          ? `?${new URLSearchParams(dayRangeToUtc(weekStart, weekEnd, org.timezone))}`
+          : '';
+      return api.delete<{ removed: number; pendingRemoval: number }>(
+        `/users/${person.id}/shifts${range}`,
+      );
+    },
+    onSuccess: (r) => {
+      const count = r.removed + r.pendingRemoval;
+      const what = scope === 'week' ? 'that week' : 'all shifts';
+      toast.success(
+        count === 0
+          ? `${person.name} had no shifts ${scope === 'week' ? 'that week' : ''}`.trim()
+          : r.pendingRemoval
+            ? `${person.name} is off ${what}. Publish to tell the team.`
+            : `${person.name} is off ${what}`,
+      );
+      onDone();
+      onClose();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  return (
+    <ConfirmDialog
+      title={`Remove shifts for ${person.name}?`}
+      confirmLabel={scope === 'week' ? 'Remove this week' : 'Remove all shifts'}
+      danger
+      loading={clear.isPending}
+      onConfirm={() => clear.mutate()}
+      onClose={onClose}
+    >
+      <div className="space-y-3 text-sm">
+        <label className="flex items-center gap-2">
+          <input type="radio" checked={scope === 'week'} onChange={() => setScope('week')} />
+          Just one week
+        </label>
+        {scope === 'week' && (
+          <div className="ml-6 space-y-1">
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <p className="text-slate-500">Week of {formatDateRange(weekStart, weekEnd)}</p>
+          </div>
+        )}
+        <label className="flex items-center gap-2">
+          <input type="radio" checked={scope === 'all'} onChange={() => setScope('all')} />
+          All {person.shiftCount} of their shifts, past and future
+        </label>
+        <p className="text-slate-500">
+          Shifts the team can already see stay until you publish the change.
+        </p>
+      </div>
+    </ConfirmDialog>
+  );
+}
 
 export default function PeoplePage() {
   const me = useCurrentUser();
@@ -243,6 +324,16 @@ export default function PeoplePage() {
                             disabled: p.id === me.id,
                             onSelect: () => setPending({ kind: 'deactivate', person: p }),
                           },
+                      ...(p.shiftCount > 0
+                        ? [
+                            {
+                              label: 'Remove all shifts',
+                              icon: <CalendarX />,
+                              danger: true,
+                              onSelect: () => setPending({ kind: 'clear', person: p }),
+                            },
+                          ]
+                        : []),
                       ...(p.shiftCount === 0 && p.id !== me.id
                         ? [
                             {
@@ -292,6 +383,13 @@ export default function PeoplePage() {
           They'll be signed out and can't sign in. Their past shifts stay on the schedule, and you
           can reactivate them later.
         </ConfirmDialog>
+      )}
+      {pending?.kind === 'clear' && (
+        <ClearShiftsDialog
+          person={pending.person}
+          onClose={() => setPending(null)}
+          onDone={refresh}
+        />
       )}
       {pending?.kind === 'delete' && (
         <ConfirmDialog

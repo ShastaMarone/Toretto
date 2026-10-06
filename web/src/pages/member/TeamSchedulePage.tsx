@@ -32,6 +32,7 @@ import {
 import { cx } from '../../lib/cx';
 import { useHolidays } from '../../lib/holidays';
 import {
+  breakMinutesByUser,
   groupByDay,
   groupByTier,
   groupByUserDay,
@@ -40,6 +41,7 @@ import {
   timeOffByUserDay,
   totalHours,
   viewRange,
+  withBreaks,
   type CalendarView,
 } from '../../lib/schedule';
 import { useBootstrapData, useCurrentUser, useTimeFormat, useViewerZone } from '../../lib/session';
@@ -165,10 +167,14 @@ function TeamCalendar({
   );
   const shifts = useMemo(() => {
     const ids = new Set(people.map((p) => p.id));
-    return (data?.shifts ?? []).filter(
-      (s) => ids.has(s.userId) && (!scheduleFilter || s.scheduleId === scheduleFilter),
+    // Hours are paid hours: a tier can take an unpaid break (lunch) off its longer shifts.
+    return withBreaks(
+      (data?.shifts ?? []).filter(
+        (s) => ids.has(s.userId) && (!scheduleFilter || s.scheduleId === scheduleFilter),
+      ),
+      breakMinutesByUser(people, tierList),
     );
-  }, [data, people, scheduleFilter]);
+  }, [data, people, scheduleFilter, tierList]);
   const groups = useMemo(() => groupByTier(people, tierList, me.id), [people, tierList, me.id]);
   const byUserDay = useMemo(() => groupByUserDay(shifts, tz), [shifts, tz]);
   const byDay = useMemo(() => groupByDay(shifts, tz), [shifts, tz]);

@@ -493,6 +493,11 @@ export class Db {
     return table as unknown as Table<T>;
   }
 
+  /** Has anything been changed through this Db and not yet saved? */
+  hasChanges(): boolean {
+    return [...this.tables.values()].some((table) => table.hasChanges());
+  }
+
   /** Save every change made through this Db. */
   commit(): void {
     // Check before writing anything: a copy from the cache may be out of date.

@@ -8,7 +8,7 @@ import * as main from '../src/main';
 import { activate, createEmulator, installAppsScript, type Emulator } from './emulator';
 
 export const TZ = 'America/Toronto';
-export const APP_URL = 'https://script.google.com/macros/s/TEST/exec';
+export const APP_URL = 'https://script.google.com/macros/s/TEST/exec?page=';
 
 type Tables = ReturnType<typeof tables>;
 
@@ -237,7 +237,7 @@ export async function clearEmails(db: TestDb): Promise<void> {
 }
 
 export function linkIn(email: Email, path: string): string {
-  const match = new RegExp(`${APP_URL.replace(/\./g, '\\.')}${path}[^\\s]*`).exec(email.text);
+  const match = new RegExp(`${APP_URL.replace(/[.?]/g, '\\$&')}${path}[^\\s]*`).exec(email.text);
   if (!match) throw new Error(`No ${path} link in email "${email.subject}":\n${email.text}`);
   return match[0];
 }

@@ -1,20 +1,15 @@
 import type { Holiday } from '@shared/holidays';
-import { formatHours, formatTimeOfDay, localDate, localTime, shiftHours } from '@shared/time';
+import { formatHours, formatTimeOfDay, localDate, localTime, paidHours } from '@shared/time';
 import type { ISODate, TimeFormat } from '@shared/time';
 import type { PersonRow, ShiftStatus, TimeOffEntry } from '@shared/types';
 import { Plane, Plus, StickyNote, Undo2 } from 'lucide-react';
-import {
-  useEffect,
-  useRef,
-  useState,
-  type DragEvent,
-  type HTMLAttributes,
-  type ReactNode,
-} from 'react';
+import { useEffect, useRef, type DragEvent, type HTMLAttributes, type ReactNode } from 'react';
 import { alpha } from '../../lib/colors';
 import { cx } from '../../lib/cx';
 import type { PeopleGroup } from '../../lib/schedule';
 import { Card } from '../ui/Misc';
+import { useCollapsedGroups } from '../../lib/useCollapsedGroups';
+import { useGroupReorder } from '../../lib/useGroupReorder';
 import { HolidayBadge, GroupRows } from './CalendarBits';
 import { StatusIcon } from './ShiftChip';
 
@@ -26,6 +21,8 @@ export interface TimelineBar {
   id: string;
   startTime: string;
   endTime: string;
+  /** Unpaid break (minutes) taken off when counting the day's hours. */
+  unpaidBreakMinutes?: number;
   color: string;
   labelName?: string | null;
   notes?: string | null;
@@ -77,6 +74,8 @@ export function DayTimeline({
   highlight,
   empty,
   footer,
+  onReorderGroups,
+  collapseKey,
 }: {
   day: ISODate;
   today: ISODate;
@@ -95,8 +94,16 @@ export function DayTimeline({
   highlight?: (person: PersonRow) => boolean;
   empty?: ReactNode;
   footer?: ReactNode;
+  /** Lets tiers be dragged into a new order; gets the new order of the group keys. */
+  onReorderGroups?: (keys: string[]) => void;
+  /** Where to remember which tiers are collapsed (on this device); omit to forget on leaving. */
+  collapseKey?: string;
 }) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const groupDrag = useGroupReorder(
+    groups.map((g) => g.key),
+    onReorderGroups,
+  );
+  const [collapsed, toggle] = useCollapsedGroups(collapseKey);
   const scroller = useRef<HTMLDivElement>(null);
   const people = groups.flatMap((g) => g.people);
   const live = people.map((p) => ({
@@ -119,7 +126,8 @@ export function DayTimeline({
   const [first, last] = [staffed[0] ?? 24, staffed.at(-1) ?? -1];
   const peak = Math.max(1, ...coverage);
   const totalHours = live.reduce(
-    (sum, { bars: list }) => sum + list.reduce((s, b) => s + shiftHours(b.startTime, b.endTime), 0),
+    (sum, { bars: list }) =>
+      sum + list.reduce((s, b) => s + paidHours(b.startTime, b.endTime, b.unpaidBreakMinutes), 0),
     0,
   );
 
@@ -139,13 +147,6 @@ export function DayTimeline({
   }, [rangeKey]);
 
   const nowMinutes = day === today ? minutesIn(new Date().toISOString(), tz, day) : null;
-  const toggle = (key: string) =>
-    setCollapsed((c) => {
-      const next = new Set(c);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
 
   const hourGrid = (
     <div
@@ -213,6 +214,7 @@ export function DayTimeline({
                   colSpan={2}
                   collapsed={isCollapsed}
                   onToggle={() => toggle(group.key)}
+                  drag={groupDrag(group.key)}
                 >
                   {!isCollapsed &&
                     group.people.map((person) => {

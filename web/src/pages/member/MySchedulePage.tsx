@@ -4,6 +4,7 @@ import {
   dayOfWeek,
   eachDay,
   endOfMonth,
+  formatDateRange,
   formatDay,
   formatTimeRange,
   formatTimeRangeCompact,
@@ -51,6 +52,7 @@ import {
   ErrorBlock,
   LoadingBlock,
   PageHeader,
+  Tabs,
   type Tone,
 } from '../../components/ui/Misc';
 import { cx } from '../../lib/cx';
@@ -68,6 +70,18 @@ const STATUS: Record<TimeOffRequest['status'], { label: string; tone: Tone }> = 
   denied: { label: 'Declined', tone: 'red' },
   cancelled: { label: 'Cancelled', tone: 'gray' },
 };
+
+type ScheduleView = '2weeks' | 'month';
+const VIEW_KEY = 'toretto:my-schedule-view';
+
+/** Two weeks is the default; the last choice is remembered on this device. */
+function savedView(): ScheduleView {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'month' ? 'month' : '2weeks';
+  } catch {
+    return '2weeks';
+  }
+}
 
 function useConfirmShifts() {
   const queryClient = useQueryClient();
@@ -102,6 +116,18 @@ export default function MySchedulePage() {
   const today = todayIn(tz);
   const isDesktop = useMediaQuery('(min-width: 768px)');
   const [month, setMonth] = useState(startOfMonth(today));
+  const [view, setViewState] = useState<ScheduleView>(savedView);
+  // Two weeks at a time, starting on the first day of this week; the arrows move by two weeks.
+  const thisWeek = startOfWeek(today, org.weekStartsOn);
+  const [rangeStart, setRangeStart] = useState(thisWeek);
+  const setView = (next: ScheduleView) => {
+    setViewState(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // Not remembered, but it still works for now.
+    }
+  };
   const [requestFor, setRequestFor] = useState<ISODate | null>(null);
   const [dayOpen, setDayOpen] = useState<ISODate | null>(null);
   const [shiftOpen, setShiftOpen] = useState<ShiftView | null>(null);
@@ -117,8 +143,13 @@ export default function MySchedulePage() {
 
   const gridStart = startOfWeek(month, org.weekStartsOn);
   const gridEnd = addDays(startOfWeek(endOfMonth(month), org.weekStartsOn), 6);
-  const monthShifts = useMyShifts(gridStart, gridEnd);
-  const holidays = useHolidays(gridStart, gridEnd);
+  const rangeEnd = addDays(rangeStart, 13);
+  const twoWeeks = view === '2weeks';
+  // What's on screen: the month's grid, or the two weeks.
+  const from = twoWeeks ? rangeStart : gridStart;
+  const to = twoWeeks ? rangeEnd : gridEnd;
+  const monthShifts = useMyShifts(from, to);
+  const holidays = useHolidays(from, to);
   const upcoming = useMyShifts(today, addDays(today, 60));
   const timeOff = useMyTimeOff();
   const { one: confirmOne, all: confirmAll } = useConfirmShifts();
@@ -245,30 +276,46 @@ export default function MySchedulePage() {
       )}
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <Card>
+        <Card className="self-start">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
             <h2 className="text-base font-semibold text-slate-900">
-              {DateTime.fromISO(month).toFormat('LLLL yyyy')}
+              {twoWeeks
+                ? formatDateRange(rangeStart, rangeEnd)
+                : DateTime.fromISO(month).toFormat('LLLL yyyy')}
             </h2>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Tabs
+                value={view}
+                onChange={setView}
+                options={[
+                  { value: '2weeks', label: '2 weeks' },
+                  { value: 'month', label: 'Month' },
+                ]}
+              />
               <Button
                 size="sm"
-                onClick={() => setMonth(startOfMonth(today))}
-                disabled={month === startOfMonth(today)}
+                onClick={() => (twoWeeks ? setRangeStart(thisWeek) : setMonth(startOfMonth(today)))}
+                disabled={twoWeeks ? rangeStart === thisWeek : month === startOfMonth(today)}
               >
                 Today
               </Button>
               <Button
                 size="icon-sm"
-                aria-label="Previous month"
-                onClick={() => setMonth(addMonths(month, -1))}
+                aria-label={twoWeeks ? 'Previous 2 weeks' : 'Previous month'}
+                onClick={() =>
+                  twoWeeks
+                    ? setRangeStart(addDays(rangeStart, -14))
+                    : setMonth(addMonths(month, -1))
+                }
               >
                 <ChevronLeft className="size-4" />
               </Button>
               <Button
                 size="icon-sm"
-                aria-label="Next month"
-                onClick={() => setMonth(addMonths(month, 1))}
+                aria-label={twoWeeks ? 'Next 2 weeks' : 'Next month'}
+                onClick={() =>
+                  twoWeeks ? setRangeStart(addDays(rangeStart, 14)) : setMonth(addMonths(month, 1))
+                }
               >
                 <ChevronRight className="size-4" />
               </Button>
@@ -276,10 +323,23 @@ export default function MySchedulePage() {
           </div>
           {monthShifts.isError ? (
             <ErrorBlock error={monthShifts.error} onRetry={() => void monthShifts.refetch()} />
+          ) : twoWeeks && !isDesktop ? (
+            <TwoWeekList
+              days={eachDay(rangeStart, rangeEnd)}
+              today={today}
+              tz={tz}
+              shiftsByDay={shiftsByDay}
+              holidays={holidays}
+              timeOffOn={timeOffOn}
+              loading={monthShifts.isLoading}
+              onDayClick={onDayClick}
+              onShiftClick={setShiftOpen}
+            />
           ) : (
             <MonthGrid
-              days={eachDay(gridStart, gridEnd)}
+              days={eachDay(from, to)}
               month={month}
+              wholeRange={twoWeeks}
               today={today}
               tz={tz}
               shiftsByDay={shiftsByDay}
@@ -510,6 +570,7 @@ function DateBadge({ date }: { date: ISODate }) {
 function MonthGrid({
   days,
   month,
+  wholeRange = false,
   today,
   tz,
   shiftsByDay,
@@ -521,6 +582,8 @@ function MonthGrid({
 }: {
   days: ISODate[];
   month: ISODate;
+  /** Every day counts as part of what's shown (two weeks): none is dimmed as another month's. */
+  wholeRange?: boolean;
   today: ISODate;
   tz: string;
   shiftsByDay: Map<ISODate, ShiftView[]>;
@@ -540,10 +603,10 @@ function MonthGrid({
         ))}
       </div>
       <div className="grid grid-cols-7 gap-1">
-        {days.map((day) => {
+        {days.map((day, index) => {
           const shifts = shiftsByDay.get(day) ?? [];
           const off = timeOffOn(day);
-          const inMonth = day.slice(0, 7) === monthKey;
+          const inMonth = wholeRange || day.slice(0, 7) === monthKey;
           const isToday = day === today;
           const weekend = dayOfWeek(day) === 0 || dayOfWeek(day) === 6;
           const holiday = holidays.get(day);
@@ -581,6 +644,11 @@ function MonthGrid({
                 >
                   {DateTime.fromISO(day).day}
                 </span>
+                {wholeRange && (index === 0 || DateTime.fromISO(day).day === 1) && (
+                  <span className="text-[11px] font-semibold uppercase text-slate-500">
+                    {DateTime.fromISO(day).toFormat('LLL')}
+                  </span>
+                )}
               </span>
               {holiday &&
                 (compact ? (
@@ -663,6 +731,102 @@ function MonthGrid({
         })}
       </div>
     </div>
+  );
+}
+
+/** Two weeks as a list of days, for phones: each day with its shifts, or "No shifts". */
+function TwoWeekList({
+  days,
+  today,
+  tz,
+  shiftsByDay,
+  holidays,
+  timeOffOn,
+  loading,
+  onDayClick,
+  onShiftClick,
+}: {
+  days: ISODate[];
+  today: ISODate;
+  tz: string;
+  shiftsByDay: Map<ISODate, ShiftView[]>;
+  holidays: ReturnType<typeof useHolidays>;
+  timeOffOn: (day: ISODate) => TimeOffRequest[];
+  loading: boolean;
+  onDayClick: (day: ISODate) => void;
+  onShiftClick: (shift: ShiftView) => void;
+}) {
+  const timeFormat = useTimeFormat();
+  if (loading) return <LoadingBlock />;
+  return (
+    <ul className="divide-y divide-slate-100">
+      {days.map((day) => {
+        const shifts = shiftsByDay.get(day) ?? [];
+        const off = timeOffOn(day);
+        const holiday = holidays.get(day);
+        const isToday = day === today;
+        return (
+          <li key={day} className={cx('flex gap-3 px-4 py-2.5', isToday && 'bg-brand-50/50')}>
+            <button
+              type="button"
+              onClick={() => onDayClick(day)}
+              aria-label={`${formatDay(day, 'long')}: open the day`}
+              className="shrink-0 self-start"
+            >
+              <DateBadge date={day} />
+            </button>
+            <div className="min-w-0 flex-1 space-y-1.5">
+              {isToday && (
+                <p className="text-[11px] font-semibold uppercase text-brand-600">Today</p>
+              )}
+              {holiday && (
+                <span className="flex min-w-0">
+                  <HolidayBadge holidays={holiday} wrap />
+                </span>
+              )}
+              {off.map((r) => (
+                <div
+                  key={r.id}
+                  className={cx(
+                    'stripes truncate rounded px-2 py-1 text-xs font-medium text-slate-700',
+                    r.status === 'pending' && 'border border-dashed',
+                  )}
+                  style={{ backgroundColor: `${r.type.color}1f`, borderColor: r.type.color }}
+                >
+                  {r.startTime && r.endTime && (
+                    <span className="font-semibold text-slate-800">
+                      {formatTimeRangeCompact(r.startTime, r.endTime, tz, timeFormat)}{' '}
+                    </span>
+                  )}
+                  {r.type.name}
+                  {r.status === 'pending' && ' (requested)'}
+                </div>
+              ))}
+              {shifts.map((s) => (
+                <ShiftChip
+                  key={s.id}
+                  shift={s}
+                  tz={tz}
+                  color={shiftColor(s)}
+                  labelName={s.label?.name}
+                  status={s.status}
+                  onClick={() => onShiftClick(s)}
+                />
+              ))}
+              {!shifts.length && !off.length && (
+                <button
+                  type="button"
+                  onClick={() => onDayClick(day)}
+                  className="py-1 text-sm text-slate-400"
+                >
+                  No shifts
+                </button>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

@@ -6,7 +6,7 @@ import { withTransaction, type Queryable } from '../db';
 import type { AppDeps } from '../deps';
 import { sendAccountEmail } from '../email/account';
 import { badRequest, conflict, forbidden, notFound } from '../errors';
-import { parse, zEmail, zId, zIdParam, zName, zTimezone } from '../lib/validation';
+import { parse, zDateTime, zEmail, zId, zIdParam, zName, zTimezone } from '../lib/validation';
 import { audit } from '../services/audit';
 
 const PERSON_SQL = `
@@ -251,6 +251,44 @@ export function userRoutes({ db, config, kick }: AppDeps): Router {
     );
     kick();
     res.json(person);
+  });
+
+  /** Take someone off every shift: unpublished ones vanish, published ones go at the next publish. */
+  r.delete('/:id/shifts', async (req, res) => {
+    const { id } = parse(zIdParam, req.params);
+    const { from, to } = parse(
+      z.object({ from: zDateTime.optional(), to: zDateTime.optional() }),
+      req.query,
+    );
+    if (!from !== !to) throw badRequest('Send both `from` and `to`, or neither');
+    const result = await withTransaction(db, async (client) => {
+      const { rows } = await client.query<{ name: string }>(
+        'SELECT name FROM users WHERE id = $1',
+        [id],
+      );
+      if (!rows[0]) throw notFound('Person');
+      const { rows: gone } = await client.query(
+        `DELETE FROM shifts WHERE user_id = $1 AND published_at IS NULL
+            AND ($2::timestamptz IS NULL OR (start_time >= $2 AND start_time < $3))
+          RETURNING id`,
+        [id, from ?? null, to ?? null],
+      );
+      const { rows: marked } = await client.query(
+        `UPDATE shifts SET deleted_at = now() WHERE user_id = $1 AND deleted_at IS NULL
+            AND ($2::timestamptz IS NULL OR (start_time >= $2 AND start_time < $3))
+          RETURNING id`,
+        [id, from ?? null, to ?? null],
+      );
+      await audit(
+        client,
+        req.user!.id,
+        'user.shifts_removed',
+        { type: 'user', id },
+        { name: rows[0].name, removed: gone.length, pendingRemoval: marked.length },
+      );
+      return { removed: gone.length, pendingRemoval: marked.length };
+    });
+    res.json(result);
   });
 
   r.delete('/:id', async (req, res) => {

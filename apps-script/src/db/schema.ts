@@ -34,6 +34,7 @@ export interface TierRow {
   name: string;
   color: string;
   sortOrder: number;
+  unpaidBreakMinutes: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -267,10 +268,11 @@ export const TIERS: TableDef<TierRow> = {
     name: 'text',
     color: 'text',
     sortOrder: 'number',
+    unpaidBreakMinutes: 'number',
     createdAt: 'time',
     updatedAt: 'time',
   },
-  defaults: { sortOrder: 0 },
+  defaults: { sortOrder: 0, unpaidBreakMinutes: 0 },
 };
 
 export const TEAMS: TableDef<TeamRow> = {
