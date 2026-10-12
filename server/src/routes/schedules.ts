@@ -30,6 +30,11 @@ const ShiftBody = z.object({
   notes: zText(500),
 });
 
+/** Confirm for someone: these shifts, or all of one person's upcoming ones. */
+const ConfirmForBody = z
+  .object({ shiftIds: z.array(zId).min(1).max(200).optional(), userId: zId.optional() })
+  .refine((b) => !!b.shiftIds !== !!b.userId, 'Send `shiftIds` or `userId`, not both');
+
 /** The same shift on several days (a repeating shift): up to 200 at once. */
 const RepeatBody = z.object({
   userId: zId,
@@ -148,8 +153,14 @@ export function shiftRoutes({ db }: AppDeps): Router {
 
   // Confirm published shifts on behalf of the people who work them.
   r.post('/confirm', async (req, res) => {
-    const { shiftIds } = parse(z.object({ shiftIds: z.array(zId).min(1).max(200) }), req.body);
-    res.json(await confirmShiftsForPeople(db, req.user!, shiftIds));
+    const body = parse(ConfirmForBody, req.body);
+    res.json(
+      await confirmShiftsForPeople(
+        db,
+        req.user!,
+        body.userId ? { userId: body.userId } : { shiftIds: body.shiftIds! },
+      ),
+    );
   });
 
   r.patch('/:id', async (req, res) => {

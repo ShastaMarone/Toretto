@@ -517,10 +517,16 @@ function Builder({
     onError: (e) => toast.error(e.message),
   });
   const confirmForThem = useMutation({
-    mutationFn: (shiftId: string) =>
-      api.post<{ confirmed: number }>('/shifts/confirm', { shiftIds: [shiftId] }),
-    onSuccess: () => {
-      toast.success('Shift confirmed');
+    mutationFn: (body: { shiftIds: string[] } | { userId: string }) =>
+      api.post<{ confirmed: number }>('/shifts/confirm', body),
+    onSuccess: ({ confirmed }) => {
+      toast.success(
+        confirmed === 1
+          ? 'Shift confirmed'
+          : confirmed
+            ? `${confirmed} shifts confirmed`
+            : 'Nothing was waiting for confirmation',
+      );
       setDialog(null);
       refresh();
     },
@@ -1183,7 +1189,10 @@ function Builder({
           onSave={(payload) => edit.mutate({ shiftId: dialog.shift.id, payload })}
           onDelete={() => remove.mutate(dialog.shift.id)}
           onDeleteWeek={() => setClearingWeek(dialog.shift)}
-          onConfirm={() => confirmForThem.mutate(dialog.shift.id)}
+          onConfirm={() => confirmForThem.mutate({ shiftIds: [dialog.shift.id] })}
+          onConfirmAll={() =>
+            confirmForThem.mutate({ userId: dialog.shift.published?.userId ?? dialog.shift.userId })
+          }
           confirming={confirmForThem.isPending}
           onDuplicate={(draft) => {
             edit.reset();

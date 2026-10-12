@@ -354,15 +354,17 @@ export async function restoreShift(db: Db, shiftId: string): Promise<BuilderShif
 export async function confirmShiftsForPeople(
   db: Db,
   actor: AuthUser,
-  shiftIds: string[],
+  /** Specific shifts, or everything upcoming and unconfirmed for one person. */
+  target: { shiftIds: string[] } | { userId: string },
 ): Promise<{ confirmed: number }> {
+  const byPerson = 'userId' in target;
   return withTransaction(db, async (client) => {
     const { rows } = await client.query<{ id: string; userId: string }>(
       `UPDATE shifts SET status = 'confirmed', confirmed_at = now()
-        WHERE id = ANY($1) AND published_at IS NOT NULL AND status = 'pending'
-          AND deleted_at IS NULL
+        WHERE ${byPerson ? 'published_user_id = $1 AND published_end_time > now()' : 'id = ANY($1)'}
+          AND published_at IS NOT NULL AND status = 'pending' AND deleted_at IS NULL
         RETURNING id, published_user_id AS "userId"`,
-      [shiftIds],
+      [byPerson ? target.userId : target.shiftIds],
     );
     if (rows.length) {
       await audit(

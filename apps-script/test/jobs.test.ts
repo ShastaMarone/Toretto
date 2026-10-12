@@ -247,6 +247,30 @@ describe('hourly jobs', () => {
     expect(await emails(ctx.db, {})).toHaveLength(0);
     const again = await admin.post('/api/shifts/confirm').send({ shiftIds: [quiet.body.id] });
     expect(again.body).toEqual({ confirmed: 0 });
+
+    // "Confirm all" for one person: every upcoming shift of theirs, on any day.
+    for (const n of [62, 90]) {
+      await admin
+        .post(`/api/schedules/${main_}/shifts`)
+        .send({ userId: people.bo.id, ...shiftOn(day(n)) })
+        .expect(201);
+    }
+    await admin
+      .post(`/api/schedules/${main_}/publish`)
+      .send({ from: day(62), to: day(90), notify: false })
+      .expect(200);
+    const all = await admin.post('/api/shifts/confirm').send({ userId: people.bo.id }).expect(200);
+    // At least these two (Bo may have other upcoming shifts from earlier tests).
+    expect(all.body.confirmed).toBeGreaterThanOrEqual(2);
+    const boShifts = await bo.get(`/api/my/shifts?from=${day(0)}&to=${day(99)}`);
+    expect(boShifts.body.filter((s: { status: string }) => s.status === 'pending')).toEqual([]);
+    const left = await admin.post('/api/shifts/confirm').send({ userId: people.bo.id });
+    expect(left.body).toEqual({ confirmed: 0 });
+    expect(await emails(ctx.db, {})).toHaveLength(0);
+    await admin
+      .post('/api/shifts/confirm')
+      .send({ userId: people.bo.id, shiftIds: [quiet.body.id] })
+      .expect(400);
     // Only admins can.
     await ana
       .post('/api/shifts/confirm')

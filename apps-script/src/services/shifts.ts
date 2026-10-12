@@ -3,6 +3,7 @@ import type { BuilderShift, RepeatResult } from '@shared/types';
 import type { AuthUser } from '../../../server/src/auth/types';
 import { badRequest, conflict, notFound } from '../../../server/src/errors';
 import { audit, getSettings, iso, ms, tables, type Ctx } from '../core';
+import type { ShiftRow } from '../db/schema';
 import { approvedTimeOffBetween } from './timeOff';
 import { getBuilderShift, requireSchedule } from './schedules';
 
@@ -300,15 +301,23 @@ export function restoreShift(ctx: Ctx, shiftId: string): BuilderShift {
 export function confirmShiftsForPeople(
   ctx: Ctx,
   actor: AuthUser,
-  shiftIds: string[],
+  /** Specific shifts, or everything upcoming and unconfirmed for one person. */
+  target: { shiftIds: string[] } | { userId: string },
 ): { confirmed: number } {
   const t = tables(ctx.db);
-  const confirmed = [...new Set(shiftIds)].flatMap((id) => {
-    const s = t.shifts.get(id);
-    if (!s || !s.publishedAt || s.deletedAt || s.status !== 'pending') return [];
-    t.shifts.update(id, { status: 'confirmed', confirmedAt: ctx.now });
-    return [s];
-  });
+  const open = (s: ShiftRow | undefined): s is ShiftRow =>
+    !!s && !!s.publishedAt && !s.deletedAt && s.status === 'pending';
+  const candidates =
+    'userId' in target
+      ? t.shifts.where(
+          (s) =>
+            s.publishedUserId === target.userId &&
+            !!s.publishedEndTime &&
+            ms(s.publishedEndTime) > ms(ctx.now),
+        )
+      : [...new Set(target.shiftIds)].map((id) => t.shifts.get(id));
+  const confirmed = candidates.filter(open);
+  for (const s of confirmed) t.shifts.update(s.id, { status: 'confirmed', confirmedAt: ctx.now });
   if (confirmed.length) {
     audit(
       ctx,

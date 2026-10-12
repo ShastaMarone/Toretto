@@ -510,6 +510,22 @@ describe('admin confirms for someone', () => {
     expect(audit.rows[0]!.actor_id).toBe(people.admin!.id);
     expect(audit.rows[0]!.details.userIds).toEqual([people.ben!.id]);
 
+    // "Confirm all" for one person: everything upcoming of theirs, on any day.
+    await addShift(people.ben!.id, day(72));
+    await addShift(people.ben!.id, day(100));
+    await publish({ from: day(72), to: day(100) });
+    const all = await admin.post('/api/shifts/confirm').send({ userId: people.ben!.id });
+    expect(all.status, all.text).toBe(200);
+    expect(all.body.confirmed).toBeGreaterThanOrEqual(2);
+    expect((await mine(ben, day(0), day(100))).filter((s) => s.status === 'pending')).toEqual([]);
+    expect((await admin.post('/api/shifts/confirm').send({ userId: people.ben!.id })).body).toEqual(
+      { confirmed: 0 },
+    );
+    const both = await admin
+      .post('/api/shifts/confirm')
+      .send({ userId: people.ben!.id, shiftIds: [quiet.id] });
+    expect(both.status).toBe(400);
+
     expect((await ana.post('/api/shifts/confirm').send({ shiftIds: [quiet.id] })).status).toBe(403);
     expect((await admin.post('/api/shifts/confirm').send({ shiftIds: [] })).status).toBe(400);
   });

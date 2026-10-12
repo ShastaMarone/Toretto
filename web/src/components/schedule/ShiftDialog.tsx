@@ -138,6 +138,7 @@ export function ShiftDialog({
   onDeleteWeek,
   onDuplicate,
   onConfirm,
+  onConfirmAll,
   confirming,
   onClose,
 }: {
@@ -167,6 +168,8 @@ export function ShiftDialog({
   onDuplicate?: (draft: ShiftDraft) => void;
   /** Confirm the published shift for the person (for people who aren't emailed). */
   onConfirm?: () => void;
+  /** Confirm every upcoming shift this person is waiting to confirm, on any day. */
+  onConfirmAll?: () => void;
   confirming?: boolean;
   onClose: () => void;
 }) {
@@ -369,6 +372,11 @@ export function ShiftDialog({
             {shift.status !== 'confirmed' && shift.changeState !== 'removed' && onConfirm && (
               <Button size="sm" variant="success" loading={confirming} onClick={onConfirm}>
                 Confirm for them
+              </Button>
+            )}
+            {shift.changeState !== 'removed' && onConfirmAll && (
+              <Button size="sm" disabled={confirming} onClick={onConfirmAll}>
+                Confirm all their shifts
               </Button>
             )}
             {shift.changeState === 'updated' && published && (

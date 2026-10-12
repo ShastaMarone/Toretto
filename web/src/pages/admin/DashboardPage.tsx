@@ -125,8 +125,7 @@ export default function DashboardPage() {
   const queryClient = useQueryClient();
   // For people who aren't emailed: an admin confirms their shifts for them.
   const confirmFor = useMutation({
-    mutationFn: (shiftIds: string[]) =>
-      api.post<{ confirmed: number }>('/shifts/confirm', { shiftIds }),
+    mutationFn: (userId: string) => api.post<{ confirmed: number }>('/shifts/confirm', { userId }),
     onSuccess: ({ confirmed }) => {
       toast.success(confirmed === 1 ? 'Shift confirmed' : `${confirmed} shifts confirmed`);
       void queryClient.invalidateQueries({ queryKey: keys.overview });
@@ -350,13 +349,11 @@ export default function DashboardPage() {
                       </span>
                       <Button
                         size="sm"
-                        loading={
-                          confirmFor.isPending && confirmFor.variables?.[0] === shifts[0]!.id
-                        }
+                        loading={confirmFor.isPending && confirmFor.variables === next.userId}
                         disabled={confirmFor.isPending}
-                        onClick={() => confirmFor.mutate(shifts.map((s) => s.id))}
+                        onClick={() => confirmFor.mutate(next.userId)}
                       >
-                        Confirm
+                        Confirm all
                       </Button>
                     </li>
                   );
