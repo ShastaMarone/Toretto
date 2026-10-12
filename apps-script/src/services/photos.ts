@@ -77,3 +77,26 @@ export function syncPhotos(ctx: Ctx): number {
   }
   return done;
 }
+
+/** Run from the editor: what the directory says about the first few people, and what's stored. */
+export function diagnosePhotos(db: Db): string {
+  const lines: string[] = [];
+  for (const u of tables(db).users.all().slice(0, 5)) {
+    let said: string;
+    try {
+      const found = People!.People!.searchDirectoryPeople({
+        query: u.email,
+        readMask: 'photos,emailAddresses',
+        sources: ['DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE'],
+        pageSize: 5,
+      });
+      said = `directory returned ${JSON.stringify(found).slice(0, 400)}`;
+    } catch (err) {
+      said = `directory ERROR: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    lines.push(`${u.email}: stored=${u.photoUrl ?? 'none'} checked=${u.photoCheckedAt ?? 'never'}; ${said}`);
+  }
+  const out = lines.join('\n');
+  console.log(out);
+  return out;
+}

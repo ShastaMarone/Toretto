@@ -3,6 +3,7 @@
 import './polyfills';
 import { DEFAULT_LABELS, DEFAULT_TIERS } from '../../server/src/services/defaults';
 import { diagnose as runDiagnose } from './diagnose';
+import { diagnosePhotos as runDiagnosePhotos } from './services/photos';
 import { authUser, DEFAULT_SETTINGS, ORG_ID, tables, type Ctx } from './core';
 import { Db, ensureSchema, SPREADSHEET_ID, StaleCacheError } from './db/store';
 import { APP_URL, appUrl } from './env';
@@ -219,6 +220,11 @@ function notice(title: string, ...paragraphs: string[]): GoogleAppsScript.HTML.H
   )
     .setTitle('Toretto Scheduling')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/** Run from the editor: what the Google directory says about people's profile pictures. */
+export function diagnosePhotos(): string {
+  return runDiagnosePhotos(new Db());
 }
 
 /** Run from the editor to time what the Scheduler page does, on your real Sheet. */

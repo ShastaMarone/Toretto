@@ -61,6 +61,8 @@ const ENTRY_POINTS = `
 function setup() { return Toretto.setup(); }
 /** If screens are slow or stuck: run this and read the log (it times each step). */
 function diagnose() { return Toretto.diagnose(); }
+/** If profile pictures don't show: run this and read the log. */
+function diagnosePhotos() { return Toretto.diagnosePhotos(); }
 /** The web app (Deploy → New deployment → Web app). */
 function doGet(e) { return Toretto.doGet(e); }
 /** The page's API calls. */
