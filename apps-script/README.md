@@ -110,6 +110,19 @@ Google's simpler calendar service, which could add a Meet link; events made
 then keep theirs. To replace them, turn **Add to Google Calendar** off and on
 again in your profile (people can do the same for theirs).
 
+## Profile pictures
+
+People's Google profile pictures show instead of their initials, everywhere
+the app shows someone. The app reads them from your company's Google directory
+(the People API) as the person who deployed it: when someone first opens the
+app, and then hourly for everyone, refreshing each person's picture weekly.
+Anyone without a picture keeps their initials.
+
+This needs the **directory.readonly** permission (run `setup` again after
+updating and allow it) and a Workspace that shares its directory with people
+in the organization (the default). If the directory can't be read, the app
+carries on with initials and the reason goes in the script's log.
+
 ## If something's not working
 
 - **"Almost there: run setup"**: run `setup` (step 7), then reload the page.

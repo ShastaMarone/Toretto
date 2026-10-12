@@ -127,7 +127,7 @@ export default function TimeOffAdminPage() {
             {visible.map((r) => (
               <li key={r.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
                 <div className="flex min-w-0 flex-1 gap-3">
-                  <Avatar name={r.userName} />
+                  <Avatar name={r.userName} userId={r.userId} />
                   <div className="min-w-0">
                     <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">
                       {r.userName}
