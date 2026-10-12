@@ -79,10 +79,17 @@ function Stat({
       <p className="text-sm text-slate-500">{label}</p>
     </>
   );
+  // Scroll in place: a plain "#section" link would navigate the page (blank inside Apps Script).
   return to.startsWith('#') ? (
-    <a href={to} className={className}>
+    <button
+      type="button"
+      className={cx(className, 'block w-full text-left')}
+      onClick={() =>
+        document.getElementById(to.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    >
       {body}
-    </a>
+    </button>
   ) : (
     <Link to={to} className={className}>
       {body}
