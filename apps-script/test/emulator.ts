@@ -383,6 +383,10 @@ export interface Emulator {
   directory: Map<string, string | null>;
   /** Make every People API call fail with this message (e.g. directory not shared). */
   directoryDown: string | null;
+  /** Pictures in the app account's contacts, by email. */
+  contacts: Map<string, string>;
+  /** Make every contacts call fail with this message. */
+  contactsDown: string | null;
   /** Calls to Google Calendar so far. */
   calendarCalls: number;
 }
@@ -417,6 +421,8 @@ export function createEmulator(): Emulator {
     calendarDown: null,
     directory: new Map(),
     directoryDown: null,
+    contacts: new Map(),
+    contactsDown: null,
     calendarCalls: 0,
   };
 }
@@ -566,6 +572,24 @@ export function installAppsScript(target: Record<string, unknown> = globalThis a
                 photos: [url ? { url } : { url: "https://lh3.googleusercontent.com/default=s100", default: true }],
               },
             ],
+          };
+        },
+        Connections: {
+          list: () => {
+            if (env().contactsDown) throw new Error(env().contactsDown!);
+            return {};
+          },
+        },
+      },
+      OtherContacts: {
+        list: () => {
+          const e = env();
+          if (e.contactsDown) throw new Error(e.contactsDown);
+          return {
+            otherContacts: [...e.contacts].map(([email, url]) => ({
+              emailAddresses: [{ value: email }],
+              photos: [{ url }],
+            })),
           };
         },
       },

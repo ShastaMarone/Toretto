@@ -65,15 +65,27 @@ describe('profile pictures', () => {
     expect((await photos(admin))?.[cy.id]).toBeUndefined();
   });
 
-  it('keeps the page working, with initials, when the directory cannot be read', async () => {
+  it("falls back to the app account's contacts when the directory is not shared", async () => {
+    const ed = await createUser(ctx.db, { name: 'Ed Ray' });
+    ctx.env.directoryDown = 'The G Suite domain admin has disabled external directory sharing.';
+    ctx.env.contacts.set(ed.email, 'https://lh3.googleusercontent.com/a/ed=s64');
+    hourly();
+    expect((await photos(admin))?.[ed.id]).toBe('https://lh3.googleusercontent.com/a/ed=s96-c');
+    ctx.env.directoryDown = null;
+    ctx.env.contacts.clear();
+  });
+
+  it('keeps the page working, with initials, when no source can be read', async () => {
     const di = await createUser(ctx.db, { name: 'Di Park' });
     ctx.env.directoryDown = 'Not a valid scope: directory.readonly';
+    ctx.env.contactsDown = 'Not a valid scope: contacts.other.readonly';
     hourly();
     const agent = ctx.agent();
     await login(agent, di.email);
     expect((await photos(agent))?.[di.id]).toBeUndefined();
     // A failed lookup isn't remembered as "checked": the next run tries again.
     ctx.env.directoryDown = null;
+    ctx.env.contactsDown = null;
     ctx.env.directory.set(di.email, 'https://lh3.googleusercontent.com/a/di=s100');
     hourly();
     expect((await photos(agent))?.[di.id]).toBe('https://lh3.googleusercontent.com/a/di=s96-c');
