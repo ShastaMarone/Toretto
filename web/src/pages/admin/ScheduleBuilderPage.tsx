@@ -260,6 +260,18 @@ function Builder({
     data.shifts.filter((s) => visibleIds.has(s.userId)),
     breakByUser,
   );
+  // One pass over the shifts, rather than a search of all of them per day column and per person.
+  const shiftsByDay = new Map<string, typeof shifts>();
+  const shiftsByUser = new Map<string, typeof shifts>();
+  for (const s of shifts) {
+    const day = localDate(s.startTime, tz);
+    const dayList = shiftsByDay.get(day);
+    if (dayList) dayList.push(s);
+    else shiftsByDay.set(day, [s]);
+    const userList = shiftsByUser.get(s.userId);
+    if (userList) userList.push(s);
+    else shiftsByUser.set(s.userId, [s]);
+  }
   const byUserDay = useMemo(() => groupByUserDay(data.shifts, tz), [data.shifts, tz]);
   // Published shifts going away: shown where the team still sees them.
   const ghosts = useMemo(
@@ -710,11 +722,10 @@ function Builder({
 
   // The day view's timeline, and the people rows shared with the grid.
   const groupHours = (group: { people: PersonRow[] }) => {
-    const ids = new Set(group.people.map((p) => p.id));
-    return formatHours(totalHours(shifts.filter((s) => ids.has(s.userId))));
+    return formatHours(totalHours(group.people.flatMap((p) => shiftsByUser.get(p.id) ?? [])));
   };
   const renderPerson = (person: PersonRow) => {
-    const personShifts = shifts.filter((s) => s.userId === person.id);
+    const personShifts = shiftsByUser.get(person.id) ?? [];
     const other = withBreaks(onOtherSchedules.get(person.id) ?? [], breakByUser);
     const overtime = overtimeIn(
       [...personShifts, ...other],
@@ -1037,7 +1048,7 @@ function Builder({
             )
           }
           daySummary={(d) => {
-            const dayShifts = shifts.filter((s) => localDate(s.startTime, tz) === d);
+            const dayShifts = shiftsByDay.get(d) ?? [];
             return dayShifts.length
               ? `${dayShifts.length} · ${formatHours(totalHours(dayShifts))}`
               : '—';
@@ -1116,7 +1127,7 @@ function Builder({
           dayWidth={[80, 128]}
           rowHeight="h-20"
           daySummary={(d) => {
-            const dayShifts = shifts.filter((s) => localDate(s.startTime, tz) === d);
+            const dayShifts = shiftsByDay.get(d) ?? [];
             if (!dayShifts.length) return '—';
             return compact
               ? String(dayShifts.length)

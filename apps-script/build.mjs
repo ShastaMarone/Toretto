@@ -5,6 +5,7 @@
 // Usage: npm run build:apps-script
 import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build as esbuild } from 'esbuild';
 import { build as vite } from 'vite';
@@ -19,6 +20,23 @@ const stamp = (text, version) => text.replaceAll(VERSION, version);
 // Windows checks files out with CRLF line endings: build the same bytes everywhere.
 const normalizeLineEndings = (text) => text.replace(/\r+\n/g, '\n');
 
+// zod re-exports all ~50 languages' error messages as `z.locales`, and the
+// bundler keeps every one (about 450 KB of the file, which Google loads on
+// every call). Only English is used: give zod an English-only locales module.
+const zodEnglishOnly = {
+  name: 'zod-english-only',
+  setup(b) {
+    b.onResolve({ filter: /(^|[\\/])locales[\\/]index\.js$/ }, (args) => {
+      if (!/[\\/]node_modules[\\/]zod[\\/]/.test(args.importer)) return null;
+      return { path: resolvePath(args.resolveDir, args.path), namespace: 'zod-english-only' };
+    });
+    b.onLoad({ filter: /.*/, namespace: 'zod-english-only' }, (args) => ({
+      contents: 'export { default as en } from "./en.js";',
+      resolveDir: dirname(args.path),
+    }));
+  },
+};
+
 // ---- Code.gs -----------------------------------------------------------------
 // One IIFE (Apps Script has no modules), lowered to syntax its V8 runs, plus
 // plain functions Apps Script can call by name (the page, triggers, the editor).
@@ -32,6 +50,7 @@ export async function buildServer(version) {
     platform: 'neutral',
     mainFields: ['module', 'main'],
     alias: { '@shared': here('../shared') },
+    plugins: [zodEnglishOnly],
     minifyWhitespace: true,
     minifySyntax: true,
     // Wrap lines: hundreds of thousands of characters on one line is hard on the editor

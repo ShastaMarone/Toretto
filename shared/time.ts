@@ -65,8 +65,21 @@ export function isWeekend(date: ISODate): boolean {
 // Timestamps <-> local wall-clock time in a zone
 // ---------------------------------------------------------------------------
 
+// Screens ask about the same few thousand timestamps again and again (every
+// render, every day column), and parsing one into a zone is the slow part.
+// DateTimes never change, so they can be shared.
+const zonedCache = new Map<string, DateTime>();
+const ZONED_CACHE_MAX = 5000;
+
 export function zoned(iso: string, tz: string): DateTime {
-  return DateTime.fromISO(iso, { zone: tz });
+  const key = `${tz}|${iso}`;
+  let dt = zonedCache.get(key);
+  if (!dt) {
+    if (zonedCache.size >= ZONED_CACHE_MAX) zonedCache.clear();
+    dt = DateTime.fromISO(iso, { zone: tz });
+    zonedCache.set(key, dt);
+  }
+  return dt;
 }
 
 export function todayIn(tz: string): ISODate {
