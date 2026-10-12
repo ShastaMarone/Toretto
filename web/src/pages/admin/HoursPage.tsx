@@ -257,7 +257,7 @@ export default function HoursPage() {
                               <tr key={row.person.id} className="border-b border-slate-100">
                                 <th scope="row" className="px-4 py-2.5 text-left font-normal">
                                   <div className="flex items-center gap-2.5">
-                                    <Avatar name={row.person.name} size="sm" />
+                                    <Avatar name={row.person.name} userId={row.person.id} size="sm" />
                                     <div className="min-w-0">
                                       <p className="truncate font-medium text-slate-900">
                                         {row.person.name}

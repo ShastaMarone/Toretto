@@ -82,6 +82,8 @@ export interface Bootstrap {
    * (the Google Apps Script version).
    */
   calendarSync: boolean;
+  /** Google profile pictures by person id (the Google Apps Script version). */
+  photos?: Record<string, string>;
   /** Google sign-in: the account in use, when it isn't on the People list. */
   signedInAs?: string | null;
 }

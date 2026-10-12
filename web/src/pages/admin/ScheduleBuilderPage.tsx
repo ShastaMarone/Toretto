@@ -527,7 +527,7 @@ function Builder({
     }
     return (
       <div className="flex items-center gap-2.5">
-        <Avatar name={person.name} size="sm" className="hidden sm:inline-flex" />
+        <Avatar name={person.name} userId={person.id} size="sm" className="hidden sm:inline-flex" />
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-slate-900">{person.name}</p>
           <p className="text-xs text-slate-500">

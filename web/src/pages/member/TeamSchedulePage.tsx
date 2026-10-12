@@ -283,7 +283,7 @@ function TeamCalendar({
               const all = [...(byUserDay.get(person.id)?.values() ?? [])].flat();
               return (
                 <div className="flex items-center gap-2.5">
-                  <Avatar name={person.name} size="sm" />
+                  <Avatar name={person.name} userId={person.id} size="sm" />
                   <div className="min-w-0">
                     <p className="flex items-center gap-1.5 text-sm font-medium text-slate-900">
                       <span className="truncate">{person.name}</span>
@@ -455,7 +455,7 @@ function DayAgenda({
               key={entry.id}
               className="stripes flex items-center gap-3 px-4 py-2 text-sm text-slate-600"
             >
-              <Avatar name={person.name} size="sm" /> {person.name} · off
+              <Avatar name={person.name} userId={person.id} size="sm" /> {person.name} · off
               {entry.startTime &&
                 entry.endTime &&
                 ` ${formatTimeRange(entry.startTime, entry.endTime, tz, { format: timeFormat })}`}

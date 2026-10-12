@@ -2,7 +2,8 @@
   "timeZone": "America/Toronto",
   "dependencies": {
     "enabledAdvancedServices": [
-      { "userSymbol": "Calendar", "serviceId": "calendar", "version": "v3" }
+      { "userSymbol": "Calendar", "serviceId": "calendar", "version": "v3" },
+      { "userSymbol": "People", "serviceId": "peopleapi", "version": "v1" }
     ]
   },
   "exceptionLogging": "STACKDRIVER",
@@ -16,6 +17,7 @@
     "https://www.googleapis.com/auth/script.send_mail",
     "https://www.googleapis.com/auth/script.scriptapp",
     "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/calendar"
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/directory.readonly"
   ]
 }

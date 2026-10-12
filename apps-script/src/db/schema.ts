@@ -65,6 +65,10 @@ export interface UserRow {
   notifySwaps: boolean;
   /** Put my confirmed shifts and approved time off in my Google Calendar. */
   calendarSync: boolean;
+  /** Their Google profile picture (null: none, show initials). */
+  photoUrl: string | null;
+  /** When we last looked for it in the Google directory. */
+  photoCheckedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -300,6 +304,8 @@ export const USERS: TableDef<UserRow> = {
     createdAt: 'time',
     updatedAt: 'time',
     calendarSync: 'boolean',
+    photoUrl: 'text',
+    photoCheckedAt: 'time',
   },
   defaults: {
     role: 'member',
@@ -316,6 +322,8 @@ export const USERS: TableDef<UserRow> = {
     notifyConfirmations: true,
     notifySwaps: true,
     calendarSync: false,
+    photoUrl: null,
+    photoCheckedAt: null,
   },
 };
 

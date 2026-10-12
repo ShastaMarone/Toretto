@@ -146,7 +146,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
             )
           }
         >
-          <Avatar name={user.name} />
+          <Avatar name={user.name} userId={user.id} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-slate-900">{user.name}</p>
             <p className="truncate text-xs text-slate-500">{user.email}</p>

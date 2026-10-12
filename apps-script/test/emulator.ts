@@ -379,6 +379,10 @@ export interface Emulator {
   calendarFailFor: Set<string>;
   /** Make every CalendarApp call fail with this message (e.g. no permission). */
   calendarDown: string | null;
+  /** Google directory pictures by email (null: the grey default silhouette). */
+  directory: Map<string, string | null>;
+  /** Make every People API call fail with this message (e.g. directory not shared). */
+  directoryDown: string | null;
   /** Calls to Google Calendar so far. */
   calendarCalls: number;
 }
@@ -411,6 +415,8 @@ export function createEmulator(): Emulator {
     calendars: new Map(),
     calendarFailFor: new Set(),
     calendarDown: null,
+    directory: new Map(),
+    directoryDown: null,
     calendarCalls: 0,
   };
 }
@@ -545,6 +551,25 @@ export function installAppsScript(target: Record<string, unknown> = globalThis a
       },
     },
     Utilities: { getUuid: () => randomUUID(), sleep: () => undefined },
+    // The People API (an advanced service): the company directory, for profile pictures.
+    People: {
+      People: {
+        searchDirectoryPeople: ({ query }: { query: string }) => {
+          const e = env();
+          if (e.directoryDown) throw new Error(e.directoryDown);
+          if (!e.directory.has(query)) return {};
+          const url = e.directory.get(query);
+          return {
+            people: [
+              {
+                emailAddresses: [{ value: query }],
+                photos: [url ? { url } : { url: "https://lh3.googleusercontent.com/default=s100", default: true }],
+              },
+            ],
+          };
+        },
+      },
+    },
     // The Calendar API (an advanced service) that the app makes events with.
     Calendar: {
       Events: {

@@ -4,6 +4,7 @@ import { badRequest, conflict, forbidden, notFound } from '../../../server/src/e
 import { audit, authUser, byName, getSettings, ms, tables, type Ctx } from '../core';
 import type { UserRow } from '../db/schema';
 import { emailContext, enqueueEmail } from './mail';
+import { refreshPhoto } from './photos';
 
 /** robin.smith@example.com → "Robin Smith": a starting name people can change in Profile. */
 export function nameFromEmail(email: string): string {
@@ -34,6 +35,8 @@ export function bootstrap(ctx: Ctx): Bootstrap {
       patch.lastLoginAt = ctx.now;
     }
     if (Object.keys(patch).length) row = t.users.update(row.id, patch);
+    // First visit: fetch their picture now rather than waiting for the hourly job.
+    if (!row.photoCheckedAt && !row.deactivatedAt) row = refreshPhoto(ctx.db, row);
   } else if (
     ctx.email &&
     settings.selfSignup &&
@@ -68,8 +71,16 @@ export function bootstrap(ctx: Ctx): Bootstrap {
     signIn: 'google',
     calendarFeed: false,
     calendarSync: true,
+    photos: user ? photoMap(ctx) : undefined,
     signedInAs: user ? null : ctx.email || null,
   };
+}
+
+/** Everyone's Google profile picture by person id (people without one are left out). */
+function photoMap(ctx: Ctx): Record<string, string> {
+  const photos: Record<string, string> = {};
+  for (const u of tables(ctx.db).users.all()) if (u.photoUrl) photos[u.id] = u.photoUrl;
+  return photos;
 }
 
 export function toPerson(ctx: Ctx, u: UserRow): Person {
