@@ -113,6 +113,10 @@ export function describeActivity(
       return `invited ${str(d.name)} (${str(d.email)})`;
     case 'user.invite_resent':
       return `re-sent ${str(d.name)}'s invite`;
+    case 'user.invite_accepted_by_admin':
+      return d.count === 1 && d.names
+        ? `marked ${String((d.names as string[])[0])}'s invite as accepted`
+        : `marked ${plural(num(d.count), 'invite')} as accepted`;
     case 'user.invite_accepted':
       return 'accepted their invite and joined';
     case 'user.signed_up':

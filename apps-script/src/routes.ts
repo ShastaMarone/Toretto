@@ -321,6 +321,12 @@ export function createRouter(): Router {
       ),
     ),
   );
+  r.post('/users/accept-invites', 'admin', (req, ctx) =>
+    people.acceptInvites(
+      ctx,
+      parse(z.object({ ids: z.array(zId).min(1).max(200) }), req.body).ids,
+    ),
+  );
   r.post('/users/:id/resend-invite', 'admin', (req, ctx) =>
     people.resendInvite(ctx, id(req.params)),
   );

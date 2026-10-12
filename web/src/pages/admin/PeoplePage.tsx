@@ -56,7 +56,8 @@ type Pending =
   | { kind: 'edit'; person: Person }
   | { kind: 'deactivate'; person: Person }
   | { kind: 'clear'; person: Person }
-  | { kind: 'delete'; person: Person };
+  | { kind: 'delete'; person: Person }
+  | { kind: 'accept'; people: Person[] };
 
 /** Take someone off all their shifts, or just those in one week. */
 function ClearShiftsDialog({
@@ -168,6 +169,18 @@ export default function PeoplePage() {
     onSuccess: (p) => toast.success(`New invite sent to ${p.email}`),
     onError: (e) => toast.error(e.message),
   });
+  // For people who don't need to sign in: an admin marks their invite as accepted.
+  const accept = useMutation({
+    mutationFn: (ids: string[]) => api.post<{ accepted: number }>('/users/accept-invites', { ids }),
+    onSuccess: ({ accepted }) => {
+      toast.success(
+        accepted === 1 ? 'Invite marked as accepted' : `${accepted} invites marked as accepted`,
+      );
+      setPending(null);
+      refresh();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const remove = useMutation({
     mutationFn: (p: Person) => api.delete(`/users/${p.id}`),
     onSuccess: () => {
@@ -216,6 +229,14 @@ export default function PeoplePage() {
             { value: 'deactivated', label: `Deactivated (${counts.deactivated})` },
           ]}
         />
+        {statusFilter === 'invited' && visible.length > 0 && (
+          <Button
+            icon={<UserCheck className="size-4" />}
+            onClick={() => setPending({ kind: 'accept', people: visible })}
+          >
+            Mark {visible.length === 1 ? 'invite' : `all ${visible.length} invites`} accepted
+          </Button>
+        )}
         <div className="relative w-full sm:w-64">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
           <Input
@@ -310,6 +331,11 @@ export default function PeoplePage() {
                               icon: <MailPlus />,
                               onSelect: () => resend.mutate(p),
                             },
+                            {
+                              label: 'Mark invite accepted',
+                              icon: <UserCheck />,
+                              onSelect: () => setPending({ kind: 'accept', people: [p] }),
+                            },
                           ]
                         : []),
                       p.status === 'deactivated'
@@ -370,6 +396,22 @@ export default function PeoplePage() {
           onClose={() => setPending(null)}
           onSaved={refresh}
         />
+      )}
+      {pending?.kind === 'accept' && (
+        <ConfirmDialog
+          title={
+            pending.people.length === 1
+              ? `Mark ${pending.people[0]!.name}'s invite as accepted?`
+              : `Mark ${pending.people.length} invites as accepted?`
+          }
+          confirmLabel="Mark accepted"
+          loading={accept.isPending}
+          onConfirm={() => accept.mutate(pending.people.map((p) => p.id))}
+          onClose={() => setPending(null)}
+        >
+          They'll show as active without signing in, and nobody is emailed. They can still use their
+          invite link later to set a password.
+        </ConfirmDialog>
       )}
       {pending?.kind === 'deactivate' && (
         <ConfirmDialog

@@ -233,6 +233,28 @@ export function updatePerson(
   return getPerson(ctx, id);
 }
 
+/**
+ * Mark invites as accepted for people who don't need to sign in themselves.
+ * Nothing is emailed. Returns how many people were marked.
+ */
+export function acceptInvites(ctx: Ctx, ids: string[]): { accepted: number } {
+  const t = tables(ctx.db);
+  const invited = [...new Set(ids)]
+    .map((id) => t.users.get(id))
+    .filter((u): u is UserRow => !!u && !u.emailVerifiedAt && !u.deactivatedAt);
+  for (const u of invited) t.users.update(u.id, { emailVerifiedAt: ctx.now });
+  if (invited.length) {
+    audit(
+      ctx,
+      ctx.user!.id,
+      'user.invite_accepted_by_admin',
+      { type: 'user', id: invited.length === 1 ? invited[0]!.id : null },
+      { count: invited.length, names: invited.map((u) => u.name) },
+    );
+  }
+  return { accepted: invited.length };
+}
+
 export function resendInvite(ctx: Ctx, id: string): Person {
   const person = getPerson(ctx, id);
   if (person.status !== 'invited') {

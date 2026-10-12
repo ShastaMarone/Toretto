@@ -2,6 +2,7 @@ import { addDays, dayRangeToUtc } from '@shared/time';
 import type { Label, Person, Tier } from '@shared/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  clearEmails,
   createTestContext,
   createTier,
   createUser,
@@ -410,5 +411,38 @@ describe('settings', () => {
     const res = await member.post('/api/me/password').send({ newPassword: 'new password 1' });
     expect(res.status).toBe(404);
     expect((await member.post('/api/auth/logout')).status).toBe(404);
+  });
+});
+
+describe('admins accept invites for people', () => {
+  it('marks invited people as accepted without emailing anyone', async () => {
+    const one = await createUser(ctx.db, { name: 'Quinn Quiet', verified: false });
+    const two = await createUser(ctx.db, { name: 'Sam Silent', verified: false });
+    const status = async (id: string) =>
+      ((await admin.get('/api/users')).body as Person[]).find((p) => p.id === id)?.status;
+    expect(await status(one.id)).toBe('invited');
+    await clearEmails(ctx.db);
+
+    const res = await admin
+      .post('/api/users/accept-invites')
+      .send({ ids: [one.id, two.id, adminUser.id] })
+      .expect(200);
+    // The admin was already active, so only the two invited people count.
+    expect(res.body).toEqual({ accepted: 2 });
+    expect(await status(one.id)).toBe('active');
+    expect(await status(two.id)).toBe('active');
+    expect(await emails(ctx.db, {})).toHaveLength(0);
+    expect((await admin.post('/api/users/accept-invites').send({ ids: [one.id] })).body).toEqual({
+      accepted: 0,
+    });
+
+    const audit = await admin.get('/api/admin/activity');
+    expect(JSON.stringify(audit.body)).toContain('user.invite_accepted_by_admin');
+    // Admins only, and ids are required.
+    await member
+      .post('/api/users/accept-invites')
+      .send({ ids: [one.id] })
+      .expect(403);
+    await admin.post('/api/users/accept-invites').send({ ids: [] }).expect(400);
   });
 });

@@ -231,6 +231,32 @@ export function userRoutes({ db, config, kick }: AppDeps): Router {
     res.json(await getPerson(db, id));
   });
 
+  // Mark invites as accepted for people who don't need to sign in themselves.
+  // Nothing is emailed, and they can still set a password from their invite later.
+  r.post('/accept-invites', async (req, res) => {
+    const { ids } = parse(z.object({ ids: z.array(zId).min(1).max(200) }), req.body);
+    const admin = req.user!;
+    const accepted = await withTransaction(db, async (client) => {
+      const { rows } = await client.query<{ id: string; name: string }>(
+        `UPDATE users SET email_verified_at = now()
+          WHERE id = ANY($1) AND email_verified_at IS NULL AND deactivated_at IS NULL
+          RETURNING id, name`,
+        [ids],
+      );
+      if (rows.length) {
+        await audit(
+          client,
+          admin.id,
+          'user.invite_accepted_by_admin',
+          { type: 'user', id: rows.length === 1 ? rows[0]!.id : null },
+          { count: rows.length, names: rows.map((u) => u.name) },
+        );
+      }
+      return rows.length;
+    });
+    res.json({ accepted });
+  });
+
   r.post('/:id/resend-invite', async (req, res) => {
     const { id } = parse(zIdParam, req.params);
     const person = await getPerson(db, id);
