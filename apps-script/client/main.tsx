@@ -8,7 +8,7 @@ import { ApiError } from '../../web/src/api/client';
 import { keys } from '../../web/src/api/queries';
 import App from '../../web/src/App';
 import { ThemedToaster } from '../../web/src/components/ThemedToaster';
-import { HistorySync } from './HistorySync';
+import { HistorySync, startingPage } from './HistorySync';
 import './styles.css';
 
 const boot = window.__TORETTO__;
@@ -37,7 +37,7 @@ if (boot?.bootstrap.status === 200) queryClient.setQueryData(keys.bootstrap, boo
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[boot?.path || '/']}>
+      <MemoryRouter initialEntries={[startingPage(boot?.path)]}>
         <HistorySync />
         <App />
       </MemoryRouter>

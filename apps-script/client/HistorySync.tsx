@@ -21,11 +21,39 @@ export function HistorySync() {
   }, [navigate]);
 
   useEffect(() => {
-    if ((location.state as { fromHistory?: boolean } | null)?.fromHistory) return;
     const page = location.pathname + location.search;
-    if (type === 'PUSH') google.script.history.push(null, { page });
-    else google.script.history.replace(null, { page });
+    // Also kept in this tab, so a reload comes back here even if the address bar
+    // lost ?page= (see startingPage).
+    try {
+      sessionStorage.setItem(LAST_PAGE, page);
+    } catch {
+      // Storage can be blocked; the address bar still works.
+    }
+    if ((location.state as { fromHistory?: boolean } | null)?.fromHistory) return;
+    try {
+      if (type === 'PUSH') google.script.history.push({ page }, { page });
+      else google.script.history.replace({ page }, { page });
+    } catch {
+      // Not running inside Google's page (or history is unavailable): nothing to mirror.
+    }
   }, [location, type]);
 
   return null;
+}
+
+const LAST_PAGE = 'toretto.lastPage';
+
+/**
+ * Where to start: the screen in the link (?page=…), else, on a reload, the one
+ * this tab was last on, else home.
+ */
+export function startingPage(fromLink: string | undefined): string {
+  if (fromLink && fromLink !== '/') return fromLink;
+  try {
+    const saved = sessionStorage.getItem(LAST_PAGE);
+    if (saved?.startsWith('/')) return saved;
+  } catch {
+    // Storage can be blocked.
+  }
+  return '/';
 }

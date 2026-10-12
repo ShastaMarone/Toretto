@@ -52,6 +52,18 @@ test('an admin publishes, and the team member confirms from the email', async ({
   await expect(taylor.getByRole('heading', { name: 'My schedule' })).toBeVisible();
 });
 
+test('a reload stays on the current screen, even if the address bar lost it', async ({
+  browser,
+}) => {
+  const admin = await open(browser, ADMIN, '/admin/people');
+  await expect(admin.getByRole('heading', { name: 'People' })).toBeVisible();
+  await admin.reload();
+  await expect(admin.getByRole('heading', { name: 'People' })).toBeVisible();
+  // Opening the bare link again in the same tab returns to where you were.
+  await admin.goto(`/?as=${ADMIN}`);
+  await expect(admin.getByRole('heading', { name: 'People' })).toBeVisible();
+});
+
 test('a team member asks for a personal day, and an admin approves it', async ({ browser }) => {
   const priya = await open(browser, 'priya@example.com', '/my-schedule');
   await priya.getByRole('button', { name: 'Request time off' }).first().click();
