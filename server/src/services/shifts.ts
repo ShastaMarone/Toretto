@@ -3,6 +3,7 @@ import type { BuilderShift, RepeatResult } from '@shared/types';
 import type { AuthUser } from '../auth/types';
 import { withTransaction, type Db, type Queryable } from '../db';
 import { badRequest, conflict, notFound } from '../errors';
+import { audit } from './audit';
 import { getBuilderShift, lockSchedule } from './schedules';
 import { getSettings } from './settings';
 import { TIME_OFF_SPAN } from './timeOff';
@@ -343,4 +344,39 @@ export async function restoreShift(db: Db, shiftId: string): Promise<BuilderShif
     await client.query('UPDATE shifts SET deleted_at = NULL WHERE id = $1', [shiftId]);
   });
   return getBuilderShift(db, shiftId);
+}
+
+/**
+ * An admin confirms published shifts for the people who work them (for people
+ * who aren't emailed). Nobody is emailed about it; the audit log records who
+ * confirmed and for whom.
+ */
+export async function confirmShiftsForPeople(
+  db: Db,
+  actor: AuthUser,
+  shiftIds: string[],
+): Promise<{ confirmed: number }> {
+  return withTransaction(db, async (client) => {
+    const { rows } = await client.query<{ id: string; userId: string }>(
+      `UPDATE shifts SET status = 'confirmed', confirmed_at = now()
+        WHERE id = ANY($1) AND published_at IS NOT NULL AND status = 'pending'
+          AND deleted_at IS NULL
+        RETURNING id, published_user_id AS "userId"`,
+      [shiftIds],
+    );
+    if (rows.length) {
+      await audit(
+        client,
+        actor.id,
+        'shift.confirmed_by_admin',
+        { type: 'shift', id: rows.length === 1 ? rows[0]!.id : null },
+        {
+          count: rows.length,
+          shiftIds: rows.map((r) => r.id),
+          userIds: [...new Set(rows.map((r) => r.userId))],
+        },
+      );
+    }
+    return { confirmed: rows.length };
+  });
 }

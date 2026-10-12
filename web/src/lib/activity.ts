@@ -73,6 +73,8 @@ export function describeActivity(
       return `confirmed their ${d.tierName ? `${str(d.tierName)} ` : ''}shift ${d.startTime ? formatShiftWhen(str(d.startTime), str(d.endTime), tz, format) : ''}`.trimEnd();
     case 'shift.confirmed_all':
       return `confirmed ${plural(num(d.count), 'shift')}`;
+    case 'shift.confirmed_by_admin':
+      return `confirmed ${plural(num(d.count), 'shift')} on behalf of team members`;
     case 'time_off.requested':
       return `requested ${str(d.typeName)}, ${range(d, tz, format)}`;
     case 'time_off.approved':

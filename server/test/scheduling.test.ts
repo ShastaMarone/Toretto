@@ -475,3 +475,42 @@ describe('time zones', () => {
     expect(TZ).toBe('America/Toronto');
   });
 });
+
+describe('admin confirms for someone', () => {
+  it('confirms a published shift without emailing anyone, and members still can’t', async () => {
+    const quiet = await addShift(people.ben!.id, day(70));
+    const draft = await addShift(people.cy!.id, day(71));
+    // Quiet publish: this is how someone who isn't emailed gets their shifts.
+    const res = await admin
+      .post(`/api/schedules/${main}/publish`)
+      .send({ from: day(70), to: day(70), notify: false });
+    expect(res.status, res.text).toBe(200);
+    expect(res.body.emailsQueued).toBe(0);
+    await clearEmails(ctx.db);
+
+    const done = await admin.post('/api/shifts/confirm').send({ shiftIds: [quiet.id, draft.id] });
+    expect(done.status, done.text).toBe(200);
+    // The unpublished draft is left alone.
+    expect(done.body).toEqual({ confirmed: 1 });
+    expect((await mine(ben, day(70), day(70)))[0]).toMatchObject({ status: 'confirmed' });
+    expect((await builder(main, week(10))).shifts.find((s) => s.id === draft.id)).toMatchObject({
+      status: 'pending',
+      changeState: 'new',
+    });
+    expect(await emails(ctx.db, {})).toHaveLength(0);
+    // Doing it again is harmless.
+    expect((await admin.post('/api/shifts/confirm').send({ shiftIds: [quiet.id] })).body).toEqual({
+      confirmed: 0,
+    });
+
+    const audit = await ctx.db.query(
+      `SELECT actor_id, details FROM audit_log WHERE action = 'shift.confirmed_by_admin'`,
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]!.actor_id).toBe(people.admin!.id);
+    expect(audit.rows[0]!.details.userIds).toEqual([people.ben!.id]);
+
+    expect((await ana.post('/api/shifts/confirm').send({ shiftIds: [quiet.id] })).status).toBe(403);
+    expect((await admin.post('/api/shifts/confirm').send({ shiftIds: [] })).status).toBe(400);
+  });
+});

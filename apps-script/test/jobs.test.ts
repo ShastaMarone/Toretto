@@ -219,6 +219,42 @@ describe('hourly jobs', () => {
     expect(await emails(ctx.db, { kind: 'shift_reminder' })).toHaveLength(0);
   });
 
+  it('lets an admin confirm a quietly published shift for someone, with no email', async () => {
+    const quiet = await admin
+      .post(`/api/schedules/${main_}/shifts`)
+      .send({ userId: people.bo.id, ...shiftOn(day(60)) })
+      .expect(201);
+    const draft = await admin
+      .post(`/api/schedules/${main_}/shifts`)
+      .send({ userId: people.bo.id, ...shiftOn(day(61)) })
+      .expect(201);
+    await admin
+      .post(`/api/schedules/${main_}/publish`)
+      .send({ from: day(60), to: day(60), notify: false })
+      .expect(200);
+    await clearEmails(ctx.db);
+
+    const done = await admin
+      .post('/api/shifts/confirm')
+      .send({ shiftIds: [quiet.body.id, draft.body.id] })
+      .expect(200);
+    // The unpublished draft is left alone.
+    expect(done.body).toEqual({ confirmed: 1 });
+    const bo = ctx.agent();
+    await login(bo, people.bo.email);
+    const seen = await bo.get(`/api/my/shifts?from=${day(60)}&to=${day(60)}`);
+    expect(seen.body).toMatchObject([{ id: quiet.body.id, status: 'confirmed' }]);
+    expect(await emails(ctx.db, {})).toHaveLength(0);
+    const again = await admin.post('/api/shifts/confirm').send({ shiftIds: [quiet.body.id] });
+    expect(again.body).toEqual({ confirmed: 0 });
+    // Only admins can.
+    await ana
+      .post('/api/shifts/confirm')
+      .send({ shiftIds: [quiet.body.id] })
+      .expect(403);
+    await admin.post('/api/shifts/confirm').send({ shiftIds: [] }).expect(400);
+  });
+
   it('deletes sent and failed emails older than the setting, never ones still going out', async () => {
     ctx.db.write((t) => {
       for (const [status, days] of [

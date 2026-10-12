@@ -14,6 +14,7 @@ import {
   type DateRange,
 } from '../services/schedules';
 import {
+  confirmShiftsForPeople,
   createShift,
   createShifts,
   deleteShift,
@@ -144,6 +145,12 @@ export function scheduleRoutes({ db, config, kick }: AppDeps): Router {
 /** Admin-only: edit individual shifts in the working copy. */
 export function shiftRoutes({ db }: AppDeps): Router {
   const r = Router();
+
+  // Confirm published shifts on behalf of the people who work them.
+  r.post('/confirm', async (req, res) => {
+    const { shiftIds } = parse(z.object({ shiftIds: z.array(zId).min(1).max(200) }), req.body);
+    res.json(await confirmShiftsForPeople(db, req.user!, shiftIds));
+  });
 
   r.patch('/:id', async (req, res) => {
     const { id } = parse(zIdParam, req.params);

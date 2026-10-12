@@ -291,3 +291,36 @@ export function restoreShift(ctx: Ctx, shiftId: string): BuilderShift {
   }
   return getBuilderShift(ctx, shiftId);
 }
+
+/**
+ * An admin confirms published shifts for the people who work them (for people
+ * who aren't emailed). Nobody is emailed about it; the audit log records who
+ * confirmed and for whom.
+ */
+export function confirmShiftsForPeople(
+  ctx: Ctx,
+  actor: AuthUser,
+  shiftIds: string[],
+): { confirmed: number } {
+  const t = tables(ctx.db);
+  const confirmed = [...new Set(shiftIds)].flatMap((id) => {
+    const s = t.shifts.get(id);
+    if (!s || !s.publishedAt || s.deletedAt || s.status !== 'pending') return [];
+    t.shifts.update(id, { status: 'confirmed', confirmedAt: ctx.now });
+    return [s];
+  });
+  if (confirmed.length) {
+    audit(
+      ctx,
+      actor.id,
+      'shift.confirmed_by_admin',
+      { type: 'shift', id: confirmed.length === 1 ? confirmed[0]!.id : null },
+      {
+        count: confirmed.length,
+        shiftIds: confirmed.map((s) => s.id),
+        userIds: [...new Set(confirmed.map((s) => s.publishedUserId))],
+      },
+    );
+  }
+  return { confirmed: confirmed.length };
+}

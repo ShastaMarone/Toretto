@@ -516,6 +516,16 @@ function Builder({
     onSuccess: refresh,
     onError: (e) => toast.error(e.message),
   });
+  const confirmForThem = useMutation({
+    mutationFn: (shiftId: string) =>
+      api.post<{ confirmed: number }>('/shifts/confirm', { shiftIds: [shiftId] }),
+    onSuccess: () => {
+      toast.success('Shift confirmed');
+      setDialog(null);
+      refresh();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const move = useMutation({
     mutationKey: WRITE,
     mutationFn: ({
@@ -1173,6 +1183,8 @@ function Builder({
           onSave={(payload) => edit.mutate({ shiftId: dialog.shift.id, payload })}
           onDelete={() => remove.mutate(dialog.shift.id)}
           onDeleteWeek={() => setClearingWeek(dialog.shift)}
+          onConfirm={() => confirmForThem.mutate(dialog.shift.id)}
+          confirming={confirmForThem.isPending}
           onDuplicate={(draft) => {
             edit.reset();
             setDialog({ mode: 'create', draft: { ...draft, date: addDays(draft.date, 1) } });

@@ -137,6 +137,8 @@ export function ShiftDialog({
   onDelete,
   onDeleteWeek,
   onDuplicate,
+  onConfirm,
+  confirming,
   onClose,
 }: {
   mode: 'create' | 'edit';
@@ -163,6 +165,9 @@ export function ShiftDialog({
   /** Offer to remove everything this person has that week. */
   onDeleteWeek?: () => void;
   onDuplicate?: (draft: ShiftDraft) => void;
+  /** Confirm the published shift for the person (for people who aren't emailed). */
+  onConfirm?: () => void;
+  confirming?: boolean;
   onClose: () => void;
 }) {
   const { org } = useBootstrapData();
@@ -360,6 +365,11 @@ export function ShiftDialog({
               <Badge tone="green">Confirmed</Badge>
             ) : (
               <Badge tone="amber">Waiting for confirmation</Badge>
+            )}
+            {shift.status !== 'confirmed' && shift.changeState !== 'removed' && onConfirm && (
+              <Button size="sm" variant="success" loading={confirming} onClick={onConfirm}>
+                Confirm for them
+              </Button>
             )}
             {shift.changeState === 'updated' && published && (
               <span className="flex items-center gap-1">

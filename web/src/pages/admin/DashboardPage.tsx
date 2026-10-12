@@ -22,11 +22,14 @@ import {
   UserRoundX,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { useOverview } from '../../api/queries';
+import { toast } from 'sonner';
+import { api } from '../../api/client';
+import { keys, useOverview } from '../../api/queries';
 import { ActivityLine } from '../../components/ActivityLine';
 import { ConfirmationBar } from '../../components/schedule/ConfirmationBar';
-import { ButtonLink } from '../../components/ui/Button';
+import { Button, ButtonLink } from '../../components/ui/Button';
 import {
   Avatar,
   Card,
@@ -119,6 +122,18 @@ export default function DashboardPage() {
   const tz = user.timezone ?? org.timezone;
   const timeFormat = useTimeFormat();
   const overview = useOverview();
+  const queryClient = useQueryClient();
+  // For people who aren't emailed: an admin confirms their shifts for them.
+  const confirmFor = useMutation({
+    mutationFn: (shiftIds: string[]) =>
+      api.post<{ confirmed: number }>('/shifts/confirm', { shiftIds }),
+    onSuccess: ({ confirmed }) => {
+      toast.success(confirmed === 1 ? 'Shift confirmed' : `${confirmed} shifts confirmed`);
+      void queryClient.invalidateQueries({ queryKey: keys.overview });
+      void queryClient.invalidateQueries({ queryKey: ['schedule'] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   if (overview.isLoading) return <LoadingBlock />;
   if (overview.isError || !overview.data)
@@ -333,6 +348,16 @@ export default function DashboardPage() {
                         ))}
                         {shifts.length} unconfirmed
                       </span>
+                      <Button
+                        size="sm"
+                        loading={
+                          confirmFor.isPending && confirmFor.variables?.[0] === shifts[0]!.id
+                        }
+                        disabled={confirmFor.isPending}
+                        onClick={() => confirmFor.mutate(shifts.map((s) => s.id))}
+                      >
+                        Confirm
+                      </Button>
                     </li>
                   );
                 })}

@@ -390,6 +390,13 @@ export function createRouter(): Router {
     shifts.updateShift(ctx, id(req.params), parse(ShiftPatchBody, req.body)),
   );
   r.delete('/shifts/:id', 'admin', (req, ctx) => shifts.deleteShift(ctx, id(req.params)));
+  r.post('/shifts/confirm', 'admin', (req, ctx) =>
+    shifts.confirmShiftsForPeople(
+      ctx,
+      ctx.user!,
+      parse(z.object({ shiftIds: z.array(zId).min(1).max(200) }), req.body).shiftIds,
+    ),
+  );
   r.post('/shifts/:id/restore', 'admin', (req, ctx) => shifts.restoreShift(ctx, id(req.params)));
 
   // ---- Time off (admins) -----------------------------------------------------
