@@ -241,6 +241,9 @@ export function runHourlyJobs(): void {
   } finally {
     lock.releaseLock();
   }
+  // The cache was cleared above: fill it again now, so the first person after
+  // this job doesn't wait for the Sheet on every screen.
+  Db.warmCache();
   sendQueuedEmails();
   try {
     syncCalendars();

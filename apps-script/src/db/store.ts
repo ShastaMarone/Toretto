@@ -208,11 +208,15 @@ export class Table<T extends { id: string }> {
     return out;
   }
 
-  /** Write the changes: few, large Sheet calls (a call costs more than its size). True if anything was written. */
-  commit(): boolean {
+  /**
+   * Write the changes: few, large Sheet calls (a call costs more than its size).
+   * Returns the tab's cells as they now are in the Sheet (so they can go
+   * straight into the cache), or null if nothing was written.
+   */
+  commit(): unknown[][] | null {
     if (!this.loaded || this.changed.size === 0) {
       this.loaded = false;
-      return false;
+      return null;
     }
     const sheet = this.db.sheet(this.def.name);
     // Rows added and deleted in the same request are never written.
@@ -222,6 +226,8 @@ export class Table<T extends { id: string }> {
     const added = indexes.filter((i) => i >= this.readCount);
     const existing = indexes.filter((i) => i < this.readCount);
     const blocks: { start: number; rows: unknown[][] }[] = [];
+    /** Rows rewritten from their objects; the rest keep the cells that were read. */
+    const rewritten = new Set<number>(added);
     const runs: number[][] = [];
     for (const i of existing) {
       const run = runs.at(-1);
@@ -233,10 +239,16 @@ export class Table<T extends { id: string }> {
       const first = existing[0]!;
       const last = existing.at(-1)!;
       const span: unknown[][] = [];
-      for (let i = first; i <= last; i++) span.push(this.cells(i));
+      for (let i = first; i <= last; i++) {
+        span.push(this.cells(i));
+        rewritten.add(i);
+      }
       blocks.push({ start: first, rows: span });
     } else {
-      for (const run of runs) blocks.push({ start: run[0]!, rows: run.map((i) => this.cells(i)) });
+      for (const run of runs) {
+        blocks.push({ start: run[0]!, rows: run.map((i) => this.cells(i)) });
+        for (const i of run) rewritten.add(i);
+      }
     }
     if (added.length) {
       blocks.push({ start: this.readCount, rows: added.map((i) => this.cells(i)) });
@@ -251,9 +263,26 @@ export class Table<T extends { id: string }> {
         .setNumberFormat('@')
         .setValues(block.rows);
     }
+    const written = this.written(rewritten);
     this.changed.clear();
     this.loaded = false;
-    return true;
+    return written;
+  }
+
+  /**
+   * What getDataRange().getValues() would give right after commit(): the
+   * header, the rows that were read (blank where deleted), then the rows that
+   * were added (except ones deleted again), without blank rows at the end.
+   */
+  private written(rewritten: Set<number>): unknown[][] {
+    const values: unknown[][] = [this.header];
+    for (let i = 0; i < this.rows.length; i++) {
+      if (rewritten.has(i)) values.push(this.cells(i));
+      else if (i < this.readCount) values.push(this.header.map((_, c) => this.raw[i]?.[c] ?? ''));
+    }
+    const blank = (row: unknown[]) => row.every((cell) => cell === '' || cell === null);
+    while (values.length > 1 && blank(values.at(-1)!)) values.pop();
+    return values;
   }
 
   /** Rewrite the rows without the blanks deletions left behind. */
@@ -313,6 +342,20 @@ function tryCache<T>(fn: (cache: GoogleAppsScript.Cache.Cache) => T): T | null {
   } catch {
     return null;
   }
+}
+
+/** Store a tab's cells in the cache, in pieces small enough for CacheService. */
+function putValues(key: string, values: unknown[][]): void {
+  tryCache((cache) => {
+    const json = JSON.stringify(values);
+    const count = Math.max(1, Math.ceil(json.length / CHUNK));
+    const items: Record<string, string> = {};
+    for (let i = 0; i < count; i++) {
+      items[`${key}:${i}`] =
+        `${i === 0 ? `${count}|` : ''}${json.slice(i * CHUNK, (i + 1) * CHUNK)}`;
+    }
+    cache.putAll(items, CACHE_SECONDS);
+  });
 }
 
 /** A cached copy was out of date: nothing was written; run again reading the Sheet. */
@@ -438,19 +481,31 @@ export class Db {
       }
     }
     const values = this.sheet(name).getDataRange().getValues();
-    if (gen) {
-      tryCache((cache) => {
-        const json = JSON.stringify(values);
-        const count = Math.max(1, Math.ceil(json.length / CHUNK));
-        const items: Record<string, string> = {};
-        for (let i = 0; i < count; i++) {
-          items[`${key}:${i}`] =
-            `${i === 0 ? `${count}|` : ''}${json.slice(i * CHUNK, (i + 1) * CHUNK)}`;
-        }
-        cache.putAll(items, CACHE_SECONDS);
-      });
-    }
+    if (gen) putValues(key, values);
     return values;
+  }
+
+  /** Put a tab's cells in the cache under its current generation. */
+  private cacheValues(name: string, values: unknown[][]): void {
+    if (UNCACHED.has(name)) return;
+    const gens = this.currentGenerations();
+    if (gens) putValues(`toretto:${name}:${gens['*']}.${gens[name] ?? ''}`, values);
+  }
+
+  /**
+   * Read every cached tab into the cache, e.g. right after the hourly job
+   * cleared it, so the next person doesn't wait for the Sheet on every screen.
+   */
+  static warmCache(): void {
+    const db = Db.reader();
+    for (const def of TABLES) {
+      if (UNCACHED.has(def.name)) continue;
+      try {
+        db.readValues(def.name);
+      } catch (err) {
+        console.warn(`Couldn't warm the cache for ${def.name}: ${String(err)}`);
+      }
+    }
   }
 
   spreadsheet(): Spreadsheet {
@@ -507,13 +562,18 @@ export class Db {
         throw new StaleCacheError();
       }
     }
-    const written: string[] = [];
+    const written = new Map<string, unknown[][]>();
     for (const table of this.tables.values()) {
-      if (table.commit()) written.push(table.def.name);
+      const values = table.commit();
+      if (values) written.set(table.def.name, values);
     }
-    if (!written.length) return;
+    if (!written.size) return;
     SpreadsheetApp.flush();
-    this.invalidateTabs(written);
+    this.invalidateTabs([...written.keys()]);
+    // The next read of these tabs (usually the page refreshing right after a
+    // save) gets them from the cache instead of the Sheet. We hold the lock,
+    // so nothing else wrote them in between.
+    for (const [name, values] of written) this.cacheValues(name, values);
   }
 }
 

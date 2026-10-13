@@ -3,6 +3,7 @@
 // tab) is only read when something is waiting in it.
 import { addDays } from '@shared/time';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { Db } from '../src/db/store';
 import * as main from '../src/main';
 import { activate } from './emulator';
 import {
@@ -151,6 +152,75 @@ describe('reads from the cache', () => {
     await get('/admin/notifications');
     await get('/admin/notifications');
     expect([...ctx.env.cache.keys()].some((k) => k.includes('email_log'))).toBe(false);
+  });
+});
+
+describe('a save fills the cache', () => {
+  const sheetReads = (tab: string) => ctx.env.book.sheets.get(tab)!.reads;
+  /** The tab as the cache has it, and as the Sheet has it. */
+  const both = (tab: string) => {
+    activate(ctx.env);
+    const reader = Db.reader();
+    const cached = JSON.stringify(reader.readValues(tab));
+    expect(reader.servedFromCache(tab)).toBe(true);
+    return { cached, sheet: JSON.stringify(new Db().readValues(tab)) };
+  };
+
+  it('the refresh right after a save reads nothing from the Sheet', async () => {
+    await get('/tiers');
+    await admin
+      .post('/api/tiers')
+      .send({ name: 'Straight to cache', color: '#4f46e5' })
+      .expect(201);
+    const before = sheetReads('tiers');
+    expect(names((await get('/tiers')).body)).toContain('Straight to cache');
+    expect(sheetReads('tiers')).toBe(before);
+  });
+
+  it('caches exactly what the Sheet holds when rows are added and deleted in one save', () => {
+    ctx.db.write((t) => {
+      const gone = t.tiers.insert({ name: 'Added then deleted', color: '#111111' });
+      t.tiers.insert({ name: 'Added and kept', color: '#222222' });
+      t.tiers.delete(gone.id);
+    });
+    const { cached, sheet } = both('tiers');
+    expect(cached).toBe(sheet);
+    expect(cached).toContain('Added and kept');
+  });
+
+  it('leaves no blank row at the end when the last row is deleted', () => {
+    const id = ctx.db.write((t) => t.tiers.insert({ name: 'Last one', color: '#333333' }).id);
+    ctx.db.write((t) => t.tiers.delete(id));
+    const { cached, sheet } = both('tiers');
+    expect(cached).toBe(sheet);
+  });
+
+  it('a save after that still notices rows added by hand', async () => {
+    await get('/tiers');
+    const sheet = ctx.env.book.sheets.get('tiers')!;
+    const column = (name: string) => {
+      for (let c = 1; c <= sheet.getLastColumn(); c++) if (sheet.cell(1, c) === name) return c;
+      throw new Error(`no ${name} column`);
+    };
+    const row = sheet.getLastRow() + 1;
+    sheet.set(row, column('id'), 'by-hand-after-write-through');
+    sheet.set(row, column('name'), 'By hand again');
+    sheet.set(row, column('color'), '#111111');
+    await admin.post('/api/tiers').send({ name: 'After hand edit', color: '#4f46e5' }).expect(201);
+    const found = names((await get('/tiers')).body);
+    expect(found).toContain('By hand again');
+    expect(found).toContain('After hand edit');
+  });
+});
+
+describe('the hourly job', () => {
+  it('leaves the cache filled, so the next screen reads nothing from the Sheet', async () => {
+    main.runHourlyJobs();
+    const before = reads();
+    await get('/tiers');
+    await get('/teams');
+    await get('/schedules');
+    expect(reads()).toBe(before);
   });
 });
 
