@@ -47,6 +47,8 @@ const LAST_PAGE = 'toretto.lastPage';
  * Where to start: the screen in the link (?page=…), else, on a reload, the one
  * this tab was last on, else home.
  */
+// Only main.tsx uses this; it's no component, and there's no hot reload in the built page.
+// eslint-disable-next-line react-refresh/only-export-components
 export function startingPage(fromLink: string | undefined): string {
   if (fromLink && fromLink !== '/') return fromLink;
   try {
