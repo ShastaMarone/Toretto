@@ -121,6 +121,14 @@ export default function ScheduleBuilderPage() {
   const range = viewRange(view, date, org.weekStartsOn);
   const query = useScheduleRange(id, range.from, range.to);
   const schedules = useSchedules();
+  // What the builder asks for once the schedule arrives: start it now instead, so
+  // it travels in the same trip to Google (each trip costs a couple of seconds).
+  // Same queries (and keys) as Builder's, so nothing is fetched twice.
+  useTiers();
+  useTeams();
+  useSettings();
+  useOpenShifts();
+  useTeamSchedule(addDays(range.from, -1), addDays(range.to, 1));
 
   const update = (patch: Record<string, string | null>) =>
     setParams(
