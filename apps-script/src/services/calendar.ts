@@ -355,7 +355,8 @@ export function syncCalendars(): number {
   let orgName: string;
   try {
     if (Number(props.getProperty(LEASE) ?? 0) > Date.now()) return 0;
-    const db = new Db();
+    // Only reading: from the cache, so the lock (every save waits for it) is held briefly.
+    const db = Db.reader();
     ops = planCalendarSync(db, db.now);
     if (!ops.length) return 0;
     orgName = getSettings(db).orgName;
