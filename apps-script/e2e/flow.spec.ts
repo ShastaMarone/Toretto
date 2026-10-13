@@ -174,6 +174,29 @@ test('time off is posted from the Add shift dialog, no trip to the Time off page
   await expect(admin.getByText('Personal Day').first()).toBeVisible();
 });
 
+test('tiers can be moved up and down on the Schedules page', async ({ browser }) => {
+  const admin = await open(browser, ADMIN, '/admin/schedules');
+  const order = () =>
+    admin
+      .locator('th[scope="colgroup"] button[aria-expanded]')
+      .evaluateAll((buttons) => buttons.map((b) => (b.textContent ?? '').split('·')[0]!.trim()));
+  await expect(admin.locator('th[scope="colgroup"]').first()).toBeVisible();
+  const moves = admin.getByRole('button', { name: /^Move .* (up|down)$/ });
+  await expect(moves.first()).toBeVisible();
+  const before = await order();
+  expect(before.length).toBeGreaterThan(1);
+
+  // The first tier can only go down; moving it swaps it with the next one.
+  await admin.getByRole('button', { name: `Move ${before[0]} down` }).click();
+  await expect.poll(order).toEqual([before[1], before[0], ...before.slice(2)]);
+  // It's saved: still there after reloading.
+  await admin.reload();
+  await expect.poll(order).toEqual([before[1], before[0], ...before.slice(2)]);
+  // And back up.
+  await admin.getByRole('button', { name: `Move ${before[0]} up` }).click();
+  await expect.poll(order).toEqual(before);
+});
+
 test('a new shift shows on the grid straight away', async ({ browser }) => {
   const admin = await open(browser, ADMIN, '/admin/schedules');
   await admin.getByRole('tab', { name: 'Day' }).click();
