@@ -265,6 +265,30 @@ This link expires in 7 days.`;
   );
 }
 
+/** An invite for the Google Apps Script version: people sign in with Google, so no password. */
+export function googleInviteTemplate(
+  ctx: EmailContext,
+  input: { name: string; inviterName: string | null; url: string },
+): RenderedEmail {
+  const who = input.inviterName ?? ctx.orgName;
+  const subject = `${who} added you to the ${ctx.orgName} schedule`;
+  const body = html`${heading(`You're on the ${ctx.orgName} schedule`)}
+  ${para(`Hi ${firstName(input.name)}, ${who} added you to the ${ctx.orgName} team schedule. Open it to see and confirm your shifts and request time off.`)}
+  ${button(input.url, 'Open the schedule')}
+  ${muted('Sign in with the Google account for this email address when asked.')}`;
+  const text = `Hi ${firstName(input.name)},
+
+${who} added you to the ${ctx.orgName} team schedule. Open it to see and confirm your shifts and request time off:
+${input.url}
+
+Sign in with the Google account for this email address when asked.`;
+  return finish(
+    subject,
+    layout(ctx, { title: subject, preheader: 'See and confirm your shifts', body }),
+    text,
+  );
+}
+
 export function resetPasswordTemplate(
   ctx: EmailContext,
   input: { name: string; url: string },

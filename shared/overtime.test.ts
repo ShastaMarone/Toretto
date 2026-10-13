@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { overtimeReasons, weeklyHours, type OvertimeRules } from './overtime';
+import { overtimeReasons, paidShiftHours, weeklyHours, type OvertimeRules } from './overtime';
 import { addDays, formatDay, formatHours, shiftTimesFromLocal } from './time';
 
 const TZ = 'America/Toronto';
@@ -8,6 +8,41 @@ const LABOUR_CODE: OvertimeRules = { dailyHours: 8, weeklyHours: 40 };
 const SUNDAY = '2026-10-04';
 const on = (day: number, start: string, end: string) =>
   shiftTimesFromLocal(addDays(SUNDAY, day), start, end, TZ);
+
+describe('unpaid lunch', () => {
+  const WITH_LUNCH: OvertimeRules = { ...LABOUR_CODE, lunchHours: 1 };
+
+  it('counts a 9-hour shift with a 1-hour lunch as 8 hours', () => {
+    const shift = on(1, '11:00', '20:00');
+    expect(paidShiftHours(shift.startTime, shift.endTime, 1)).toBe(8);
+    expect(paidShiftHours(shift.startTime, shift.endTime)).toBe(9);
+  });
+
+  it('has no overtime for five 9-hour days with a 1-hour lunch', () => {
+    const shifts = [1, 2, 3, 4, 5].map((d) => on(d, '11:00', '20:00'));
+    // Without the lunch it's 45 hours: 5 of them overtime.
+    expect(weeklyHours(shifts, TZ, 0, LABOUR_CODE)[0]).toMatchObject({ hours: 45, overtime: 5 });
+    expect(weeklyHours(shifts, TZ, 0, WITH_LUNCH)[0]).toMatchObject({ hours: 40, overtime: 0 });
+  });
+
+  it('counts night shifts that cross midnight the same way', () => {
+    const shifts = [1, 2, 3, 4, 5].map((d) => on(d, '23:30', '08:30'));
+    expect(weeklyHours(shifts, TZ, 0, WITH_LUNCH)[0]).toMatchObject({ hours: 40, overtime: 0 });
+  });
+
+  it('leaves short shifts alone, and still flags real overtime', () => {
+    const short = on(1, '09:00', '13:00');
+    expect(paidShiftHours(short.startTime, short.endTime, 1)).toBe(4);
+    // Five 9-hour days plus a sixth: 8 hours each after lunch, 48 in the week.
+    const six = [0, 1, 2, 3, 4, 5].map((d) => on(d, '11:00', '20:00'));
+    expect(weeklyHours(six, TZ, 0, WITH_LUNCH)[0]).toMatchObject({ hours: 48, overtime: 8 });
+    // A 10-hour shift is 9 after lunch: 1 hour past the daily limit.
+    expect(weeklyHours([on(1, '08:00', '18:00')], TZ, 0, WITH_LUNCH)[0]).toMatchObject({
+      hours: 9,
+      overtime: 1,
+    });
+  });
+});
 
 describe('weeklyHours', () => {
   it('has no overtime for five 8-hour days', () => {

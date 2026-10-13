@@ -42,6 +42,8 @@ export interface SessionUser {
   notifyConfirmations: boolean;
   /** Admins: email me about shift swaps and open shifts to approve. */
   notifySwaps: boolean;
+  /** Google Apps Script version: my confirmed shifts go in my Google Calendar. */
+  calendarSync?: boolean;
 }
 
 /** Someone's calendar feed link, or null while it's turned off. */
@@ -57,6 +59,8 @@ export interface OrgInfo {
   holidayRegion: HolidayRegion;
   /** Default 12/24-hour format for everyone (and emails). */
   timeFormat: TimeFormat;
+  /** Unpaid lunch taken off shifts of 6 hours or more, when counting hours (Google Apps Script version). */
+  unpaidLunchHours?: number;
 }
 
 export interface Bootstrap {
@@ -68,6 +72,20 @@ export interface Bootstrap {
   devMailbox: boolean;
   /** An email provider is configured (otherwise emails only go to the server log). */
   emailConfigured: boolean;
+  /**
+   * How people sign in: email and password (the web server), or their Google
+   * account (the Google Apps Script version, which has no passwords or sign-out).
+   */
+  signIn: 'password' | 'google';
+  /** Calendar feed links are available (Profile, My Schedule). */
+  calendarFeed: boolean;
+  /**
+   * People can have their confirmed shifts added to their Google Calendar
+   * (the Google Apps Script version).
+   */
+  calendarSync: boolean;
+  /** Google sign-in: the account in use, when it isn't on the People list. */
+  signedInAs?: string | null;
 }
 
 export interface OrgSettings {
@@ -85,6 +103,11 @@ export interface OrgSettings {
   overtimeDailyHours: number | null;
   /** Overtime past this many hours in a week (null: no weekly limit). */
   overtimeWeeklyHours: number | null;
+  /**
+   * Unpaid lunch taken off each shift of 6 hours or more, in hours counted and
+   * overtime (0: none). Google Apps Script version.
+   */
+  unpaidLunchHours?: number;
 }
 
 export interface Tier {

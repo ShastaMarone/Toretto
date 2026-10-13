@@ -23,6 +23,7 @@ import {
 } from '../../components/ui/Misc';
 import { PALETTE } from '../../lib/colors';
 import { fieldErrors, formMessage } from '../../lib/forms';
+import { useBootstrapData } from '../../lib/session';
 
 export default function SettingsPage() {
   const settings = useSettings();
@@ -43,6 +44,7 @@ export default function SettingsPage() {
 
 function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
   const queryClient = useQueryClient();
+  const { signIn } = useBootstrapData();
   const [form, setForm] = useState({ ...settings, domains: settings.allowedDomains.join(', ') });
   const save = useMutation({
     mutationFn: () =>
@@ -58,6 +60,7 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
         emailRetentionDays: form.emailRetentionDays,
         overtimeDailyHours: form.overtimeDailyHours,
         overtimeWeeklyHours: form.overtimeWeeklyHours,
+        unpaidLunchHours: form.unpaidLunchHours ?? 0,
       }),
     onSuccess: (s) => {
       queryClient.setQueryData(keys.settings, s);
@@ -180,6 +183,22 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
               onChange={(overtimeWeeklyHours) => setForm({ ...form, overtimeWeeklyHours })}
             />
           </Field>
+          <Field
+            label="Unpaid lunch"
+            hint="Taken off each shift of 6 hours or more before hours and overtime are counted: a 9-hour shift with a 1-hour lunch counts as 8."
+          >
+            <Select
+              value={form.unpaidLunchHours ?? 0}
+              onChange={(e) => setForm({ ...form, unpaidLunchHours: Number(e.target.value) })}
+            >
+              <option value={0}>No unpaid lunch</option>
+              <option value={0.5}>30 minutes</option>
+              <option value={1}>1 hour</option>
+              {![0, 0.5, 1].includes(form.unpaidLunchHours ?? 0) && (
+                <option value={form.unpaidLunchHours}>{form.unpaidLunchHours} hours</option>
+              )}
+            </Select>
+          </Field>
           <p className="-mt-2 text-xs text-slate-500 sm:col-span-2">
             Flagged in the schedule builder and the Hours page. 8 a day and 40 a week are the Canada
             Labour Code's standard hours; many provinces use 44 a week.
@@ -215,8 +234,16 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
           <Toggle
             checked={form.selfSignup}
             onChange={(selfSignup) => setForm({ ...form, selfSignup })}
-            label="Let people create their own account"
-            description="They confirm their email, then start without a tier until you assign one. Otherwise, people join by invite only."
+            label={
+              signIn === 'google'
+                ? 'Let people join by opening the app'
+                : 'Let people create their own account'
+            }
+            description={
+              signIn === 'google'
+                ? 'Anyone who opens it with an allowed Google account joins as a team member, without a tier until you assign one. Otherwise, people join by invite only.'
+                : 'They confirm their email, then start without a tier until you assign one. Otherwise, people join by invite only.'
+            }
           />
           {form.selfSignup && (
             <Field

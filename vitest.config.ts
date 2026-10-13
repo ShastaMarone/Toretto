@@ -20,6 +20,16 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          // The Google Apps Script version, against an emulated Sheet (no database).
+          name: 'apps-script',
+          include: ['apps-script/test/**/*.test.ts'],
+          environment: 'node',
+          testTimeout: 20_000,
+        },
+      },
+      {
+        extends: true,
+        test: {
           name: 'unit',
           include: ['shared/**/*.test.ts', 'web/src/**/*.test.ts'],
           environment: 'node',

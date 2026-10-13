@@ -13,6 +13,8 @@ export interface AuthUser {
   notifyTimeOff: boolean;
   notifyConfirmations: boolean;
   notifySwaps: boolean;
+  /** Only in the Google Apps Script version (see SessionUser). */
+  calendarSync?: boolean;
 }
 
 /** SQL select list producing an AuthUser from `users u`. */

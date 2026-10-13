@@ -1,10 +1,24 @@
 import { localDate, shiftHours, startOfWeek, type ISODate } from './time';
 import type { WeekStart } from './types';
 
+/** Shifts at least this long include the unpaid lunch (when Settings sets one). */
+export const LUNCH_FROM_HOURS = 6;
+
+/**
+ * A shift's paid hours: its length, less the unpaid lunch if it's long enough
+ * to include one (a 9-hour shift with a 1-hour lunch is 8 hours).
+ */
+export function paidShiftHours(startTime: string, endTime: string, lunchHours = 0): number {
+  const hours = shiftHours(startTime, endTime);
+  return lunchHours > 0 && hours >= LUNCH_FROM_HOURS ? Math.max(0, hours - lunchHours) : hours;
+}
+
 /** Hours before overtime: in a day, and in a week (null: no limit). */
 export interface OvertimeRules {
   dailyHours: number | null;
   weeklyHours: number | null;
+  /** Unpaid lunch taken off each shift of 6 hours or more (none if absent). */
+  lunchHours?: number;
 }
 
 export interface DayTotal {
@@ -44,7 +58,10 @@ export function weeklyHours(
   const byDay = new Map<ISODate, number>();
   for (const s of shifts) {
     const day = localDate(s.startTime, tz);
-    byDay.set(day, (byDay.get(day) ?? 0) + shiftHours(s.startTime, s.endTime));
+    byDay.set(
+      day,
+      (byDay.get(day) ?? 0) + paidShiftHours(s.startTime, s.endTime, rules.lunchHours),
+    );
   }
   const weeks = new Map<ISODate, DayTotal[]>();
   for (const [date, raw] of [...byDay].sort(([a], [b]) => a.localeCompare(b))) {

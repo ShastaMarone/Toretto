@@ -148,3 +148,6 @@ test-results/
 
 # Vercel build output
 .vercel/
+
+# Apps Script build scratch (the output is apps-script/build/)
+apps-script/.client-build

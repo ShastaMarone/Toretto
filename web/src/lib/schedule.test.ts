@@ -80,6 +80,9 @@ describe('schedule grid helpers', () => {
 
   it('works out the days each calendar view shows', () => {
     // Thursday Oct 8, 2026, weeks starting Monday.
+    expect(viewRange('day', '2026-10-08', 1)).toEqual({ from: '2026-10-08', to: '2026-10-08' });
+    expect(stepView('day', '2026-10-31', 1)).toBe('2026-11-01');
+    expect(stepView('day', '2026-03-01', -1)).toBe('2026-02-28');
     expect(viewRange('week', '2026-10-08', 1)).toEqual({ from: '2026-10-05', to: '2026-10-11' });
     expect(viewRange('2weeks', '2026-10-08', 0)).toEqual({ from: '2026-10-04', to: '2026-10-17' });
     expect(viewRange('month', '2026-10-08', 1)).toEqual({ from: '2026-10-01', to: '2026-10-31' });

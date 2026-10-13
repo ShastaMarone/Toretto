@@ -277,7 +277,12 @@ function TeamCalendar({
             }}
             groupHours={(group) => {
               const ids = new Set(group.people.map((p) => p.id));
-              return formatHours(totalHours(shifts.filter((s) => ids.has(s.userId))));
+              return formatHours(
+                totalHours(
+                  shifts.filter((s) => ids.has(s.userId)),
+                  org.unpaidLunchHours,
+                ),
+              );
             }}
             renderPerson={(person) => {
               const all = [...(byUserDay.get(person.id)?.values() ?? [])].flat();
@@ -290,7 +295,7 @@ function TeamCalendar({
                       {person.id === me.id && <Badge tone="brand">You</Badge>}
                     </p>
                     <p className="text-xs text-slate-500">
-                      {all.length ? formatHours(totalHours(all)) : `Off this ${periodWord}`}
+                      {all.length ? formatHours(totalHours(all, org.unpaidLunchHours)) : `Off this ${periodWord}`}
                     </p>
                   </div>
                 </div>

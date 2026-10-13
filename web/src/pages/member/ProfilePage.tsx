@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../../api/client';
 import { CalendarFeedPanel } from '../../components/CalendarFeed';
+import { CalendarSyncToggle } from '../../components/GoogleCalendarSync';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { TimezoneSelect } from '../../components/TimezoneSelect';
 import { Button } from '../../components/ui/Button';
@@ -15,7 +16,7 @@ import { zoneLabel } from '../../lib/timezones';
 
 export default function ProfilePage() {
   const user = useCurrentUser();
-  const { org } = useBootstrapData();
+  const { org, signIn, calendarFeed, calendarSync } = useBootstrapData();
   const setSessionUser = useSetSessionUser();
   const [name, setName] = useState(user.name);
   const [timezone, setTimezone] = useState(user.timezone ?? '');
@@ -89,7 +90,14 @@ export default function ProfilePage() {
                 autoComplete="name"
               />
             </Field>
-            <Field label="Email" hint="Ask an admin if your email address needs to change.">
+            <Field
+              label="Email"
+              hint={
+                signIn === 'google'
+                  ? 'The Google account you sign in with.'
+                  : 'Ask an admin if your email address needs to change.'
+              }
+            >
               <Input value={user.email} disabled />
             </Field>
             <Field label="Time zone" hint="Your schedule and emails show times in this zone.">
@@ -120,15 +128,29 @@ export default function ProfilePage() {
           </form>
         </Card>
 
-        <Card>
-          <CardHeader
-            title="Calendar"
-            description="See your shifts and time off in Google Calendar, or any calendar app."
-          />
-          <div className="p-5">
-            <CalendarFeedPanel />
-          </div>
-        </Card>
+        {calendarFeed && (
+          <Card>
+            <CardHeader
+              title="Calendar"
+              description="See your shifts and time off in Google Calendar, or any calendar app."
+            />
+            <div className="p-5">
+              <CalendarFeedPanel />
+            </div>
+          </Card>
+        )}
+
+        {calendarSync && (
+          <Card>
+            <CardHeader
+              title="Google Calendar"
+              description="Your shifts and time off, in your own calendar."
+            />
+            <div className="p-5">
+              <CalendarSyncToggle />
+            </div>
+          </Card>
+        )}
 
         <Card>
           <CardHeader
@@ -172,65 +194,74 @@ export default function ProfilePage() {
           </Card>
         )}
 
-        <Card>
-          <CardHeader
-            title="Password"
-            description={
-              user.hasPassword
-                ? undefined
-                : 'You sign in with emailed links. Add a password to sign in faster.'
-            }
-          />
-          <form
-            className="space-y-4 p-5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              savePassword.mutate();
-            }}
-          >
-            <FormError
-              message={formMessage(savePassword.error, ['currentPassword', 'newPassword'])}
-            />
-            {user.hasPassword && (
-              <Field label="Current password" error={pwErrors.currentPassword}>
-                <Input
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={current}
-                  onChange={(e) => setCurrent(e.target.value)}
-                />
-              </Field>
-            )}
-            <Field label="New password" error={pwErrors.newPassword} hint="At least 8 characters.">
-              <Input
-                type="password"
-                autoComplete="new-password"
-                minLength={8}
-                required
-                value={next}
-                onChange={(e) => setNext(e.target.value)}
+        {/* Google sign-in (the Apps Script version) has no passwords or sessions. */}
+        {signIn === 'password' && (
+          <>
+            <Card>
+              <CardHeader
+                title="Password"
+                description={
+                  user.hasPassword
+                    ? undefined
+                    : 'You sign in with emailed links. Add a password to sign in faster.'
+                }
               />
-            </Field>
-            <div className="flex justify-end">
-              <Button type="submit" variant="primary" loading={savePassword.isPending}>
-                {user.hasPassword ? 'Change password' : 'Set password'}
-              </Button>
-            </div>
-          </form>
-        </Card>
+              <form
+                className="space-y-4 p-5"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  savePassword.mutate();
+                }}
+              >
+                <FormError
+                  message={formMessage(savePassword.error, ['currentPassword', 'newPassword'])}
+                />
+                {user.hasPassword && (
+                  <Field label="Current password" error={pwErrors.currentPassword}>
+                    <Input
+                      type="password"
+                      autoComplete="current-password"
+                      required
+                      value={current}
+                      onChange={(e) => setCurrent(e.target.value)}
+                    />
+                  </Field>
+                )}
+                <Field
+                  label="New password"
+                  error={pwErrors.newPassword}
+                  hint="At least 8 characters."
+                >
+                  <Input
+                    type="password"
+                    autoComplete="new-password"
+                    minLength={8}
+                    required
+                    value={next}
+                    onChange={(e) => setNext(e.target.value)}
+                  />
+                </Field>
+                <div className="flex justify-end">
+                  <Button type="submit" variant="primary" loading={savePassword.isPending}>
+                    {user.hasPassword ? 'Change password' : 'Set password'}
+                  </Button>
+                </div>
+              </form>
+            </Card>
 
-        <Card>
-          <CardHeader
-            title="Devices"
-            description="Signed in on a shared or lost device? Sign out everywhere except here."
-            actions={
-              <Button onClick={() => signOutOthers.mutate()} loading={signOutOthers.isPending}>
-                Sign out other devices
-              </Button>
-            }
-          />
-        </Card>
+            <Card>
+              <CardHeader
+                title="Devices"
+                description="Signed in on a shared or lost device? Sign out everywhere except here."
+                actions={
+                  <Button onClick={() => signOutOthers.mutate()} loading={signOutOthers.isPending}>
+                    Sign out other devices
+                  </Button>
+                }
+              />
+            </Card>
+          </>
+        )}
       </div>
     </div>
   );

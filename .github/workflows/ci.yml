@@ -36,6 +36,14 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run format:check
+      - name: Apps Script files match the code
+        run: |
+          npm run build:apps-script
+          if [ -n "$(git status --porcelain apps-script/build)" ]; then
+            git status --short apps-script/build
+            echo "::error::apps-script/build is out of date. Run npm run build:apps-script and commit the result."
+            exit 1
+          fi
       - name: Unit and integration tests
         run: npm test
       - name: Install Playwright browser
@@ -44,6 +52,8 @@ jobs:
         run: npm run test:e2e
       - name: End-to-end test (Vercel build)
         run: npm run test:e2e:vercel
+      - name: End-to-end test (Google Apps Script)
+        run: npx playwright test -c apps-script/playwright.config.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

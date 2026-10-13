@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router';
 import { useBootstrap } from '../api/queries';
 import { homePath, safeNext, useBootstrapData, useCurrentUser } from '../lib/session';
-import { FullPageSpinner } from './ui/Misc';
+import { EmptyState, FullPageSpinner } from './ui/Misc';
 
 const SETUP_EXEMPT = ['/setup', '/dev/mailbox', '/check-email', '/set-password'];
 
@@ -28,13 +28,26 @@ export function BootstrapGate({ children }: { children: ReactNode }) {
 }
 
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { user } = useBootstrapData();
+  const { user, signIn, signedInAs } = useBootstrapData();
   const location = useLocation();
   if (!user) {
+    // Google sign-in (the Apps Script version): signed in, just not on the team.
+    if (signIn === 'google') return <NotOnTeam email={signedInAs ?? null} />;
     const next = encodeURIComponent(location.pathname + location.search);
     return <Navigate to={`/login?next=${next}`} replace />;
   }
   return <>{children}</>;
+}
+
+function NotOnTeam({ email }: { email: string | null }) {
+  const { org } = useBootstrapData();
+  return (
+    <EmptyState
+      title={`You're not on the ${org.name} schedule yet`}
+      description={`${email ? `You're signed in to Google as ${email}. ` : ''}Ask an admin to add you on the People page, then open this page again.`}
+      className="min-h-dvh justify-center"
+    />
+  );
 }
 
 export function RequireAdmin() {

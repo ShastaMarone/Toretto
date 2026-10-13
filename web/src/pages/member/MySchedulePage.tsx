@@ -33,6 +33,7 @@ import { toast } from 'sonner';
 import { api } from '../../api/client';
 import { useMyShifts, useMySwaps, useMyTimeOff } from '../../api/queries';
 import { CalendarFeedPanel } from '../../components/CalendarFeed';
+import { CalendarSyncDialog } from '../../components/GoogleCalendarSync';
 import { HolidayBadge } from '../../components/schedule/CalendarBits';
 import { ShiftChip, StatusIcon } from '../../components/schedule/ShiftChip';
 import { OpenShiftsCard } from '../../components/swaps/OpenShiftsCard';
@@ -94,7 +95,7 @@ function useConfirmShifts() {
 }
 
 export default function MySchedulePage() {
-  const { org } = useBootstrapData();
+  const { org, calendarFeed, calendarSync } = useBootstrapData();
   const me = useCurrentUser();
   const tz = useViewerZone();
   const timeFormat = useTimeFormat();
@@ -154,12 +155,28 @@ export default function MySchedulePage() {
         description={`Times shown in ${zoneLabel(tz)}`}
         actions={
           <>
-            <Button
-              icon={<CalendarPlus className="size-4" />}
-              onClick={() => setAddingCalendar(true)}
-            >
-              Add to calendar
-            </Button>
+            {calendarFeed && (
+              <Button
+                icon={<CalendarPlus className="size-4" />}
+                onClick={() => setAddingCalendar(true)}
+              >
+                Add to calendar
+              </Button>
+            )}
+            {calendarSync && (
+              <Button
+                icon={
+                  me.calendarSync ? (
+                    <CalendarCheck className="size-4" />
+                  ) : (
+                    <CalendarPlus className="size-4" />
+                  )
+                }
+                onClick={() => setAddingCalendar(true)}
+              >
+                {me.calendarSync ? 'Google Calendar' : 'Add to Google Calendar'}
+              </Button>
+            )}
             <Button
               variant="primary"
               icon={<Plane className="size-4" />}
@@ -384,15 +401,18 @@ export default function MySchedulePage() {
         <TimeOffRequestDialog initialDate={requestFor} onClose={() => setRequestFor(null)} />
       )}
       {offering && <SwapDialog shift={offering} tz={tz} onClose={() => setOffering(null)} />}
-      {addingCalendar && (
-        <Modal
-          title="Add your shifts to Google Calendar"
-          description="Or to any calendar app that can subscribe to a link."
-          onClose={() => setAddingCalendar(false)}
-        >
-          <CalendarFeedPanel />
-        </Modal>
-      )}
+      {addingCalendar &&
+        (calendarSync ? (
+          <CalendarSyncDialog onClose={() => setAddingCalendar(false)} />
+        ) : (
+          <Modal
+            title="Add your shifts to Google Calendar"
+            description="Or to any calendar app that can subscribe to a link."
+            onClose={() => setAddingCalendar(false)}
+          >
+            <CalendarFeedPanel />
+          </Modal>
+        ))}
       {shiftOpen && (
         <ShiftDetailsDialog
           shift={shiftOpen}
