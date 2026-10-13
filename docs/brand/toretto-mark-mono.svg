@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Toretto" fill="currentColor">
+  <!-- One colour: takes the text colour of wherever it's placed (black on its own). -->
+  <rect x="40" y="14" width="9" height="18" rx="4.5"/>
+  <rect x="79" y="14" width="9" height="18" rx="4.5"/>
+  <rect x="24" y="24" width="80" height="24" rx="8"/>
+  <rect x="50" y="54" width="28" height="14" rx="5"/>
+  <rect x="50" y="72" width="28" height="14" rx="5" fill-opacity="0.8"/>
+  <rect x="50" y="90" width="28" height="14" rx="5" fill-opacity="0.6"/>
+  <g stroke="currentColor" stroke-linecap="round" stroke-width="5" fill="none">
+    <path d="M18 61h22" stroke-opacity="0.55"/>
+    <path d="M26 79h14" stroke-opacity="0.38"/>
+    <path d="M32 97h8" stroke-opacity="0.24"/>
+  </g>
+</svg>
