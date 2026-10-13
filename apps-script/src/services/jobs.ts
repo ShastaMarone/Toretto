@@ -7,6 +7,7 @@ import { appUrl } from '../env';
 import { checkAppCalendar, forgetOldCalendarEvents, syncCalendars } from './calendar';
 import { emailContext, enqueueEmail } from './mail';
 import { settleOpenShifts } from './openShifts';
+import { syncPhotos } from './photos';
 import { settleSwaps } from './swaps';
 
 export const MAX_ATTEMPTS = 5;
@@ -236,6 +237,7 @@ export function runHourlyJobs(): void {
     deleteOldEmails(ctx);
     forgetOldCalendarEvents(db);
     checkAppCalendar(db);
+    syncPhotos(ctx);
     db.commit();
     compactTables(new Db());
   } finally {

@@ -6,6 +6,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react';
+import { useBootstrap } from '../../api/queries';
 import { colorFor, initials, PALETTE } from '../../lib/colors';
 import { cx } from '../../lib/cx';
 import { moveMenuFocus } from './menuKeys';
@@ -164,27 +165,43 @@ export function PageHeader({
   );
 }
 
+/** Someone's Google profile picture when we have it (pass their id), otherwise their initials. */
 export function Avatar({
   name,
+  userId,
   size = 'md',
   className,
 }: {
   name: string;
+  userId?: string | null;
   size?: 'sm' | 'md' | 'lg';
   className?: string;
 }) {
   const dims = { sm: 'size-6 text-[10px]', md: 'size-8 text-xs', lg: 'size-10 text-sm' }[size];
+  const photo = useBootstrap().data?.photos?.[userId ?? ''];
+  const [failed, setFailed] = useState<string | null>(null);
+  const showPhoto = photo && failed !== photo;
   return (
     <span
       aria-hidden
       className={cx(
-        'inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-white',
+        'inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold text-white',
         dims,
         className,
       )}
       style={{ backgroundColor: colorFor(name) }}
     >
-      {initials(name)}
+      {showPhoto ? (
+        <img
+          src={photo}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="size-full object-cover"
+          onError={() => setFailed(photo)}
+        />
+      ) : (
+        initials(name)
+      )}
     </span>
   );
 }

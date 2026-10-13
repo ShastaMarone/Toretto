@@ -284,7 +284,7 @@ export default function PeoplePage() {
               const team = p.teamId ? teamById.get(p.teamId) : undefined;
               return (
                 <li key={p.id} className="flex items-center gap-3 px-4 py-3 sm:px-5">
-                  <Avatar name={p.name} />
+                  <Avatar name={p.name} userId={p.id} />
                   <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)] sm:items-center sm:gap-4">
                     <div className="min-w-0">
                       <p className="flex items-center gap-2 truncate text-sm font-semibold text-slate-900">

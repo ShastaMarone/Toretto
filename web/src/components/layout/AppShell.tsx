@@ -244,7 +244,7 @@ function Sidebar({
             )
           }
         >
-          <Avatar name={user.name} />
+          <Avatar name={user.name} userId={user.id} />
           {!collapsed && (
             <>
               <div className="min-w-0 flex-1">
