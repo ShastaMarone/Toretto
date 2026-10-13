@@ -2,10 +2,15 @@ import { overtimeReasons, weeklyHours, type OvertimeRules } from '@shared/overti
 import { addDays, formatDay, formatHours, type ISODate } from '@shared/time';
 import type { OrgSettings, WeekStart } from '@shared/types';
 
-export function overtimeRules(settings: OrgSettings | undefined): OvertimeRules {
+/** `org` (known from the start) supplies the unpaid lunch, so hours are right before Settings loads. */
+export function overtimeRules(
+  settings: OrgSettings | undefined,
+  org?: { unpaidLunchHours?: number },
+): OvertimeRules {
   return {
     dailyHours: settings?.overtimeDailyHours ?? null,
     weeklyHours: settings?.overtimeWeeklyHours ?? null,
+    lunchHours: org?.unpaidLunchHours ?? settings?.unpaidLunchHours ?? 0,
   };
 }
 

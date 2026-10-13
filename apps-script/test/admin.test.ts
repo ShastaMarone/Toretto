@@ -253,6 +253,7 @@ describe('settings', () => {
       weekStartsOn: 0,
       holidayRegion: 'CA',
       timeFormat: '12h',
+      unpaidLunchHours: 0,
     });
     const alberta = await admin.patch('/api/admin/settings').send({ holidayRegion: 'AB' });
     expect(alberta.body.holidayRegion).toBe('AB');
@@ -298,6 +299,31 @@ describe('settings', () => {
       .patch('/api/admin/settings')
       .send({ overtimeDailyHours: 8, overtimeWeeklyHours: 40 })
       .expect(200);
+  });
+
+  it('takes an unpaid lunch off long shifts, and tells everyone in the org info', async () => {
+    // A new Sheet starts with none.
+    expect((await admin.get('/api/admin/settings')).body.unpaidLunchHours).toBe(0);
+    // A Sheet from before the setting existed has the cell empty: 1 hour.
+    ctx.db.write((t) =>
+      t.settings.update('org', { unpaidLunchHours: null as unknown as number }),
+    );
+    expect((await admin.get('/api/admin/settings')).body.unpaidLunchHours).toBe(1);
+    expect((await member.get('/api/bootstrap')).body.org.unpaidLunchHours).toBe(1);
+    const none = await admin.patch('/api/admin/settings').send({ unpaidLunchHours: 0 });
+    expect(none.body.unpaidLunchHours).toBe(0);
+    expect((await member.get('/api/bootstrap')).body.org.unpaidLunchHours).toBe(0);
+    const half = await admin.patch('/api/admin/settings').send({ unpaidLunchHours: 0.5 });
+    expect(half.body.unpaidLunchHours).toBe(0.5);
+    for (const bad of [-1, 5, '1']) {
+      expect(
+        (await admin.patch('/api/admin/settings').send({ unpaidLunchHours: bad })).status,
+      ).toBe(400);
+    }
+    // Leaving it out keeps the current choice.
+    await admin.patch('/api/admin/settings').send({ reminderHours: 24 }).expect(200);
+    expect((await admin.get('/api/admin/settings')).body.unpaidLunchHours).toBe(0.5);
+    await admin.patch('/api/admin/settings').send({ unpaidLunchHours: 1 }).expect(200);
   });
 
   it('lets people set their own time zone', async () => {

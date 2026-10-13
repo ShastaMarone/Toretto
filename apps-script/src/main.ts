@@ -13,7 +13,7 @@ import { markEmailsWaiting, runHourlyJobs, sendQueuedEmails as sendEmails } from
 import { nameFromEmail } from './services/people';
 
 /** Bump when a new version adds tabs or columns: the next change adds them to the Sheet. */
-export const SCHEMA_VERSION = '2';
+export const SCHEMA_VERSION = '3';
 
 /**
  * Which build this is. build.mjs stamps the same version into Code.gs and
@@ -94,7 +94,9 @@ function attempt(method: string, url: string, body: unknown, write: boolean, db:
 function migrateIfNeeded(db: Db): void {
   const props = PropertiesService.getScriptProperties();
   if (props.getProperty('SCHEMA_VERSION') === SCHEMA_VERSION) return;
-  ensureSchema(db.spreadsheet());
+  const changes = ensureSchema(db.spreadsheet());
+  // New tabs and columns: copies of the tabs from the cache have the old headers.
+  if (changes.length) db.invalidateCache();
   props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
 }
 

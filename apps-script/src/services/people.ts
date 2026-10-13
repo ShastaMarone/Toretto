@@ -59,6 +59,7 @@ export function bootstrap(ctx: Ctx): Bootstrap {
       weekStartsOn: settings.weekStartsOn,
       holidayRegion: settings.holidayRegion,
       timeFormat: settings.timeFormat,
+      unpaidLunchHours: settings.unpaidLunchHours,
     },
     setupRequired: false,
     selfSignup: settings.selfSignup,

@@ -70,7 +70,7 @@ export default function HoursPage() {
   const schedule = useTeamSchedule(addDays(from, -1), addDays(to, 1));
   const tiers = useTiers();
   const settings = useSettings();
-  const rules = overtimeRules(settings.data);
+  const rules = overtimeRules(settings.data, org);
   const limits = limitsText(settings.data);
 
   const update = (patch: Record<string, string | null>) =>
@@ -92,7 +92,11 @@ export default function HoursPage() {
       description={
         <>
           Published shifts per person.{' '}
-          {limits ? `Overtime is past ${limits}` : 'Overtime isn’t flagged'} (
+          {limits ? `Overtime is past ${limits}` : 'Overtime isn’t flagged'}
+          {rules.lunchHours
+            ? `, after ${formatHours(rules.lunchHours)} unpaid lunch on shifts of 6 hours or more`
+            : ''}{' '}
+          (
           <Link to="/admin/settings" className="font-medium text-brand-600 hover:underline">
             change in Settings
           </Link>

@@ -60,6 +60,7 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
         emailRetentionDays: form.emailRetentionDays,
         overtimeDailyHours: form.overtimeDailyHours,
         overtimeWeeklyHours: form.overtimeWeeklyHours,
+        unpaidLunchHours: form.unpaidLunchHours ?? 0,
       }),
     onSuccess: (s) => {
       queryClient.setQueryData(keys.settings, s);
@@ -181,6 +182,22 @@ function OrgSettingsCard({ settings }: { settings: OrgSettings }) {
               none="No weekly limit"
               onChange={(overtimeWeeklyHours) => setForm({ ...form, overtimeWeeklyHours })}
             />
+          </Field>
+          <Field
+            label="Unpaid lunch"
+            hint="Taken off each shift of 6 hours or more before hours and overtime are counted: a 9-hour shift with a 1-hour lunch counts as 8."
+          >
+            <Select
+              value={form.unpaidLunchHours ?? 0}
+              onChange={(e) => setForm({ ...form, unpaidLunchHours: Number(e.target.value) })}
+            >
+              <option value={0}>No unpaid lunch</option>
+              <option value={0.5}>30 minutes</option>
+              <option value={1}>1 hour</option>
+              {![0, 0.5, 1].includes(form.unpaidLunchHours ?? 0) && (
+                <option value={form.unpaidLunchHours}>{form.unpaidLunchHours} hours</option>
+              )}
+            </Select>
           </Field>
           <p className="-mt-2 text-xs text-slate-500 sm:col-span-2">
             Flagged in the schedule builder and the Hours page. 8 a day and 40 a week are the Canada

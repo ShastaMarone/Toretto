@@ -59,6 +59,8 @@ export interface OrgInfo {
   holidayRegion: HolidayRegion;
   /** Default 12/24-hour format for everyone (and emails). */
   timeFormat: TimeFormat;
+  /** Unpaid lunch taken off shifts of 6 hours or more, when counting hours (Google Apps Script version). */
+  unpaidLunchHours?: number;
 }
 
 export interface Bootstrap {
@@ -101,6 +103,11 @@ export interface OrgSettings {
   overtimeDailyHours: number | null;
   /** Overtime past this many hours in a week (null: no weekly limit). */
   overtimeWeeklyHours: number | null;
+  /**
+   * Unpaid lunch taken off each shift of 6 hours or more, in hours counted and
+   * overtime (0: none). Google Apps Script version.
+   */
+  unpaidLunchHours?: number;
 }
 
 export interface Tier {

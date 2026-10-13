@@ -69,6 +69,7 @@ export const DEFAULT_SETTINGS: Omit<OrgSettingsRow, 'id' | 'updatedAt'> = {
   emailRetentionDays: 90,
   overtimeDailyHours: 8,
   overtimeWeeklyHours: 40,
+  unpaidLunchHours: 0,
 };
 
 export function getSettings(db: Db): OrgSettings {
@@ -86,6 +87,7 @@ export function getSettings(db: Db): OrgSettings {
     emailRetentionDays: s.emailRetentionDays,
     overtimeDailyHours: s.overtimeDailyHours,
     overtimeWeeklyHours: s.overtimeWeeklyHours,
+    unpaidLunchHours: Number.isFinite(s.unpaidLunchHours) ? s.unpaidLunchHours : 0,
   };
 }
 

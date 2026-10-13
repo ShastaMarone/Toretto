@@ -161,6 +161,7 @@ export function updateSettings(
     'emailRetentionDays',
     'overtimeDailyHours',
     'overtimeWeeklyHours',
+    'unpaidLunchHours',
   ] as const) {
     if (body[key] !== undefined) (patch as Record<string, unknown>)[key] = body[key];
   }

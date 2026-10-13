@@ -499,6 +499,7 @@ export function createRouter(): Router {
           emailRetentionDays: z.number().int().min(1).max(3650).nullable().optional(),
           overtimeDailyHours: z.number().positive().max(24).nullable().optional(),
           overtimeWeeklyHours: z.number().positive().max(168).nullable().optional(),
+          unpaidLunchHours: z.number().min(0).max(4).optional(),
         }),
         req.body,
       ),

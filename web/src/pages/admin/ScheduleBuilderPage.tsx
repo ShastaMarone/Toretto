@@ -208,7 +208,7 @@ function Builder({
   const location = useLocation();
   const tiers = useTiers();
   const teams = useTeams();
-  const rules = overtimeRules(useSettings().data);
+  const rules = overtimeRules(useSettings().data, org);
   const openShifts = useOpenShifts();
   // Everyone's published shifts, for overtime worked on other schedules. (The
   // team schedule's days are the viewer's: a day either side covers the edges.)
@@ -515,7 +515,12 @@ function Builder({
   // The day view's timeline, and the people rows shared with the grid.
   const groupHours = (group: { people: PersonRow[] }) => {
     const ids = new Set(group.people.map((p) => p.id));
-    return formatHours(totalHours(shifts.filter((s) => ids.has(s.userId))));
+    return formatHours(
+      totalHours(
+        shifts.filter((s) => ids.has(s.userId)),
+        rules.lunchHours,
+      ),
+    );
   };
   const renderPerson = (person: PersonRow) => {
     const personShifts = shifts.filter((s) => s.userId === person.id);
@@ -540,7 +545,7 @@ function Builder({
           <p className="truncate text-sm font-medium text-slate-900">{person.name}</p>
           <p className="text-xs text-slate-500">
             {personShifts.length
-              ? `${formatHours(totalHours(personShifts))} · ${personShifts.length} shift${personShifts.length === 1 ? '' : 's'}`
+              ? `${formatHours(totalHours(personShifts, rules.lunchHours))} ·${personShifts.length} shift${personShifts.length === 1 ? '' : 's'}`
               : 'No shifts'}
             {!person.active && ' · deactivated'}
           </p>
@@ -612,7 +617,7 @@ function Builder({
           />
           <p className="mt-1 text-sm text-slate-500">
             Every tier on one calendar · {shifts.length} shift{shifts.length === 1 ? '' : 's'} ·{' '}
-            {formatHours(totalHours(shifts))} this {periodWord}
+            {formatHours(totalHours(shifts, rules.lunchHours))} this {periodWord}
             {schedule.publishedAt &&
               ` · last published ${formatTimestamp(schedule.publishedAt, tz, timeFormat)}${schedule.publishedByName ? ` by ${schedule.publishedByName}` : ''}`}
           </p>
@@ -821,7 +826,7 @@ function Builder({
             if (!dayShifts.length) return '—';
             return compact
               ? String(dayShifts.length)
-              : `${dayShifts.length} · ${formatHours(totalHours(dayShifts))}`;
+              : `${dayShifts.length} · ${formatHours(totalHours(dayShifts, rules.lunchHours))}`;
           }}
           groupHours={groupHours}
           renderPerson={renderPerson}

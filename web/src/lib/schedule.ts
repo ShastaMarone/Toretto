@@ -1,10 +1,10 @@
+import { paidShiftHours } from '@shared/overtime';
 import { timeOffDays } from '@shared/timeOff';
 import {
   addDays,
   endOfMonth,
   localDate,
   localTime,
-  shiftHours,
   startOfMonth,
   startOfWeek,
   type ISODate,
@@ -77,8 +77,12 @@ export function shiftColor(s: Pick<ShiftView, 'label' | 'tier'>): string {
   return s.label?.color ?? s.tier?.color ?? '#a855f7';
 }
 
-export function totalHours(shifts: { startTime: string; endTime: string }[]): number {
-  return shifts.reduce((sum, s) => sum + shiftHours(s.startTime, s.endTime), 0);
+/** Hours worked: shifts' lengths, less the unpaid lunch Settings sets (none by default). */
+export function totalHours(
+  shifts: { startTime: string; endTime: string }[],
+  lunchHours = 0,
+): number {
+  return shifts.reduce((sum, s) => sum + paidShiftHours(s.startTime, s.endTime, lunchHours), 0);
 }
 
 export type CalendarView = 'day' | 'week' | '2weeks' | 'month';

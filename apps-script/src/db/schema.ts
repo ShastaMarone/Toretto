@@ -26,6 +26,8 @@ export interface OrgSettingsRow {
   emailRetentionDays: number | null;
   overtimeDailyHours: number | null;
   overtimeWeeklyHours: number | null;
+  /** Unpaid lunch taken off each shift of 6 hours or more when counting hours (0: none). */
+  unpaidLunchHours: number;
   updatedAt: string;
 }
 
@@ -256,8 +258,12 @@ export const ORG_SETTINGS: TableDef<OrgSettingsRow> = {
     emailRetentionDays: 'number',
     overtimeDailyHours: 'number',
     overtimeWeeklyHours: 'number',
+    unpaidLunchHours: 'number',
     updatedAt: 'time',
   },
+  // A Sheet from before this column existed has it empty: 1 hour, as the TDM helpdesk's
+  // 9-hour shifts include one. New Sheets start from DEFAULT_SETTINGS (none).
+  defaults: { unpaidLunchHours: 1 },
 };
 
 export const TIERS: TableDef<TierRow> = {
