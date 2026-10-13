@@ -1,6 +1,7 @@
 import { addDays, formatDay, todayIn } from '@shared/time';
 import type { TimeOffRequest, TimeOffType } from '@shared/types';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { DateTime } from 'luxon';
 import {
   clearEmails,
   createTestContext,
@@ -280,10 +281,10 @@ describe('time off for part of a day', () => {
     expect((await request(shiftOn(day(15), '18:00', '20:00'))).status).toBe(201);
     const mine = (await admin.get(`/api/time-off?userId=${kaiId}`)).body as TimeOffRequest[];
     const conflicts = Object.fromEntries(
-      mine.map((r) => [r.startTime && new Date(r.startTime).getUTCHours(), r.conflicts]),
+      mine.map((r) => [r.startTime && DateTime.fromISO(r.startTime).setZone(TZ).hour, r.conflicts]),
     );
-    // 1 PM and 6 PM in Toronto.
-    expect(conflicts).toEqual({ 17: 1, 22: 0 });
+    // 1 PM and 6 PM in Toronto (in Toronto's hours, so it holds in summer and winter time).
+    expect(conflicts).toEqual({ 13: 1, 18: 0 });
   });
 
   it('allows other hours that day, but not overlapping hours or the whole day', async () => {
