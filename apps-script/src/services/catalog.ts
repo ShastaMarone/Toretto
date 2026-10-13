@@ -55,6 +55,27 @@ export function updateTier(
   return toTier(ctx, id);
 }
 
+/** Put the tiers in this order (the schedule's sections follow it). Any not listed go last. */
+export function reorderTiers(ctx: Ctx, ids: string[]): Tier[] {
+  const t = tables(ctx.db);
+  const known = new Set(t.tiers.all().map((x) => x.id));
+  const order = [...new Set(ids)].filter((id) => known.has(id));
+  const rest = listTiers(ctx)
+    .map((x) => x.id)
+    .filter((id) => !order.includes(id));
+  [...order, ...rest].forEach((id, i) => {
+    if (t.tiers.get(id)!.sortOrder !== i + 1) t.tiers.update(id, { sortOrder: i + 1 });
+  });
+  audit(
+    ctx,
+    ctx.user!.id,
+    'tier.reordered',
+    { type: 'tier', id: order[0] ?? '' },
+    { count: order.length },
+  );
+  return listTiers(ctx);
+}
+
 export function deleteTier(ctx: Ctx, id: string): void {
   const t = tables(ctx.db);
   if (t.users.find((u) => u.tierId === id && !u.deactivatedAt)) {

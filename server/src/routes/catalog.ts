@@ -47,6 +47,25 @@ export function catalogRoutes({ db }: AppDeps): {
     res.status(201).json(tier[0]);
   });
 
+  tiers.post('/reorder', requireAdmin, async (req, res) => {
+    const { ids } = parse(z.object({ ids: z.array(zId).min(1).max(200) }), req.body);
+    await db.query(
+      `UPDATE tiers t SET sort_order = v.ord::int
+         FROM unnest($1::uuid[]) WITH ORDINALITY AS v(id, ord)
+        WHERE t.id = v.id`,
+      [[...new Set(ids)]],
+    );
+    await audit(
+      db,
+      req.user!.id,
+      'tier.reordered',
+      { type: 'tier', id: ids[0]! },
+      { count: ids.length },
+    );
+    const { rows } = await db.query<Tier>(`${TIER_SQL} ORDER BY t.sort_order, lower(t.name)`);
+    res.json(rows);
+  });
+
   tiers.patch('/:id', requireAdmin, async (req, res) => {
     const { id } = parse(zIdParam, req.params);
     const body = parse(

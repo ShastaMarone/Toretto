@@ -6,6 +6,7 @@ import { cx } from '../../lib/cx';
 import type { PeopleGroup } from '../../lib/schedule';
 import { useScrollToToday } from '../../lib/useScrollToToday';
 import { Card } from '../ui/Misc';
+import { useGroupReorder } from '../../lib/useGroupReorder';
 import { DayHeader, GroupRows } from './CalendarBits';
 
 /**
@@ -30,6 +31,7 @@ export function ScheduleGrid({
   empty,
   footer,
   className,
+  onReorderGroups,
 }: {
   days: ISODate[];
   today: ISODate;
@@ -54,7 +56,13 @@ export function ScheduleGrid({
   empty?: ReactNode;
   footer?: ReactNode;
   className?: string;
+  /** Lets tiers be dragged into a new order; gets the new order of the group keys. */
+  onReorderGroups?: (keys: string[]) => void;
 }) {
+  const groupDrag = useGroupReorder(
+    groups.map((g) => g.key),
+    onReorderGroups,
+  );
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const scroller = useScrollToToday<HTMLDivElement>(`${days[0]}:${days.at(-1)}`);
   const count = groups.reduce((n, g) => n + g.people.length, 0);
@@ -112,6 +120,7 @@ export function ScheduleGrid({
                   colSpan={days.length + 1}
                   collapsed={isCollapsed}
                   onToggle={() => toggle(group.key)}
+                  drag={groupDrag(group.key)}
                 >
                   {!isCollapsed &&
                     group.people.map((person) => {

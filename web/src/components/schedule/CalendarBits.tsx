@@ -1,10 +1,19 @@
-import type { Holiday } from '@shared/holidays';
+﻿import type { Holiday } from '@shared/holidays';
 import { formatDay, type ISODate } from '@shared/time';
 import type { Tier } from '@shared/types';
-import { CalendarDays, ChevronLeft, ChevronRight, Leaf } from 'lucide-react';
+import {
+  CalendarDays,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  GripVertical,
+  Leaf,
+} from 'lucide-react';
 import { DateTime } from 'luxon';
 import { useRef, useState, type ReactNode } from 'react';
 import { cx } from '../../lib/cx';
+import type { GroupDrag } from '../../lib/useGroupReorder';
 import { Button } from '../ui/Button';
 import { ColorDot } from '../ui/Misc';
 import { Calendar } from '../ui/Pickers';
@@ -239,6 +248,7 @@ export function GroupRows({
   colSpan,
   collapsed,
   onToggle,
+  drag,
   children,
 }: {
   label: string;
@@ -248,27 +258,69 @@ export function GroupRows({
   colSpan: number;
   collapsed: boolean;
   onToggle: () => void;
+  /** Present when this tier can be dragged to a new place. */
+  drag?: GroupDrag;
   children: ReactNode;
 }) {
   return (
     <>
-      <tr className="border-b border-slate-200/70 bg-slate-50/50">
+      <tr
+        className={cx(
+          'border-b border-slate-200/70 bg-slate-50/50',
+          drag?.dragging && 'opacity-40',
+          drag?.over && 'bg-brand-50 shadow-[inset_0_2px_0_var(--color-brand-500)]',
+        )}
+        draggable={drag ? true : undefined}
+        onDragStart={drag?.onDragStart}
+        onDragEnd={drag?.onDragEnd}
+        onDragOver={drag?.onDragOver}
+        onDrop={drag?.onDrop}
+        title={drag ? 'Drag to move this tier' : undefined}
+      >
         <th colSpan={colSpan} scope="colgroup" className="px-0 py-0 text-left">
-          <button
-            type="button"
-            aria-expanded={!collapsed}
-            onClick={onToggle}
-            className="sticky left-0 flex items-center gap-2 px-4 pt-2.5 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:text-slate-900"
-          >
-            <ChevronRight
-              className={cx('size-3.5 transition-transform', !collapsed && 'rotate-90')}
-            />
-            <ColorDot color={color} />
-            {label}
-            <span className="font-normal normal-case text-slate-400">
-              · {count} {count === 1 ? 'person' : 'people'} · {hours}
-            </span>
-          </button>
+          <div className="sticky left-0 flex w-fit items-center">
+            <button
+              type="button"
+              aria-expanded={!collapsed}
+              onClick={onToggle}
+              className={cx(
+                'flex items-center gap-2 px-4 pt-2.5 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:text-slate-900',
+                drag && 'cursor-grab active:cursor-grabbing',
+              )}
+            >
+              {drag && <GripVertical className="-ml-2 size-3.5 text-slate-300" aria-hidden />}
+              <ChevronRight
+                className={cx('size-3.5 transition-transform', !collapsed && 'rotate-90')}
+              />
+              <ColorDot color={color} />
+              {label}
+              <span className="font-normal normal-case text-slate-400">
+                · {count} {count === 1 ? 'person' : 'people'} · {hours}
+              </span>
+            </button>
+            {drag && (
+              <span className="flex items-center gap-0.5 pt-1">
+                {(
+                  [
+                    ['up', drag.moveUp, ChevronUp],
+                    ['down', drag.moveDown, ChevronDown],
+                  ] as const
+                ).map(([dir, move, Icon]) => (
+                  <button
+                    key={dir}
+                    type="button"
+                    disabled={!move}
+                    onClick={move}
+                    aria-label={`Move ${label} ${dir}`}
+                    title={`Move ${dir}`}
+                    className="rounded p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700 disabled:opacity-25 disabled:hover:bg-transparent"
+                  >
+                    <Icon className="size-4" />
+                  </button>
+                ))}
+              </span>
+            )}
+          </div>
         </th>
       </tr>
       {children}

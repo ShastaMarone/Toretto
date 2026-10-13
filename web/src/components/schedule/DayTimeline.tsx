@@ -15,6 +15,7 @@ import { alpha } from '../../lib/colors';
 import { cx } from '../../lib/cx';
 import type { PeopleGroup } from '../../lib/schedule';
 import { Card } from '../ui/Misc';
+import { useGroupReorder } from '../../lib/useGroupReorder';
 import { HolidayBadge, GroupRows } from './CalendarBits';
 import { StatusIcon } from './ShiftChip';
 
@@ -77,6 +78,7 @@ export function DayTimeline({
   highlight,
   empty,
   footer,
+  onReorderGroups,
 }: {
   day: ISODate;
   today: ISODate;
@@ -95,7 +97,13 @@ export function DayTimeline({
   highlight?: (person: PersonRow) => boolean;
   empty?: ReactNode;
   footer?: ReactNode;
+  /** Lets tiers be dragged into a new order; gets the new order of the group keys. */
+  onReorderGroups?: (keys: string[]) => void;
 }) {
+  const groupDrag = useGroupReorder(
+    groups.map((g) => g.key),
+    onReorderGroups,
+  );
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const scroller = useRef<HTMLDivElement>(null);
   const people = groups.flatMap((g) => g.people);
@@ -213,6 +221,7 @@ export function DayTimeline({
                   colSpan={2}
                   collapsed={isCollapsed}
                   onToggle={() => toggle(group.key)}
+                  drag={groupDrag(group.key)}
                 >
                   {!isCollapsed &&
                     group.people.map((person) => {
