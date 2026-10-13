@@ -19,6 +19,25 @@ const stamp = (text, version) => text.replaceAll(VERSION, version);
 // Windows checks files out with CRLF line endings: build the same bytes everywhere.
 const normalizeLineEndings = (text) => text.replace(/\r+\n/g, '\n');
 
+// Apps Script reads the whole of Code.gs on every call, so its size is the
+// floor under every screen. `import { z } from 'zod'` pulls in every language's
+// error messages (about 450 KB of 840); `import * as z from 'zod'` keeps only
+// what's used. The sources keep the usual form: it's rewritten as they're read.
+const zodNamespace = {
+  name: 'zod-namespace',
+  setup(b) {
+    b.onLoad({ filter: /\.ts$/ }, (args) => {
+      if (args.path.includes('node_modules')) return null;
+      const text = readFileSync(args.path, 'utf8');
+      if (!text.includes("import { z } from 'zod'")) return null;
+      return {
+        contents: text.replace("import { z } from 'zod'", "import * as z from 'zod'"),
+        loader: 'ts',
+      };
+    });
+  },
+};
+
 // ---- Code.gs -----------------------------------------------------------------
 // One IIFE (Apps Script has no modules), lowered to syntax its V8 runs, plus
 // plain functions Apps Script can call by name (the page, triggers, the editor).
@@ -35,6 +54,7 @@ export async function buildServer(version) {
     minifyWhitespace: true,
     minifySyntax: true,
     legalComments: 'none',
+    plugins: [zodNamespace],
     write: false,
     logLevel: 'warning',
   });
